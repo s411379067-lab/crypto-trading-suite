@@ -442,8 +442,12 @@ def main():
     kline_ohlc_label = QtWidgets.QLabel("開=--  高=--  低=--  收=--  +0.00(+0.00%)")
     kline_ohlc_label.setStyleSheet("color: #cfd7e6; font-size: 10.5pt; font-weight: 500;")
 
+    kline_ema_label = QtWidgets.QLabel("EMA 20=--")
+    kline_ema_label.setStyleSheet("color: #89a8ff; font-size: 10pt; font-weight: 500;")
+
     kline_info_layout.addWidget(kline_symbol_label)
     kline_info_layout.addWidget(kline_ohlc_label)
+    kline_info_layout.addWidget(kline_ema_label)
     left_layout.addWidget(kline_info_panel)
 
     win = pg.GraphicsLayoutWidget(title=f"{coin_name} Replay UI 5m")
@@ -455,10 +459,25 @@ def main():
     indicator_info_layout = QtWidgets.QVBoxLayout(indicator_info_panel)
     indicator_info_layout.setContentsMargins(10, 6, 10, 6)
     indicator_info_layout.setSpacing(2)
+
+    indicator_info_row = QtWidgets.QHBoxLayout()
+    indicator_info_row.setContentsMargins(0, 0, 0, 0)
+    indicator_info_row.setSpacing(8)
+
     indicator_info_label = QtWidgets.QLabel("SBS Run Score    bull bar=-    bull run=-    bear bar=-    bear run=-")
     indicator_info_label.setStyleSheet("color: #cfd7e6; font-size: 10.5pt; font-weight: 500;")
     indicator_info_label.setTextFormat(QtCore.Qt.RichText)
-    indicator_info_layout.addWidget(indicator_info_label)
+
+    indicator_x_value_badge = QtWidgets.QLabel("--:-- (----.--.--)")
+    indicator_x_value_badge.setStyleSheet(
+        "background-color:#0d1420; border:1px solid #6b7fa1; border-radius:2px; "
+        "color:#e6edf7; padding:2px 6px; font-size:9.5pt;"
+    )
+    indicator_x_value_badge.setAlignment(QtCore.Qt.AlignCenter)
+
+    indicator_info_row.addWidget(indicator_info_label, 1)
+    indicator_info_row.addWidget(indicator_x_value_badge, 0)
+    indicator_info_layout.addLayout(indicator_info_row)
     left_layout.addWidget(indicator_info_panel)
 
     indicator_win = pg.GraphicsLayoutWidget()
@@ -516,6 +535,75 @@ def main():
     plot.addItem(hline, ignoreBounds=True)
     indicator_plot.addItem(vline_indicator, ignoreBounds=True)
     indicator_plot.addItem(hline_indicator, ignoreBounds=True)
+    current_crosshair_active = "none"
+
+    def quantize_step(val: float, step: float) -> float:
+        return round(val / step) * step
+
+    def set_crosshair_visibility(active_name: str):
+        if active_name == "main":
+            vline.show()
+            vline_indicator.show()
+            hline.show()
+            hline_indicator.hide()
+        elif active_name == "indicator":
+            vline.show()
+            vline_indicator.show()
+            hline.hide()
+            hline_indicator.show()
+        else:
+            vline.hide()
+            vline_indicator.hide()
+            hline.hide()
+            hline_indicator.hide()
+
+    def cursor_in_main_plot() -> bool:
+        p = win.mapFromGlobal(QtGui.QCursor.pos())
+        scene_p = win.mapToScene(p)
+        return plot.vb.sceneBoundingRect().contains(scene_p)
+
+    def cursor_in_indicator_plot() -> bool:
+        p = indicator_win.mapFromGlobal(QtGui.QCursor.pos())
+        scene_p = indicator_win.mapToScene(p)
+        return indicator_plot.vb.sceneBoundingRect().contains(scene_p)
+
+    def refresh_crosshair_state_by_cursor():
+        nonlocal current_crosshair_active
+        in_main = cursor_in_main_plot()
+        in_indicator = cursor_in_indicator_plot()
+
+        if in_main and not in_indicator:
+            desired = "main"
+        elif in_indicator and not in_main:
+            desired = "indicator"
+        else:
+            desired = "none"
+
+        if desired != current_crosshair_active:
+            current_crosshair_active = desired
+            set_crosshair_visibility(desired)
+
+    crosshair_state_timer = QtCore.QTimer(root)
+    crosshair_state_timer.setInterval(40)
+    crosshair_state_timer.timeout.connect(refresh_crosshair_state_by_cursor)
+    crosshair_state_timer.start()
+
+    set_crosshair_visibility("none")
+
+    # 軸上數值方框（最上層）
+    axis_value_style = "background-color:#0d1420; border:1px solid #6b7fa1; border-radius:2px; color:#e6edf7; padding:2px 6px;"
+
+    price_axis_value_label = QtWidgets.QLabel(win)
+    price_axis_value_label.setStyleSheet(axis_value_style)
+    price_axis_value_label.setAlignment(QtCore.Qt.AlignCenter)
+    price_axis_value_label.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+    price_axis_value_label.raise_()
+
+    indicator_axis_value_label = QtWidgets.QLabel(indicator_win)
+    indicator_axis_value_label.setStyleSheet(axis_value_style)
+    indicator_axis_value_label.setAlignment(QtCore.Qt.AlignCenter)
+    indicator_axis_value_label.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+    indicator_axis_value_label.raise_()
 
     # ================================================================
     # 按鈕功能連接
@@ -1196,6 +1284,7 @@ def main():
         plot.addItem(hline, ignoreBounds=True)
         indicator_plot.addItem(vline_indicator, ignoreBounds=True)
         indicator_plot.addItem(hline_indicator, ignoreBounds=True)
+        set_crosshair_visibility(current_crosshair_active)
         draw_vertical_grids()
         
         # 重繪成交標記
@@ -1260,6 +1349,12 @@ def main():
             f"收={pfmt(row['close'])}   "
             f"{delta_abs_text}({delta_pct_text}%)"
         )
+
+        ema20_val = float(row["MA20"]) if pd.notna(row["MA20"]) else float("nan")
+        if np.isfinite(ema20_val):
+            kline_ema_label.setText(f"EMA 20={pfmt(ema20_val)}")
+        else:
+            kline_ema_label.setText("EMA 20=--")
 
     def get_visible_subset(max_row_idx: int) -> pd.DataFrame:
         upper = min(max_row_idx, len(df) - 1)
@@ -1362,34 +1457,126 @@ def main():
             return
         if auto_all_mode:
             auto_all_mode = False
+        anchor_idx = min(max(idx - 1, 0), len(df) - 1) if len(df) > 0 else 0
+        update_axis_value_boxes(anchor_idx)
 
     plot.sigRangeChanged.connect(on_main_view_range_changed)
+
+    def on_indicator_view_range_changed(*_args):
+        anchor_idx = min(max(idx - 1, 0), len(df) - 1) if len(df) > 0 else 0
+        update_axis_value_boxes(anchor_idx)
+
+    indicator_plot.sigRangeChanged.connect(on_indicator_view_range_changed)
 
     # ================================================================
     # 滑鼠移動
     # ================================================================
+    def get_nearest_appeared_index_by_x(x_val: float) -> int:
+        appeared_end = min(max(idx, 1), len(df))
+        sub = df.iloc[:appeared_end]
+        if len(sub) == 0:
+            return 0
+        return int((sub["dt_ny_ts"] - x_val).abs().idxmin())
+
+    def update_axis_value_boxes(row_idx: int):
+        if len(df) == 0:
+            return
+
+        row_idx = min(max(row_idx, 0), len(df) - 1)
+        price_prec = int(df.iloc[row_idx].get("price_precision", price_precision_default))
+        price_y = float(hline.value())
+        indicator_y = float(hline_indicator.value())
+        snapped_x = float(df.iloc[row_idx]["dt_ny_ts"])
+
+        # Main Y label on right axis band (overlay the axis area)
+        main_axis_rect = plot.getAxis("right").sceneBoundingRect()
+        main_vr = plot.vb.viewRange()
+        main_ref_x = (main_vr[0][0] + main_vr[0][1]) * 0.5
+        main_scene_pt = plot.vb.mapViewToScene(QtCore.QPointF(main_ref_x, price_y))
+        main_widget_pt = win.mapFromScene(main_scene_pt)
+        _ = main_axis_rect
+        main_axis_left = max(0, win.width() - right_axis_width)
+        main_axis_right = win.width() - 1
+
+        price_axis_value_label.setText(f"{price_y:.{price_prec}f}")
+        price_axis_value_label.setMinimumWidth(0)
+        price_axis_value_label.setMaximumWidth(16777215)
+        price_axis_value_label.adjustSize()
+        p_w = price_axis_value_label.width()
+        p_h = price_axis_value_label.height()
+        p_x = main_axis_left + 2
+        if p_x + p_w > main_axis_right - 1:
+            p_x = max(main_axis_left + 1, main_axis_right - p_w - 1)
+        p_y = int(main_widget_pt.y() - p_h * 0.5)
+        p_x = max(0, min(p_x, win.width() - p_w))
+        p_y = max(0, min(p_y, win.height() - p_h))
+        price_axis_value_label.move(p_x, p_y)
+
+        # Indicator Y label on right axis band (overlay the axis area)
+        ind_axis_rect = indicator_plot.getAxis("right").sceneBoundingRect()
+        ind_vr = indicator_plot.vb.viewRange()
+        ind_ref_x = (ind_vr[0][0] + ind_vr[0][1]) * 0.5
+        ind_scene_pt = indicator_plot.vb.mapViewToScene(QtCore.QPointF(ind_ref_x, indicator_y))
+        ind_widget_pt = indicator_win.mapFromScene(ind_scene_pt)
+        _ = ind_axis_rect
+        ind_axis_left = max(0, indicator_win.width() - right_axis_width)
+        ind_axis_right = indicator_win.width() - 1
+
+        indicator_axis_value_label.setText(f"{indicator_y:.3f}")
+        indicator_axis_value_label.setMinimumWidth(0)
+        indicator_axis_value_label.setMaximumWidth(16777215)
+        indicator_axis_value_label.adjustSize()
+        i_w = indicator_axis_value_label.width()
+        i_h = indicator_axis_value_label.height()
+        i_x = ind_axis_left + 2
+        if i_x + i_w > ind_axis_right - 1:
+            i_x = max(ind_axis_left + 1, ind_axis_right - i_w - 1)
+        i_y = int(ind_widget_pt.y() - i_h * 0.5)
+        i_x = max(0, min(i_x, indicator_win.width() - i_w))
+        i_y = max(0, min(i_y, indicator_win.height() - i_h))
+        indicator_axis_value_label.move(i_x, i_y)
+
+        dt = pd.to_datetime(snapped_x, unit="s", utc=True).tz_convert("America/New_York")
+        indicator_x_value_badge.setText(dt.strftime("%H:%M (%Y.%m.%d)"))
+
     def handle_crosshair_by_x(x_val: float, active: str, y_val: float):
-        vline.setPos(x_val)
-        vline_indicator.setPos(x_val)
+        nonlocal current_crosshair_active
+        nearest_idx = get_nearest_appeared_index_by_x(x_val)
+        snapped_x = float(df.iloc[nearest_idx]["dt_ny_ts"])
+
+        vline.setPos(snapped_x)
+        vline_indicator.setPos(snapped_x)
+
+        current_crosshair_active = active
+        set_crosshair_visibility(active)
         if active == "main":
             hline.setPos(y_val)
         else:
-            hline_indicator.setPos(y_val)
+            snapped_y = quantize_step(y_val, 0.1)
+            hline_indicator.setPos(snapped_y)
 
-        nearest_idx = int((df["dt_ny_ts"] - x_val).abs().idxmin())
         update_indicator_value_panel(nearest_idx)
         update_kline_info_panel(nearest_idx)
+        update_axis_value_boxes(nearest_idx)
 
     def mouseMovedMain(evt):
+        nonlocal current_crosshair_active
         pos = evt[0]
-        if not plot.sceneBoundingRect().contains(pos):
+        if not plot.vb.sceneBoundingRect().contains(pos):
+            if current_crosshair_active == "main":
+                current_crosshair_active = "none"
+                set_crosshair_visibility("none")
             return
         mouse_point = plot.vb.mapSceneToView(pos)
         handle_crosshair_by_x(float(mouse_point.x()), "main", float(mouse_point.y()))
 
     def mouseMovedIndicator(evt):
+        nonlocal current_crosshair_active
         pos = evt[0]
-        if not indicator_plot.sceneBoundingRect().contains(pos):
+        if not indicator_plot.vb.sceneBoundingRect().contains(pos):
+            if current_crosshair_active == "indicator":
+                current_crosshair_active = "none"
+                set_crosshair_visibility("none")
             return
         mouse_point = indicator_plot.vb.mapSceneToView(pos)
         handle_crosshair_by_x(float(mouse_point.x()), "indicator", float(mouse_point.y()))
@@ -2106,7 +2293,11 @@ def main():
     root.setFocus()
 
     if len(df) > 0:
+        hline.setPos(float(df.iloc[0]["close"]))
+        hline_indicator.setPos(0.0)
+        set_crosshair_visibility("none")
         update_kline_info_panel(0)
+        update_axis_value_boxes(0)
 
     root.resize(1400, 800)
     root.show()
