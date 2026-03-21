@@ -1,7 +1,9 @@
 import pandas as pd
+import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtWidgets, QtCore, QtGui
 import pyarrow.parquet as pq
+from typing import Tuple
 
 
 # ================================================================
@@ -25,6 +27,181 @@ class TimeAxis(pg.AxisItem):
             except Exception:
                 labels.append("")
         return labels
+
+
+def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    high = df["high"].astype(float)
+    low = df["low"].astype(float)
+    close = df["close"].astype(float)
+    prev_close = close.shift(1)
+
+    tr = pd.concat([
+        (high - low),
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    return tr.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+
+
+def K_bar_score(
+    df: pd.DataFrame,
+    BBR_thresholds: Tuple[float, float] = (0.4, 0.7),
+    close_loc_thresholds: Tuple[float, float] = (0.6, 0.8),
+    push_thresholds: Tuple[float, float, float] = (0.5, 1.0, 1.5),
+    overlap_thresholds: Tuple[float, float] = (0.3, 0.5),
+) -> pd.DataFrame:
+    required = {"open", "high", "low", "close"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"df missing columns: {sorted(missing)}")
+
+    bbr1, bbr2 = sorted(BBR_thresholds)
+    cl1, cl2 = sorted(close_loc_thresholds)
+    p1, p2, p3 = sorted(push_thresholds)
+    o_tight, o_loose = sorted(overlap_thresholds)
+
+    high = df["high"].astype(float)
+    low = df["low"].astype(float)
+    open_ = df["open"].astype(float)
+    close = df["close"].astype(float)
+
+    rng = high - low
+    rng_safe = rng.replace(0.0, np.nan)
+
+    body_ratio = (close - open_).abs() / rng_safe
+    bull_close_loc = (close - low) / rng_safe
+    bear_close_loc = (high - close) / rng_safe
+
+    atr_14 = atr(df, 14).astype(float).replace(0.0, np.nan)
+    push = (close - close.shift(1)) / atr_14
+
+    prev_high = high.shift(1)
+    prev_low = low.shift(1)
+    overlap_range = (
+        pd.concat([high, prev_high], axis=1).min(axis=1)
+        - pd.concat([low, prev_low], axis=1).max(axis=1)
+    ).clip(lower=0.0)
+    overlap_ratio = overlap_range / rng_safe
+
+    def two_step_pts(x: pd.Series, t1: float, t2: float, mid: float, top: float) -> np.ndarray:
+        xa = x.to_numpy(dtype=float)
+        return np.where(xa > t2, top, np.where(xa > t1, mid, 0.0))
+
+    def three_step_pts(x: pd.Series, t1: float, t2: float, t3: float, a: float, b: float, c: float) -> np.ndarray:
+        xa = x.to_numpy(dtype=float)
+        return np.where(xa > t3, c, np.where(xa > t2, b, np.where(xa > t1, a, 1.0)))
+
+    body_pts = two_step_pts(body_ratio, bbr1, bbr2, mid=0.5, top=1.0)
+    bull_close_pts = two_step_pts(bull_close_loc, cl1, cl2, mid=0.5, top=1.0)
+    bull_push_pts = three_step_pts(push, p1, p2, p3, a=1.3, b=1.6, c=2.0)
+
+    ov = overlap_ratio.to_numpy(dtype=float)
+    overlap_pts = np.where(ov < o_tight, 1.0, np.where(ov < o_loose, 0.5, 0.0))
+
+    bear_close_pts = two_step_pts(bear_close_loc, cl1, cl2, mid=0.5, top=1.0)
+    bear_push_pts = three_step_pts((-push), p1, p2, p3, a=1.3, b=1.6, c=2.0)
+
+    bull_mask = (close > open_).to_numpy()
+    bear_mask = (close < open_).to_numpy()
+
+    close_pts = np.where(bull_mask, bull_close_pts, np.where(bear_mask, bear_close_pts, 0.0))
+    push_pts = np.where(bull_mask, bull_push_pts, np.where(bear_mask, bear_push_pts, 0.0))
+
+    bull_score = (body_pts + bull_close_pts + overlap_pts) * bull_push_pts
+    bear_score_abs = (body_pts + bear_close_pts + overlap_pts) * bear_push_pts
+    bear_score_signed = -bear_score_abs
+
+    score = np.zeros(len(df), dtype=float)
+    score[bull_mask] = bull_score[bull_mask]
+    score[bear_mask] = bear_score_signed[bear_mask]
+
+    bull_bar_score = np.where(bull_mask, bull_score, 0.0)
+    bear_bar_score = np.where(bear_mask, bear_score_signed, 0.0)
+
+    s = pd.Series(score, index=df.index, name="bar_score").fillna(0.0)
+    return pd.DataFrame(
+        {
+            "body_pts": body_pts,
+            "close_pts": close_pts,
+            "push_pts": push_pts,
+            "overlap_pts": overlap_pts,
+            "bull_bar_score": bull_bar_score,
+            "bear_bar_score": bear_bar_score,
+            "bar_score": s,
+        },
+        index=df.index,
+    )
+
+
+def K_run_score(
+    df: pd.DataFrame,
+    BBR_thresholds: Tuple[float, float] = (0.4, 0.7),
+    close_loc_thresholds: Tuple[float, float] = (0.6, 0.8),
+    push_thresholds: Tuple[float, float, float] = (0.5, 1.0, 1.5),
+    overlap_thresholds: Tuple[float, float] = (0.3, 0.5),
+) -> pd.DataFrame:
+    kbar_df = K_bar_score(df, BBR_thresholds, close_loc_thresholds, push_thresholds, overlap_thresholds)
+    bar_score = kbar_df["bar_score"]
+    bull_bar_score = kbar_df["bull_bar_score"].astype(float)
+    bear_bar_score = kbar_df["bear_bar_score"].astype(float)
+    close = df["close"].astype(float)
+    open_ = df["open"].astype(float)
+
+    dir_ = np.sign((close - open_).to_numpy())
+    dir_s = pd.Series(dir_, index=df.index)
+
+    new_seg = (dir_s == 0) | (dir_s != dir_s.shift(1))
+    seg_id = new_seg.cumsum()
+
+    run = bar_score.where(dir_s != 0, 0.0).groupby(seg_id).cumsum()
+    run = run.where(dir_s != 0, 0.0)
+    run.name = "run_score"
+
+    bull_active = dir_s == 1
+    bear_active = dir_s == -1
+    bull_run = bull_bar_score.where(bull_active, 0.0).groupby((~bull_active).cumsum()).cumsum().where(bull_active, 0.0)
+    bear_run = bear_bar_score.where(bear_active, 0.0).groupby((~bear_active).cumsum()).cumsum().where(bear_active, 0.0)
+
+    return pd.DataFrame(
+        {
+            "bar_score": bar_score,
+            "seg_id": seg_id,
+            "run_score": run,
+            "bull_bar_score": bull_bar_score,
+            "bear_bar_score": bear_bar_score,
+            "bull_run": bull_run,
+            "bear_run": bear_run,
+        },
+        index=df.index,
+    )
+
+
+def centered_step_edges(x: np.ndarray) -> np.ndarray:
+    """Build x-edges for centered step plotting (len(edges)=len(x)+1)."""
+    x = np.asarray(x, dtype=float)
+    n = x.size
+    if n == 0:
+        return np.array([], dtype=float)
+    if n == 1:
+        return np.array([x[0] - 0.5, x[0] + 0.5], dtype=float)
+
+    mids = (x[:-1] + x[1:]) * 0.5
+    left_edge = x[0] - (x[1] - x[0]) * 0.5
+    right_edge = x[-1] + (x[-1] - x[-2]) * 0.5
+    return np.concatenate(([left_edge], mids, [right_edge]))
+
+
+def centered_step_xy(x: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Convert centered step data into plain line coordinates with equal-length x/y."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if x.size == 0 or y.size == 0:
+        return np.array([], dtype=float), np.array([], dtype=float)
+
+    edges = centered_step_edges(x)
+    step_x = np.repeat(edges, 2)[1:-1]
+    step_y = np.repeat(y, 2)
+    return step_x, step_y
 
 
 # ================================================================
@@ -55,7 +232,7 @@ def main():
 
     # ----------------------------- 讀取 parquet -----------------------------
     # df = pq.read_table("ETH_1m_6M_UTC.parquet").to_pandas()
-    df = pq.read_table(fr"data source/{coin_name}_{N_minutes}m_48M_UTC.parquet").to_pandas()
+    df = pq.read_table(fr"backtest app/data source/{coin_name}_{N_minutes}m_48M_UTC.parquet").to_pandas()
     
     df["dt_ny"] = pd.to_datetime(df["dt_utc"], utc=True).dt.tz_convert("America/New_York")
     df["date"] = df["dt_ny"].dt.date
@@ -139,7 +316,6 @@ def main():
 
     df["delta_c"] = df["close"].diff().fillna(0)*100/df["close"]
 
-
     # ================================================================
     # ⭐⭐ 啟動時設定起始時間
     # ================================================================
@@ -152,6 +328,15 @@ def main():
 
     df = df.loc[start_idx:].reset_index(drop=True)
     df["bar_index"] = df.index
+
+    k_bar_score_df = K_bar_score(df)
+    k_run_score_df = K_run_score(df)
+    df["kbar_score"] = k_bar_score_df["bar_score"].astype(float)
+    df["run_score"] = k_run_score_df["run_score"].astype(float)
+    df["bull_bar_score"] = k_run_score_df["bull_bar_score"].astype(float)
+    df["bear_bar_score"] = k_run_score_df["bear_bar_score"].astype(float)
+    df["bull_run"] = k_run_score_df["bull_run"].astype(float)
+    df["bear_run"] = k_run_score_df["bear_run"].astype(float)
 
     bars = df.to_dict("records")
     total = len(bars)
@@ -209,12 +394,22 @@ def main():
     btn_screenshot.setFixedSize(60, 30)
     btn_screenshot.setToolTip("截圖並匯出圖表")
 
+    btn_auto_scale = QtWidgets.QPushButton("Auto")
+    btn_auto_scale.setFixedSize(60, 30)
+    btn_auto_scale.setToolTip("以目前視窗內資料自動縮放")
+
+    btn_auto_all = QtWidgets.QPushButton("AutoAll")
+    btn_auto_all.setFixedSize(70, 30)
+    btn_auto_all.setToolTip("以全部 index 資料自動縮放")
+
     toolbar_layout.addWidget(btn_h_line)
     toolbar_layout.addWidget(btn_l_line)
     toolbar_layout.addWidget(btn_fibo)
     toolbar_layout.addWidget(btn_text)
     toolbar_layout.addWidget(btn_range)
     toolbar_layout.addWidget(btn_screenshot)
+    toolbar_layout.addWidget(btn_auto_scale)
+    toolbar_layout.addWidget(btn_auto_all)
     toolbar_layout.addStretch()
 
     left_layout.addWidget(toolbar)
@@ -229,50 +424,53 @@ def main():
     pg.setConfigOption('foreground', 'white')
 
     # ================================================================
-    # ⭐ 資訊欄（上方顯示四欄，對齊Y位置）
+    # 上方 K 線窗格
     # ================================================================
-    top_panel = pg.LabelItem(color="white", size="12pt")
-    win.addItem(top_panel, row=0, col=0)
-
-    top_panel.setMinimumHeight(90)
-    top_panel.setMaximumHeight(130)
-
-    # ================================================================
-    # ⭐ 上方右側占位符（空白）
-    # ================================================================
-    spacer_top_right = pg.LabelItem(color="white", size="12pt")
-    spacer_top_right.setText("")
-    win.addItem(spacer_top_right, row=0, col=1)
-    spacer_top_right.setMaximumHeight(130)
-
-    # ================================================================
-    # 圖表放在下方左側
-    # ================================================================
-    plot = win.addPlot(axisItems={"bottom": time_axis}, row=1, col=0)
+    plot = win.addPlot(row=0, col=0)
     plot.getViewBox().setBackgroundColor("#181c27")
 
     plot.setAutoVisible(y=True)
     plot.showGrid(x=False, y=True, alpha=0.3)
 
-    plot.showAxis("right", True)
-    plot.showAxis("left", False)
+    plot.showAxis("right", False)
+    plot.showAxis("left", True)
+    plot.setLabel("left", "Price")
+    plot.showAxis("bottom", False)
+    plot.hideButtons()
 
     # ================================================================
-    # ⭐ 右侧資訊欄（游標Y、NY_time，與Y軸並列）
+    # 下方技術指標窗格（X 軸與 K 線對齊）
     # ================================================================
-    right_cursor_panel = pg.LabelItem(color="white", size="13pt")
-    win.addItem(right_cursor_panel, row=1, col=1)
-    
-    right_cursor_panel.setMinimumWidth(200)
-    right_cursor_panel.setMaximumWidth(240)
+    indicator_plot = win.addPlot(axisItems={"bottom": time_axis}, row=1, col=0)
+    indicator_plot.getViewBox().setBackgroundColor("#141822")
+    indicator_plot.showGrid(x=False, y=True, alpha=0.2)
+    indicator_plot.showAxis("left", True)
+    indicator_plot.showAxis("right", False)
+    indicator_plot.setLabel("left", "Score")
+    indicator_plot.setYRange(-15, 15, padding=0)
+    indicator_plot.enableAutoRange(y=False)
+    indicator_plot.hideButtons()
+
+    # 固定左右窗格左軸寬度，避免不同位數導致繪圖區域錯位
+    left_axis_width = 72
+    plot.getAxis("left").setWidth(left_axis_width)
+    indicator_plot.getAxis("left").setWidth(left_axis_width)
+
+    indicator_plot.setXLink(plot)
+    win.ci.layout.setRowStretchFactor(0, 4)
+    win.ci.layout.setRowStretchFactor(1, 2)
 
     # ================================================================
     # 十字游標線
     # ================================================================
     vline = pg.InfiniteLine(angle=90, pen=pg.mkPen("gray", width=1))
     hline = pg.InfiniteLine(angle=0, pen=pg.mkPen("gray", width=1))
+    vline_indicator = pg.InfiniteLine(angle=90, pen=pg.mkPen("gray", width=1))
+    hline_indicator = pg.InfiniteLine(angle=0, pen=pg.mkPen("gray", width=1))
     plot.addItem(vline, ignoreBounds=True)
     plot.addItem(hline, ignoreBounds=True)
+    indicator_plot.addItem(vline_indicator, ignoreBounds=True)
+    indicator_plot.addItem(hline_indicator, ignoreBounds=True)
 
     # ================================================================
     # 按鈕功能連接
@@ -325,6 +523,50 @@ def main():
     btn_text.clicked.connect(on_text_clicked)
     btn_range.clicked.connect(on_range_clicked)
     btn_screenshot.clicked.connect(on_screenshot_clicked)
+
+    def on_auto_scale_clicked():
+        if len(df) == 0:
+            return
+        anchor_idx = min(max(idx - 1, 0), len(df) - 1)
+        update_main_axis_range(anchor_idx)
+        update_indicator_axis_range(anchor_idx)
+        update_indicator_value_panel(anchor_idx)
+
+    btn_auto_scale.clicked.connect(on_auto_scale_clicked)
+
+    def on_auto_all_clicked():
+        if len(df) == 0:
+            return
+
+        appeared_end = min(max(idx, 1), len(df))
+        appeared = df.iloc[:appeared_end]
+
+        x_min = float(appeared["dt_ny_ts"].min())
+        x_max = float(appeared["dt_ny_ts"].max())
+        if x_max <= x_min:
+            x_max = x_min + 1.0
+
+        # 主圖：全部 K 線高低點範圍
+        low_min = float(appeared["low"].min())
+        high_max = float(appeared["high"].max())
+        span = high_max - low_min
+        pad = max(span * 0.08, max(abs(high_max), abs(low_min), 1.0) * 0.002)
+        plot.setXRange(x_min, x_max, padding=0.01)
+        plot.setYRange(low_min - pad, high_max + pad, padding=0)
+
+        # 指標圖：全部 index 的規則範圍
+        bull_vals = appeared["bull_run"].to_numpy(dtype=float)
+        bear_vals = appeared["bear_run"].to_numpy(dtype=float)
+        bull_finite = bull_vals[np.isfinite(bull_vals)]
+        bear_finite = bear_vals[np.isfinite(bear_vals)]
+        bull_max = float(np.max(bull_finite)) if bull_finite.size > 0 else 0.0
+        bear_min = float(np.min(bear_finite)) if bear_finite.size > 0 else 0.0
+        indicator_plot.setYRange(bear_min - 3.0, bull_max + 3.0, padding=0.03)
+
+        # 面板位置：bull_run 全部最高值 +1
+        indicator_value_panel.setPos(x_min + (x_max - x_min) * 0.015, bull_max + 1.0)
+
+    btn_auto_all.clicked.connect(on_auto_all_clicked)
 
     # ================================================================
     # ⭐⭐ 模擬下單面板（多空、類型、價格、PnL）
@@ -700,6 +942,31 @@ def main():
     ma_curve_20 = plot.plot(pen=pg.mkPen("green", width=2))
     ma_curve_100 = plot.plot(pen=pg.mkPen("orange", width=2))
 
+    # 下方指標曲線（對齊 TradingView: cross + stepline）
+    bull_bar_scatter = pg.ScatterPlotItem(
+        size=8,
+        symbol='x',
+        pen=pg.mkPen((255, 204, 128), width=2),
+        brush=None,
+        name="bull_bar_score"
+    )
+    bear_bar_scatter = pg.ScatterPlotItem(
+        size=8,
+        symbol='x',
+        pen=pg.mkPen((244, 143, 177), width=2),
+        brush=None,
+        name="bear_bar_score"
+    )
+    indicator_plot.addItem(bull_bar_scatter)
+    indicator_plot.addItem(bear_bar_scatter)
+    bull_run_curve = indicator_plot.plot(pen=pg.mkPen((8, 153, 129), width=2), name="bull_run")
+    bear_run_curve = indicator_plot.plot(pen=pg.mkPen((229, 57, 53), width=2), name="bear_run")
+    indicator_plot.addItem(pg.InfiniteLine(pos=0, angle=0, pen=pg.mkPen((255, 255, 255, 80), width=1)))
+
+    indicator_value_panel = pg.TextItem(anchor=(0, 1), color="white")
+    indicator_value_panel.setZValue(30)
+    indicator_plot.addItem(indicator_value_panel, ignoreBounds=True)
+
     # ================================================================
     # 畫 K 線 function
     # ================================================================
@@ -793,12 +1060,44 @@ def main():
     # redraw（倒帶）
     # ================================================================
     def redraw_all():
-        plot.clear()
+        def set_scatter_by_mask(scatter_obj, x_vals, y_vals, mask_vals):
+            x_arr = np.asarray(x_vals, dtype=float)
+            y_arr = np.asarray(y_vals, dtype=float)
+            mask_arr = np.asarray(mask_vals, dtype=bool)
+            if x_arr.size == 0 or y_arr.size == 0 or not mask_arr.any():
+                scatter_obj.setData(x=[], y=[])
+                return
+            scatter_obj.setData(x=x_arr[mask_arr], y=y_arr[mask_arr])
 
-        nonlocal ma_curve_20, ma_curve_100
+        plot.clear()
+        indicator_plot.clear()
+
+        nonlocal ma_curve_20, ma_curve_100, bull_run_curve, bear_run_curve, bull_bar_scatter, bear_bar_scatter, indicator_value_panel
         ma_curve_20 = plot.plot(pen=pg.mkPen("green", width=2))
         if N_minutes == 1:
             ma_curve_100 = plot.plot(pen=pg.mkPen("orange", width=2))
+        bull_bar_scatter = pg.ScatterPlotItem(
+            size=8,
+            symbol='x',
+            pen=pg.mkPen((255, 204, 128), width=2),
+            brush=None,
+            name="bull_bar_score"
+        )
+        bear_bar_scatter = pg.ScatterPlotItem(
+            size=8,
+            symbol='x',
+            pen=pg.mkPen((244, 143, 177), width=2),
+            brush=None,
+            name="bear_bar_score"
+        )
+        indicator_plot.addItem(bull_bar_scatter)
+        indicator_plot.addItem(bear_bar_scatter)
+        bull_run_curve = indicator_plot.plot(pen=pg.mkPen((8, 153, 129), width=2), name="bull_run")
+        bear_run_curve = indicator_plot.plot(pen=pg.mkPen((229, 57, 53), width=2), name="bear_run")
+        indicator_plot.addItem(pg.InfiniteLine(pos=0, angle=0, pen=pg.mkPen((255, 255, 255, 80), width=1)))
+        indicator_value_panel = pg.TextItem(anchor=(0, 1), color="white")
+        indicator_value_panel.setZValue(30)
+        indicator_plot.addItem(indicator_value_panel, ignoreBounds=True)
 
         for i in range(1, idx):
             bar = bars[i]
@@ -821,8 +1120,29 @@ def main():
             if N_minutes == 1:
                 ma_curve_100.setData(times, ma_vals_100)
 
+            bull_mask = (df.iloc[:idx]["close"] > df.iloc[:idx]["open"]).values
+            bear_mask = (df.iloc[:idx]["close"] < df.iloc[:idx]["open"]).values
+            set_scatter_by_mask(
+                bull_bar_scatter,
+                times,
+                df.iloc[:idx]["bull_bar_score"].values,
+                bull_mask,
+            )
+            set_scatter_by_mask(
+                bear_bar_scatter,
+                times,
+                df.iloc[:idx]["bear_bar_score"].values,
+                bear_mask,
+            )
+            bull_step_x, bull_step_y = centered_step_xy(times, df.iloc[:idx]["bull_run"].values)
+            bear_step_x, bear_step_y = centered_step_xy(times, df.iloc[:idx]["bear_run"].values)
+            bull_run_curve.setData(bull_step_x, bull_step_y)
+            bear_run_curve.setData(bear_step_x, bear_step_y)
+
         plot.addItem(vline, ignoreBounds=True)
         plot.addItem(hline, ignoreBounds=True)
+        indicator_plot.addItem(vline_indicator, ignoreBounds=True)
+        indicator_plot.addItem(hline_indicator, ignoreBounds=True)
         draw_vertical_grids()
         
         # 重繪成交標記
@@ -836,97 +1156,150 @@ def main():
         # 重繪後更新 PnL 顯示
         update_pnl_labels()
 
+        if idx > 0:
+            update_indicator_axis_range(max(0, idx - 1))
+        else:
+            indicator_plot.setYRange(-15, 15, padding=0)
+
+        if idx > 0:
+            update_indicator_value_panel(max(0, idx - 1))
+
+    def get_visible_subset(max_row_idx: int) -> pd.DataFrame:
+        upper = min(max_row_idx, len(df) - 1)
+        if upper < 0:
+            return df.iloc[0:0]
+
+        base = df.iloc[:upper + 1]
+        x0, x1 = plot.viewRange()[0]
+        x_min, x_max = (x0, x1) if x0 <= x1 else (x1, x0)
+        vis = base[(base["dt_ny_ts"] >= x_min) & (base["dt_ny_ts"] <= x_max)]
+        if len(vis) > 0:
+            return vis
+
+        # 視窗內沒有點時，回退到距離視窗中心最近的一根
+        center_x = (x_min + x_max) * 0.5
+        nearest_idx = (base["dt_ny_ts"] - center_x).abs().idxmin()
+        return base.loc[[nearest_idx]]
+
+    def update_main_axis_range(row_idx: int):
+        if row_idx < 0:
+            return
+
+        sub = get_visible_subset(row_idx)
+        if len(sub) == 0:
+            return
+
+        low_min = float(sub["low"].min())
+        high_max = float(sub["high"].max())
+        span = high_max - low_min
+        pad = max(span * 0.08, max(abs(high_max), abs(low_min), 1.0) * 0.002)
+        plot.setYRange(low_min - pad, high_max + pad, padding=0)
+
+    def update_indicator_axis_range(row_idx: int):
+        if row_idx < 0:
+            indicator_plot.setYRange(-15, 15, padding=0)
+            return
+
+        sub = get_visible_subset(row_idx)
+        bull_vals = sub["bull_run"].to_numpy(dtype=float)
+        bear_vals = sub["bear_run"].to_numpy(dtype=float)
+        bull_finite = bull_vals[np.isfinite(bull_vals)]
+        bear_finite = bear_vals[np.isfinite(bear_vals)]
+
+        bull_max = float(np.max(bull_finite)) if bull_finite.size > 0 else 0.0
+        bear_min = float(np.min(bear_finite)) if bear_finite.size > 0 else 0.0
+
+        y_max = bull_max + 3.0
+        y_min = bear_min - 3.0
+        if abs(y_max - y_min) < 1e-9:
+            y_max = y_min + 1.0
+        indicator_plot.setYRange(y_min, y_max, padding=0.03)
+
+    def update_indicator_value_panel(row_idx: int):
+        if row_idx < 0 or row_idx >= len(df):
+            return
+
+        row = df.iloc[row_idx]
+        bull_active = row["close"] > row["open"]
+        bear_active = row["close"] < row["open"]
+
+        bull_bar_txt = f"{float(row['bull_bar_score']):.3f}" if bull_active else "-"
+        bear_bar_txt = f"{float(row['bear_bar_score']):.3f}" if bear_active else "-"
+        bull_run_txt = f"{float(row['bull_run']):.3f}" if bull_active else "-"
+        bear_run_txt = f"{float(row['bear_run']):.3f}" if bear_active else "-"
+
+        indicator_value_panel.setHtml(
+            "<div style='background-color: rgba(20,24,34,210); padding: 6px;'>"
+            f"<span style='font-size:9pt; color:#ffcc80;'>{bull_bar_txt}</span>"
+            "<span style='font-size:9pt; color:#7f8897;'> | </span>"
+            f"<span style='font-size:9pt; color:#f48fb1;'>{bear_bar_txt}</span>"
+            "<span style='font-size:9pt; color:#7f8897;'> | </span>"
+            f"<span style='font-size:9pt; color:#089981;'>{bull_run_txt}</span>"
+            "<span style='font-size:9pt; color:#7f8897;'> | </span>"
+            f"<span style='font-size:9pt; color:#e53935;'>{bear_run_txt}</span>"
+            "</div>"
+        )
+
+        x_range, y_range = indicator_plot.viewRange()
+        x_pad = (x_range[1] - x_range[0]) * 0.015
+        sub = get_visible_subset(row_idx)
+        bull_vals = sub["bull_run"].to_numpy(dtype=float)
+        bull_finite = bull_vals[np.isfinite(bull_vals)]
+        bull_max = float(np.max(bull_finite)) if bull_finite.size > 0 else 0.0
+        y_anchor = bull_max + 1.0
+        if y_anchor > y_range[1]:
+            y_anchor = y_range[1] - (y_range[1] - y_range[0]) * 0.08
+        if y_anchor < y_range[0]:
+            y_anchor = y_range[0] + (y_range[1] - y_range[0]) * 0.08
+        indicator_value_panel.setPos(x_range[0] + x_pad, y_anchor)
+
+    # Auto 按鈕或其他 range 變更後，強制套回自訂規則
+    syncing_indicator_range = False
+
+    def enforce_indicator_range_rules(*_args):
+        nonlocal syncing_indicator_range
+        if syncing_indicator_range:
+            return
+        if len(df) == 0:
+            return
+
+        syncing_indicator_range = True
+        try:
+            anchor_idx = min(max(idx - 1, 0), len(df) - 1)
+            update_indicator_axis_range(anchor_idx)
+            update_indicator_value_panel(anchor_idx)
+        finally:
+            syncing_indicator_range = False
+
+    indicator_plot.sigRangeChanged.connect(enforce_indicator_range_rules)
+
     # ================================================================
     # 滑鼠移動
     # ================================================================
     def mouseMoved(evt):
         pos = evt[0]
-        if not plot.sceneBoundingRect().contains(pos):
+        in_main = plot.sceneBoundingRect().contains(pos)
+        in_indicator = indicator_plot.sceneBoundingRect().contains(pos)
+        if not in_main and not in_indicator:
             return
 
-        mouse_point = plot.vb.mapSceneToView(pos)
+        active_plot = plot if in_main else indicator_plot
+        mouse_point = active_plot.vb.mapSceneToView(pos)
 
+        # 垂直線同步更新到兩個窗格
         vline.setPos(mouse_point.x())
-        hline.setPos(mouse_point.y())
+        vline_indicator.setPos(mouse_point.x())
 
-        # 找最近 K
-        mx = mouse_point.x()
-        nearest_idx = (df["dt_ny_ts"] - mx).abs().idxmin()
-        row = df.iloc[nearest_idx]
-        
-        # 游標Y位置（價格）
-        cursor_y = mouse_point.y()
-        ny_time = str(row['dt_ny']).split(' ')[1].split('-')[0]
-        
-        # 價格精度（依當日開盤價）
-        price_prec = int(row.get("price_precision", price_precision_default))
-        price_fmt = f"{{:.{price_prec}f}}"
-        fmt_price = lambda val: price_fmt.format(val)
+        # 水平線分別在當前窗格更新
+        if in_main:
+            hline.setPos(mouse_point.y())
+        else:
+            hline_indicator.setPos(mouse_point.y())
 
-        # 右侧資訊欄（游標Y和NY_time）
-        right_cursor_panel.setText(
-            f"<span style='font-size:12pt;'>"
-            f"<b>Cursor Y:</b><br>{fmt_price(cursor_y)}<br><br>"
-            f"<b>NY_time:</b><br>{ny_time}"
-            f"</span>"
-        )
-        
-        # 上方資訊欄（四欄佈局，保留所有原本資訊）
-        col1 = (
-            f"<b>OHLC</b><br>-------------<br>"
-            f"O: {fmt_price(row['open'])}<br>"
-            f"H: {fmt_price(row['high'])}<br>"
-            f"L: {fmt_price(row['low'])}<br>"
-            f"C: {fmt_price(row['close'])}"
-        )
-        
-        col2 = f"<b>SB info</b><br>-------------<br>ΔC: {row['delta_c']:.3f}%<br>size: {row['K_range']:.3f}% ({row['K_range_level']})<br>BBR: {row['body_ratio']:.3f} ({row['body_ratio_level']})<br>Shadow: {row['shadow_ratio']:.3f} <br>C Shadow: {row['counter_shadow_ratio']:.3f}"
-        
-        col3 = (
-            f"<b>EB profit</b><br>-------------<br>"
-            f"C2_profit_R: {row['C2_profit_R']:.3f}<br>"
-            f"Max_K2_profit_R: {row['Max_K2_profit_R']:.3f}<br>"
-            f"MA20: {fmt_price(row['MA20'])}"
-        )
-        if N_minutes == 1:
-            col3 += f"<br>MA100: {fmt_price(row['MA100'])}"
-        
-        col4 = (
-            f"<b>Entry info</b><br>-------------<br>"
-            f"entry: {fmt_price(row['entry_price'])}<br>"
-            f"SL: {fmt_price(row['SL_price'])}<br>"
-            f"size: {row['size']:.3f}<br>"
-        )
-        col5 = (
-            f"<b>R Levels</b><br>-------------<br>"
-            f"0.4R: {fmt_price(row['0.4R'])}<br>"
-            f"0.7R: {fmt_price(row['0.7R'])}<br>"
-            f"1.0R: {fmt_price(row['1.0R'])}"
-        )
-        col6= (
-            f"<b>R Levels</b><br>-------------<br>"
-            f"1.3R: {fmt_price(row['1.3R'])}<br>"
-            f"1.6R: {fmt_price(row['1.6R'])}<br>"
-            f"2.0R: {fmt_price(row['2.0R'])}"
-        )
+        nearest_idx = int((df["dt_ny_ts"] - mouse_point.x()).abs().idxmin())
+        update_indicator_value_panel(nearest_idx)
 
-        
-        top_panel.setText(
-            f"<span style='font-size:11pt;'>"
-            f"<table width='100%' cellspacing='6' cellpadding='2'>"
-            f"<tr>"
-            f"<td style='vertical-align:top;'>{col3}</td>"
-            f"<td style='vertical-align:top;'>{col1}</td>"
-            f"<td style='vertical-align:top;'>{col5}</td>"
-            f"<td style='vertical-align:top;'>{col6}</td>"
-            f"<td style='vertical-align:top;'>{col2}</td>"
-            f"<td style='vertical-align:top;'>{col4}</td>"
-            f"</tr>"
-            f"</table>"
-            f"</span>"
-        )
-
-    proxy = pg.SignalProxy(plot.scene().sigMouseMoved, rateLimit=60, slot=mouseMoved)
+    proxy = pg.SignalProxy(win.scene().sigMouseMoved, rateLimit=60, slot=mouseMoved)
 
     # ================================================================
     # 自訂文字輸入對話框
@@ -1506,6 +1879,15 @@ def main():
         if idx >= total:
             return
 
+        def set_scatter_by_mask(scatter_obj, x_vals, y_vals, mask_vals):
+            x_arr = np.asarray(x_vals, dtype=float)
+            y_arr = np.asarray(y_vals, dtype=float)
+            mask_arr = np.asarray(mask_vals, dtype=bool)
+            if x_arr.size == 0 or y_arr.size == 0 or not mask_arr.any():
+                scatter_obj.setData(x=[], y=[])
+                return
+            scatter_obj.setData(x=x_arr[mask_arr], y=y_arr[mask_arr])
+
         bar = bars[idx]
         draw_bar(bar)
 
@@ -1518,6 +1900,25 @@ def main():
         ma_curve_20.setData(times, ma_vals)
         if N_minutes == 1:
             ma_curve_100.setData(times, ma_vals_100)
+        bull_mask = (df.iloc[:idx+1]["close"] > df.iloc[:idx+1]["open"]).values
+        bear_mask = (df.iloc[:idx+1]["close"] < df.iloc[:idx+1]["open"]).values
+        set_scatter_by_mask(
+            bull_bar_scatter,
+            times,
+            df.iloc[:idx+1]["bull_bar_score"].values,
+            bull_mask,
+        )
+        set_scatter_by_mask(
+            bear_bar_scatter,
+            times,
+            df.iloc[:idx+1]["bear_bar_score"].values,
+            bear_mask,
+        )
+        bull_step_x, bull_step_y = centered_step_xy(times, df.iloc[:idx+1]["bull_run"].values)
+        bear_step_x, bear_step_y = centered_step_xy(times, df.iloc[:idx+1]["bear_run"].values)
+        bull_run_curve.setData(bull_step_x, bull_step_y)
+        bear_run_curve.setData(bear_step_x, bear_step_y)
+        update_indicator_axis_range(idx)
 
         offset = (bar["high"] - bar["low"]) * 0.3
         txt = pg.TextItem(
@@ -1528,6 +1929,8 @@ def main():
         txt.setPos(bar["dt_ny"].timestamp(), bar["low"] - offset)
         plot.addItem(txt)
         draw_vertical_grids()
+
+        update_indicator_value_panel(idx)
 
         idx += 1
         update_pnl_labels()
@@ -1578,13 +1981,30 @@ def main():
                 idx -= 1
                 redraw_all()
 
-    # 將鍵盤事件綁定在頂層視窗，確保可接收快捷鍵
+    # 將鍵盤事件綁定在頂層視窗
     root.keyPressEvent = keyPress
+
+    # 使用全域快捷鍵，避免焦點在子元件時左右鍵失效
+    shortcut_right = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Right), root)
+    shortcut_right.setContext(QtCore.Qt.ApplicationShortcut)
+    shortcut_right.activated.connect(update)
+
+    def step_back():
+        nonlocal idx
+        if idx > 1:
+            idx -= 1
+            redraw_all()
+
+    shortcut_left = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Left), root)
+    shortcut_left.setContext(QtCore.Qt.ApplicationShortcut)
+    shortcut_left.activated.connect(step_back)
 
     def on_close(event):
         QtWidgets.QApplication.quit()
 
     root.closeEvent = on_close
+    root.setFocusPolicy(QtCore.Qt.StrongFocus)
+    root.setFocus()
 
     root.resize(1400, 800)
     root.show()
