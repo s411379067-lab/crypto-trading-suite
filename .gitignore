@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+build/
+dist/
+*.spec
+*.exe
+.env
+.DS_Store
+
+# Data files
+*.parquet
