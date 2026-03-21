@@ -10,6 +10,21 @@ from typing import Tuple
 # 自訂時間軸（顯示 HH:MM (MM.DD)）
 # ================================================================
 class TimeAxis(pg.AxisItem):
+    TZ_MAP = {
+        "New York": "America/New_York",
+        "UTC": "UTC",
+        "Taipei": "Asia/Taipei",
+    }
+
+    def __init__(self, *args, timezone_name: str = "New York", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.timezone_name = timezone_name if timezone_name in self.TZ_MAP else "New York"
+
+    def set_timezone(self, timezone_name: str):
+        self.timezone_name = timezone_name if timezone_name in self.TZ_MAP else "New York"
+        self.picture = None
+        self.update()
+
     def tickValues(self, minVal, maxVal, size):
         span = max(float(maxVal) - float(minVal), 1.0)
         px = max(float(size), 1.0)
@@ -31,9 +46,10 @@ class TimeAxis(pg.AxisItem):
 
     def tickStrings(self, values, scale, spacing):
         labels = []
+        tz_name = self.TZ_MAP.get(self.timezone_name, "America/New_York")
         for ts in values:
             try:
-                dt = pd.to_datetime(ts, unit="s", utc=True).tz_convert("America/New_York")
+                dt = pd.to_datetime(ts, unit="s", utc=True).tz_convert(tz_name)
 
                 if spacing >= 86400:
                     labels.append(dt.strftime("%Y.%m.%d"))
@@ -223,7 +239,8 @@ def centered_step_xy(x: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, np.ndarr
 # 主程式
 # ================================================================
 def main():
-    START_TIME = "2025-12-31 05:40"
+    DATA_START_TIME = "2022-12-28 00:00"
+    REPLAY_START_TIME = "2025-12-31 05:40"
 
 
     N_minutes = 5  # K 線時間週期
@@ -249,7 +266,12 @@ def main():
     # df = pq.read_table("ETH_1m_6M_UTC.parquet").to_pandas()
     df = pq.read_table(fr"backtest app/data source/{coin_name}_{N_minutes}m_48M_UTC.parquet").to_pandas()
     
-    df["dt_ny"] = pd.to_datetime(df["dt_utc"], utc=True).dt.tz_convert("America/New_York")
+    df["dt_utc"] = pd.to_datetime(df["dt_utc"], utc=True)
+    df["dt_ny"] = df["dt_utc"].dt.tz_convert("America/New_York")
+    df["dt_tp"] = df["dt_utc"].dt.tz_convert("Asia/Taipei")
+    time_base_name = "New York"
+    df["dt_based"] = df["dt_ny"]
+    df["dt_based_ts"] = df["dt_based"].map(lambda x: x.timestamp())
     df["date"] = df["dt_ny"].dt.date
     df = df.sort_values(["date", "dt_ny"]).reset_index(drop=True)
     df["bar_index"] = df.groupby("date").cumcount() + 1
@@ -261,11 +283,9 @@ def main():
     df["price_precision"] = df["day_open_price"].apply(lambda v: 4 if v < 10 else 2).astype(int)
     price_precision_default = int(df["price_precision"].iloc[0]) if len(df) > 0 else 2
 
-    df["dt_ny_ts"] = df["dt_ny"].map(lambda x: x.timestamp())
-
-    ## 只取指定時間前後3天的資料
-    start_dt = pd.to_datetime(START_TIME).tz_localize("America/New_York")
-    df = df[(df["dt_ny"] >= start_dt - pd.Timedelta(days=3)) & (df["dt_ny"] <= start_dt + pd.Timedelta(days=3))]
+    # 第一個時間：控制可用資料最早起點
+    data_start_dt = pd.to_datetime(DATA_START_TIME).tz_localize("America/New_York")
+    df = df[df["dt_ny"] >= data_start_dt]
     df = df.reset_index(drop=True)
 
     # ================================================================
@@ -293,55 +313,47 @@ def main():
     df["size"] = 0.0
     df["shadow_ratio"] = 0.0
     df["counter_shadow_ratio"] = 0.0
-    for i in range(len(df)):
-        if i != 0:
-            if df.at[i-1, "close"] < df.at[i-1, "open"]:  # K0 is bear bar
-                df.at[i, "C2_profit_R"] = (df.at[i-1, "low"] - df.at[i, "close"]) / ((df.at[i-1, "high"] - df.at[i-1, "low"]) * N_R_SL)
-                df.at[i, "Max_K2_profit_R"] = (df.at[i-1, "low"] - df.at[i, "low"]) / ((df.at[i-1, "high"] - df.at[i-1, "low"]) * N_R_SL)
-            else:  # K0 is bull bar
-                df.at[i, "C2_profit_R"] = (df.at[i, "close"] - df.at[i-1, "high"]) / ((df.at[i-1, "high"] - df.at[i-1, "low"]) * N_R_SL)
-                df.at[i, "Max_K2_profit_R"] = (df.at[i, "high"] - df.at[i-1, "high"]) / ((df.at[i-1, "high"] - df.at[i-1, "low"]) * N_R_SL)
-        if df.at[i, "close"] < df.at[i, "open"]:  # K0 is bear bar
-            df.at[i, "0.4R"] = df.at[i, "low"] - 0.4 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
-            df.at[i, "0.7R"] = df.at[i, "low"] - 0.7 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
-            df.at[i, "1.0R"] = df.at[i, "low"] - 1.0 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
-            df.at[i, "1.3R"] = df.at[i, "low"] - 1.3 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
-            df.at[i, "1.6R"] = df.at[i, "low"] - 1.6 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
-            df.at[i, "2.0R"] = df.at[i, "low"] - 2.0 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
-            df.at[i, "SL_price"] = df.at[i, "low"] + N_R_SL * (df.at[i, "high"] - df.at[i, "low"])
-            df.at[i, "entry_price"] = df.at[i, "low"]
-            df.at[i, "size"] = max_SL / (N_R_SL * (df.at[i, "high"] - df.at[i, "low"]))
-            df.at[i, "shadow_ratio"] = (df.at[i, "high"] - df.at[i, "open"])*100/(df.at[i, "high"] - df.at[i, "low"])
-            df.at[i, "counter_shadow_ratio"] = (df.at[i, "close"] - df.at[i, "low"])*100/(df.at[i, "high"] - df.at[i, "low"])
+    # for i in range(len(df)):
+    #     if i != 0:
+    #         if df.at[i-1, "close"] < df.at[i-1, "open"]:  # K0 is bear bar
+    #             df.at[i, "C2_profit_R"] = (df.at[i-1, "low"] - df.at[i, "close"]) / ((df.at[i-1, "high"] - df.at[i-1, "low"]) * N_R_SL)
+    #             df.at[i, "Max_K2_profit_R"] = (df.at[i-1, "low"] - df.at[i, "low"]) / ((df.at[i-1, "high"] - df.at[i-1, "low"]) * N_R_SL)
+    #         else:  # K0 is bull bar
+    #             df.at[i, "C2_profit_R"] = (df.at[i, "close"] - df.at[i-1, "high"]) / ((df.at[i-1, "high"] - df.at[i-1, "low"]) * N_R_SL)
+    #             df.at[i, "Max_K2_profit_R"] = (df.at[i, "high"] - df.at[i-1, "high"]) / ((df.at[i-1, "high"] - df.at[i-1, "low"]) * N_R_SL)
+    #     if df.at[i, "close"] < df.at[i, "open"]:  # K0 is bear bar
+    #         df.at[i, "0.4R"] = df.at[i, "low"] - 0.4 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
+    #         df.at[i, "0.7R"] = df.at[i, "low"] - 0.7 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
+    #         df.at[i, "1.0R"] = df.at[i, "low"] - 1.0 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
+    #         df.at[i, "1.3R"] = df.at[i, "low"] - 1.3 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
+    #         df.at[i, "1.6R"] = df.at[i, "low"] - 1.6 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
+    #         df.at[i, "2.0R"] = df.at[i, "low"] - 2.0 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
+    #         df.at[i, "SL_price"] = df.at[i, "low"] + N_R_SL * (df.at[i, "high"] - df.at[i, "low"])
+    #         df.at[i, "entry_price"] = df.at[i, "low"]
+    #         df.at[i, "size"] = max_SL / (N_R_SL * (df.at[i, "high"] - df.at[i, "low"]))
+    #         df.at[i, "shadow_ratio"] = (df.at[i, "high"] - df.at[i, "open"])*100/(df.at[i, "high"] - df.at[i, "low"])
+    #         df.at[i, "counter_shadow_ratio"] = (df.at[i, "close"] - df.at[i, "low"])*100/(df.at[i, "high"] - df.at[i, "low"])
             
-        else:  # K0 is bull bar
-            df.at[i, "0.4R"] = df.at[i, "high"] + 0.4 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
-            df.at[i, "0.7R"] = df.at[i, "high"] + 0.7 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
-            df.at[i, "1.0R"] = df.at[i, "high"] + 1.0 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
-            df.at[i, "1.3R"] = df.at[i, "high"] + 1.3 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
-            df.at[i, "1.6R"] = df.at[i, "high"] + 1.6 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
-            df.at[i, "2.0R"] = df.at[i, "high"] + 2.0 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
-            df.at[i, "SL_price"] = df.at[i, "high"] - N_R_SL * (df.at[i, "high"] - df.at[i, "low"])
-            df.at[i, "entry_price"] = df.at[i, "high"]
-            df.at[i, "size"] = max_SL / (N_R_SL * (df.at[i, "high"] - df.at[i, "low"]))
-            df.at[i, "shadow_ratio"] = (df.at[i, "open"] - df.at[i, "low"])*100/(df.at[i, "high"] - df.at[i, "low"])
-            df.at[i, "counter_shadow_ratio"] = (df.at[i, "high"] - df.at[i, "close"])*100/(df.at[i, "high"] - df.at[i, "low"])
+    #     else:  # K0 is bull bar
+    #         df.at[i, "0.4R"] = df.at[i, "high"] + 0.4 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
+    #         df.at[i, "0.7R"] = df.at[i, "high"] + 0.7 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
+    #         df.at[i, "1.0R"] = df.at[i, "high"] + 1.0 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
+    #         df.at[i, "1.3R"] = df.at[i, "high"] + 1.3 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
+    #         df.at[i, "1.6R"] = df.at[i, "high"] + 1.6 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
+    #         df.at[i, "2.0R"] = df.at[i, "high"] + 2.0 * (df.at[i, "high"] - df.at[i, "low"]) * N_R_SL
+    #         df.at[i, "SL_price"] = df.at[i, "high"] - N_R_SL * (df.at[i, "high"] - df.at[i, "low"])
+    #         df.at[i, "entry_price"] = df.at[i, "high"]
+    #         df.at[i, "size"] = max_SL / (N_R_SL * (df.at[i, "high"] - df.at[i, "low"]))
+    #         df.at[i, "shadow_ratio"] = (df.at[i, "open"] - df.at[i, "low"])*100/(df.at[i, "high"] - df.at[i, "low"])
+    #         df.at[i, "counter_shadow_ratio"] = (df.at[i, "high"] - df.at[i, "close"])*100/(df.at[i, "high"] - df.at[i, "low"])
         
     
 
     df["delta_c"] = df["close"].diff().fillna(0)*100/df["close"]
 
-    # ================================================================
-    # ⭐⭐ 啟動時設定起始時間
-    # ================================================================
+    if len(df) == 0:
+        raise ValueError(f"DATA_START_TIME {DATA_START_TIME} 超出資料範圍")
 
-    start_dt = pd.to_datetime(START_TIME).tz_localize("America/New_York")
-    start_idx = df[df["dt_ny"] >= start_dt].index.min()
-
-    if pd.isna(start_idx):
-        raise ValueError(f"START_TIME {START_TIME} 超出資料範圍")
-
-    df = df.loc[start_idx:].reset_index(drop=True)
     df["bar_index"] = df.index
 
     k_bar_score_df = K_bar_score(df)
@@ -353,15 +365,38 @@ def main():
     df["bull_run"] = k_run_score_df["bull_run"].astype(float)
     df["bear_run"] = k_run_score_df["bear_run"].astype(float)
 
+    time_col_by_name = {
+        "New York": "dt_ny",
+        "UTC": "dt_utc",
+        "Taipei": "dt_tp",
+    }
+
+    def set_time_base(name: str):
+        nonlocal time_base_name
+        chosen = name if name in time_col_by_name else "New York"
+        time_base_name = chosen
+        base_col = time_col_by_name[chosen]
+        df["dt_based"] = df[base_col]
+        df["dt_based_ts"] = df["dt_based"].map(lambda x: x.timestamp())
+
+    set_time_base(time_base_name)
+
+    replay_start_dt_ny = pd.to_datetime(REPLAY_START_TIME).tz_localize("America/New_York")
+    replay_start_idx = df[df["dt_ny"] >= replay_start_dt_ny].index.min()
+    if pd.isna(replay_start_idx):
+        raise ValueError(f"REPLAY_START_TIME {REPLAY_START_TIME} 超出資料範圍")
+    replay_start_idx = int(replay_start_idx)
+
     bars = df.to_dict("records")
     total = len(bars)
-    idx = 1
+    idx = replay_start_idx
 
 
     # ================================================================
     # 建立 QApplication
     # ================================================================
     app = QtWidgets.QApplication([])
+    app.setFont(QtGui.QFont("Calibri", 12, QtGui.QFont.Bold))
 
     # ================================================================
     # 建立 UI
@@ -417,6 +452,25 @@ def main():
     btn_auto_all.setFixedSize(70, 30)
     btn_auto_all.setToolTip("以全部 index 資料自動縮放")
 
+    jump_date_edit = QtWidgets.QDateEdit()
+    jump_date_edit.setCalendarPopup(True)
+    jump_date_edit.setDisplayFormat("yyyy-MM-dd")
+    jump_date_edit.setFixedWidth(120)
+    jump_date_edit.setStyleSheet(
+        "background-color:#0d1420; border:1px solid #4d5a73; border-radius:3px; color:#e6edf7; padding:2px 6px;"
+    )
+
+    jump_time_edit = QtWidgets.QTimeEdit()
+    jump_time_edit.setDisplayFormat("HH:mm")
+    jump_time_edit.setFixedWidth(90)
+    jump_time_edit.setStyleSheet(
+        "background-color:#0d1420; border:1px solid #4d5a73; border-radius:3px; color:#e6edf7; padding:2px 6px;"
+    )
+
+    btn_run_from_dt = QtWidgets.QPushButton("Run")
+    btn_run_from_dt.setFixedSize(60, 30)
+    btn_run_from_dt.setToolTip("以指定日期時間重設 replay 起點並重繪")
+
     toolbar_layout.addWidget(btn_h_line)
     toolbar_layout.addWidget(btn_l_line)
     toolbar_layout.addWidget(btn_fibo)
@@ -425,6 +479,9 @@ def main():
     toolbar_layout.addWidget(btn_screenshot)
     toolbar_layout.addWidget(btn_auto_scale)
     toolbar_layout.addWidget(btn_auto_all)
+    toolbar_layout.addWidget(jump_date_edit)
+    toolbar_layout.addWidget(jump_time_edit)
+    toolbar_layout.addWidget(btn_run_from_dt)
     toolbar_layout.addStretch()
 
     left_layout.addWidget(toolbar)
@@ -437,13 +494,13 @@ def main():
     kline_info_layout.setSpacing(2)
 
     kline_symbol_label = QtWidgets.QLabel(f"{coin_name} - {N_minutes}m")
-    kline_symbol_label.setStyleSheet("color: #f5f7fa; font-size: 14pt; font-weight: 700;")
+    kline_symbol_label.setStyleSheet("color: #f5f7fa; font-size: 16pt; font-weight: 700;")
 
     kline_ohlc_label = QtWidgets.QLabel("開=--  高=--  低=--  收=--  +0.00(+0.00%)")
-    kline_ohlc_label.setStyleSheet("color: #cfd7e6; font-size: 10.5pt; font-weight: 500;")
+    kline_ohlc_label.setStyleSheet("color: #cfd7e6; font-size: 12pt; font-weight: 500;")
 
     kline_ema_label = QtWidgets.QLabel("EMA 20=--")
-    kline_ema_label.setStyleSheet("color: #89a8ff; font-size: 10pt; font-weight: 500;")
+    kline_ema_label.setStyleSheet("color: #89a8ff; font-size: 12pt; font-weight: 500;")
 
     kline_info_layout.addWidget(kline_symbol_label)
     kline_info_layout.addWidget(kline_ohlc_label)
@@ -464,18 +521,42 @@ def main():
     indicator_info_row.setContentsMargins(0, 0, 0, 0)
     indicator_info_row.setSpacing(8)
 
-    indicator_info_label = QtWidgets.QLabel("SBS Run Score    bull bar=-    bull run=-    bear bar=-    bear run=-")
-    indicator_info_label.setStyleSheet("color: #cfd7e6; font-size: 10.5pt; font-weight: 500;")
+    indicator_info_label = QtWidgets.QLabel(
+        "<span style='font-size:12pt; color:#cfd7e6;'>SBS Run Score&nbsp;&nbsp;</span>"
+        "<span style='font-size:12pt; color:#ffcc80;'>bull bar=&nbsp;#.#</span>"
+        "<span style='font-size:12pt; color:#7f8897;'>&nbsp;&nbsp;</span>"
+        "<span style='font-size:12pt; color:#089981;'>bull run=&nbsp;#.#</span>"
+        "<span style='font-size:12pt; color:#7f8897;'>&nbsp;&nbsp;</span>"
+        "<span style='font-size:12pt; color:#f48fb1;'>bear bar=&nbsp;#.#</span>"
+        "<span style='font-size:12pt; color:#7f8897;'>&nbsp;&nbsp;</span>"
+        "<span style='font-size:12pt; color:#e53935;'>bear run=&nbsp;#.#</span>"
+    )
+    indicator_info_label.setStyleSheet("color: #cfd7e6; font-size: 12pt; font-weight: 500;")
     indicator_info_label.setTextFormat(QtCore.Qt.RichText)
 
     indicator_x_value_badge = QtWidgets.QLabel("--:-- (----.--.--)")
     indicator_x_value_badge.setStyleSheet(
         "background-color:#0d1420; border:1px solid #6b7fa1; border-radius:2px; "
-        "color:#e6edf7; padding:2px 6px; font-size:9.5pt;"
+        "color:#e6edf7; padding:2px 6px; font-size:11pt;"
     )
     indicator_x_value_badge.setAlignment(QtCore.Qt.AlignCenter)
 
+    timezone_combo = QtWidgets.QComboBox()
+    timezone_combo.addItems(["New York", "UTC", "Taipei"])
+    timezone_combo.setCurrentText(time_base_name)
+    timezone_combo.setFixedWidth(110)
+    timezone_combo.setStyleSheet(
+        "QComboBox {"
+        "background-color:#0d1420; border:1px solid #6b7fa1; border-radius:2px; "
+        "color:#e6edf7; padding:2px 6px; font-size:11pt;"
+        "}"
+        "QComboBox QAbstractItemView {"
+        "background-color:#0d1420; color:#e6edf7; selection-background-color:#2a3952;"
+        "}"
+    )
+
     indicator_info_row.addWidget(indicator_info_label, 1)
+    indicator_info_row.addWidget(timezone_combo, 0)
     indicator_info_row.addWidget(indicator_x_value_badge, 0)
     indicator_info_layout.addLayout(indicator_info_row)
     left_layout.addWidget(indicator_info_panel)
@@ -485,7 +566,7 @@ def main():
 
     hbox.addWidget(left_container, 3)
 
-    time_axis = TimeAxis(orientation="bottom")
+    time_axis = TimeAxis(orientation="bottom", timezone_name=time_base_name)
     pg.setConfigOption('background', '#181c27')
     pg.setConfigOption('foreground', 'white')
 
@@ -660,16 +741,32 @@ def main():
     auto_all_mode = False
     syncing_auto_all_range = False
 
+    def sync_jump_datetime_controls(row_idx: int | None = None):
+        if len(df) == 0:
+            return
+        default_idx = replay_start_idx if idx <= replay_start_idx else (idx - 1)
+        row_idx = min(max(default_idx if row_idx is None else row_idx, 0), len(df) - 1)
+        dt_min = df.iloc[0]["dt_based"]
+        dt_max = df.iloc[len(df) - 1]["dt_based"]
+        dt_cur = df.iloc[row_idx]["dt_based"]
+        jump_date_edit.setMinimumDate(QtCore.QDate(dt_min.year, dt_min.month, dt_min.day))
+        jump_date_edit.setMaximumDate(QtCore.QDate(dt_max.year, dt_max.month, dt_max.day))
+        jump_date_edit.setDate(QtCore.QDate(dt_cur.year, dt_cur.month, dt_cur.day))
+        jump_time_edit.setTime(QtCore.QTime(dt_cur.hour, dt_cur.minute))
+
     def apply_auto_all_view():
         nonlocal syncing_auto_all_range
         if len(df) == 0:
             return
 
-        appeared_end = min(max(idx, 1), len(df))
-        appeared = df.iloc[:appeared_end]
+        appeared_end = min(max(idx, replay_start_idx), len(df))
+        appeared = df.iloc[replay_start_idx:appeared_end]
+        if len(appeared) == 0:
+            return
 
-        x_min = float(appeared["dt_ny_ts"].min())
-        x_max = float(appeared["dt_ny_ts"].max())
+        one_tick_sec = float(N_minutes * 60)
+        x_min = float(appeared["dt_based_ts"].min()) - one_tick_sec
+        x_max = float(appeared["dt_based_ts"].max()) + one_tick_sec
         if x_max <= x_min:
             x_max = x_min + 1.0
 
@@ -700,7 +797,12 @@ def main():
         if len(df) == 0:
             return
         auto_all_mode = False
-        anchor_idx = min(max(idx - 1, 0), len(df) - 1)
+        anchor_idx = min(max(idx - 1, replay_start_idx), len(df) - 1)
+        x0, x1 = plot.viewRange()[0]
+        one_tick_sec = float(N_minutes * 60)
+        if x1 <= x0:
+            x1 = x0 + one_tick_sec
+        plot.setXRange(x0 - one_tick_sec, x1 + one_tick_sec, padding=0)
         update_main_axis_range(anchor_idx)
         update_indicator_axis_range(anchor_idx)
         update_indicator_value_panel(anchor_idx)
@@ -715,6 +817,92 @@ def main():
         apply_auto_all_view()
 
     btn_auto_all.clicked.connect(on_auto_all_clicked)
+
+    def on_run_from_datetime_clicked():
+        nonlocal idx, replay_start_idx, position, realized_pnl, realized_r_pnl, order_id_seq
+        nonlocal line_mode, line_start, temp_line, selected_item, fibo_mode, fibo_base_price, text_mode, range_mode, range_start_price
+        if len(df) == 0:
+            return
+
+        tz_name = TimeAxis.TZ_MAP.get(time_base_name, "America/New_York")
+        date_txt = jump_date_edit.date().toString("yyyy-MM-dd")
+        time_txt = jump_time_edit.time().toString("HH:mm")
+        try:
+            target_dt = pd.Timestamp(f"{date_txt} {time_txt}").tz_localize(tz_name)
+        except Exception:
+            QtWidgets.QMessageBox.warning(None, "時間格式錯誤", "無法解析指定的日期時間")
+            return
+
+        target_idx = df[df["dt_based"] >= target_dt].index.min()
+        if pd.isna(target_idx):
+            QtWidgets.QMessageBox.warning(None, "超出範圍", "指定時間超出目前資料範圍")
+            return
+
+        replay_start_idx = int(target_idx)
+        idx = replay_start_idx
+
+        # 清空 replay 交易/畫線/標記資料
+        position = None
+        realized_pnl = 0.0
+        realized_r_pnl = 0.0
+        pending_orders.clear()
+        trade_markers.clear()
+        saved_lines.clear()
+        fibo_groups.clear()
+        line_custom_pens.clear()
+        price_ranges.clear()
+        order_id_seq = 1
+        line_mode = False
+        line_start = None
+        temp_line = None
+        selected_item = None
+        fibo_mode = False
+        fibo_base_price = None
+        text_mode = False
+        range_mode = False
+        range_start_price = None
+
+        refresh_orders_table()
+        refresh_trades_table()
+        redraw_all()
+        update_pnl_labels()
+
+        anchor_idx = min(max(replay_start_idx, 0), len(df) - 1)
+        update_indicator_value_panel(anchor_idx)
+        update_kline_info_panel(anchor_idx)
+        update_axis_value_boxes(anchor_idx)
+        sync_jump_datetime_controls(anchor_idx)
+
+    btn_run_from_dt.clicked.connect(on_run_from_datetime_clicked)
+
+    def on_timezone_changed(chosen_name: str):
+        nonlocal bars, total
+        if len(df) == 0:
+            return
+
+        x0, x1 = plot.viewRange()[0]
+        set_time_base(chosen_name)
+        time_axis.set_timezone(time_base_name)
+
+        bars = df.to_dict("records")
+        total = len(bars)
+
+        redraw_all()
+        plot.setXRange(x0, x1, padding=0)
+
+        anchor_idx = min(max(idx - 1, replay_start_idx), len(df) - 1)
+        update_indicator_value_panel(anchor_idx)
+        update_kline_info_panel(anchor_idx)
+        update_axis_value_boxes(anchor_idx)
+        sync_jump_datetime_controls(anchor_idx)
+
+    timezone_combo.currentTextChanged.connect(on_timezone_changed)
+    default_replay_dt = pd.to_datetime(REPLAY_START_TIME).tz_localize("America/New_York").tz_convert(
+        TimeAxis.TZ_MAP.get(time_base_name, "America/New_York")
+    )
+    jump_date_edit.setDate(QtCore.QDate(default_replay_dt.year, default_replay_dt.month, default_replay_dt.day))
+    jump_time_edit.setTime(QtCore.QTime(default_replay_dt.hour, default_replay_dt.minute))
+    sync_jump_datetime_controls(replay_start_idx)
 
     # ================================================================
     # ⭐⭐ 模擬下單面板（多空、類型、價格、PnL）
@@ -790,7 +978,16 @@ def main():
     order_panel.addWidget(trades_table, row=12, col=0, colspan=2)
     
     btn_export_trades = QtWidgets.QPushButton("Export Trade History")
-    order_panel.addWidget(btn_export_trades, row=13, col=0, colspan=2)
+    btn_clean_trades = QtWidgets.QPushButton("Clean Trade History")
+    btn_export_trades.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+    btn_clean_trades.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+    history_btn_row = QtWidgets.QWidget()
+    history_btn_layout = QtWidgets.QHBoxLayout(history_btn_row)
+    history_btn_layout.setContentsMargins(0, 0, 0, 0)
+    history_btn_layout.setSpacing(6)
+    history_btn_layout.addWidget(btn_export_trades, 1)
+    history_btn_layout.addWidget(btn_clean_trades, 1)
+    order_panel.addWidget(history_btn_row, row=13, col=0, colspan=2)
 
     # 狀態：部位 / 未成交委託 / 已實現 PnL / 成交紀錄
     position = None  # {"side": "long"|"short", "entry": float, "qty": float}
@@ -803,7 +1000,7 @@ def main():
 
     def current_price():
         # 目前已繪製最後一根的收盤價作為成交基準
-        if idx > 0:
+        if idx > replay_start_idx:
             i = max(0, idx - 1)
             return float(df.iloc[i]["close"])
         return None
@@ -953,9 +1150,9 @@ def main():
             # 市價單立即以目前價成交
             fill_ts = 0
             fill_time = ""
-            if idx > 0:
-                fill_ts = df.iloc[idx-1]["dt_ny_ts"]
-                fill_time = str(df.iloc[idx-1]["dt_ny"]).split('.')[0]
+            if idx > replay_start_idx:
+                fill_ts = df.iloc[idx-1]["dt_based_ts"]
+                fill_time = str(df.iloc[idx-1]["dt_based"]).split('.')[0]
             fill_order(s, cp, q_val, fill_ts, fill_time)
             return
 
@@ -994,9 +1191,9 @@ def main():
         # 記錄平倉
         fill_ts = 0
         fill_time = ""
-        if idx > 0:
-            fill_ts = df.iloc[idx-1]["dt_ny_ts"]
-            fill_time = str(df.iloc[idx-1]["dt_ny"]).split('.')[0]
+        if idx > replay_start_idx:
+            fill_ts = df.iloc[idx-1]["dt_based_ts"]
+            fill_time = str(df.iloc[idx-1]["dt_based"]).split('.')[0]
         close_side = "short" if position["side"] == "long" else "long"
         trade_history.append({
             "time": fill_time,
@@ -1054,11 +1251,23 @@ def main():
             QtWidgets.QMessageBox.information(None, "Export", f"Trade history exported to:\n{file_path}")
         except Exception as e:
             QtWidgets.QMessageBox.critical(None, "Export Error", f"Failed to export:\n{str(e)}")
+
+    def clean_trade_history():
+        if trade_markers:
+            for marker in trade_markers:
+                try:
+                    plot.removeItem(marker)
+                except Exception:
+                    pass
+        trade_markers.clear()
+        trade_history.clear()
+        refresh_trades_table()
     
     btn_place.clicked.connect(place_order)
     btn_close.clicked.connect(close_position)
     btn_cancel_selected.clicked.connect(cancel_selected_orders)
     btn_export_trades.clicked.connect(export_trade_history)
+    btn_clean_trades.clicked.connect(clean_trade_history)
 
     # ================================================================
     # 成交標記功能
@@ -1115,7 +1324,7 @@ def main():
     # 畫 K 線 function
     # ================================================================
     def draw_bar(record):
-        t = record["dt_ny"].timestamp()
+        t = record["dt_based"].timestamp()
         o, h, l, c = record["open"], record["high"], record["low"], record["close"]
 
         wick_pen = pg.mkPen("white", width=1.3)
@@ -1152,8 +1361,8 @@ def main():
         high_p = float(current_bar["high"]) if "high" in current_bar else None
         low_p = float(current_bar["low"]) if "low" in current_bar else None
         # 取得當前K線的時間戳和時間字串
-        fill_ts = float(current_bar["dt_ny_ts"]) if "dt_ny_ts" in current_bar else 0
-        fill_time = str(current_bar["dt_ny"]).split('.')[0] if "dt_ny" in current_bar else ""
+        fill_ts = float(current_bar["dt_based_ts"]) if "dt_based_ts" in current_bar else 0
+        fill_time = str(current_bar["dt_based"]).split('.')[0] if "dt_based" in current_bar else ""
         to_close = []
         for od in pending_orders:
             if od.get("status") != "open":
@@ -1187,12 +1396,12 @@ def main():
         grid_lines.clear()
 
         # 根據 idx 畫新的 grid
-        for i in range(idx):
-            minute = df.iloc[i]["dt_ny"].minute
+        for i in range(replay_start_idx, idx):
+            minute = df.iloc[i]["dt_based"].minute
             if minute not in (0, 15, 30, 45):
                 continue
 
-            ts = df.iloc[i]["dt_ny_ts"]
+            ts = df.iloc[i]["dt_based_ts"]
             line = pg.InfiniteLine(
                 ts, angle=90,
                 pen=pg.mkPen((255, 255, 255, 40), width=1)
@@ -1240,43 +1449,43 @@ def main():
         bear_run_curve = indicator_plot.plot(pen=pg.mkPen((229, 57, 53), width=2), name="bear_run")
         indicator_plot.addItem(pg.InfiniteLine(pos=0, angle=0, pen=pg.mkPen((255, 255, 255, 80), width=1)))
 
-        for i in range(1, idx):
+        for i in range(replay_start_idx, idx):
             bar = bars[i]
             draw_bar(bar)
 
             offset = (bar["high"] - bar["low"]) * 0.3
             txt = pg.TextItem(
-                text=str(bar["bar_index"]),
+                text=str(i - replay_start_idx + 1),
                 color="white",
                 anchor=(0.5, 1.0)
             )
-            txt.setPos(bar["dt_ny"].timestamp(), bar["low"] - offset)
+            txt.setPos(bar["dt_based"].timestamp(), bar["low"] - offset)
             plot.addItem(txt)
 
-        if idx > 1:
-            ma_vals = df.iloc[:idx]["MA20"].values
-            ma_vals_100 = df.iloc[:idx]["MA100"].values
-            times = df.iloc[:idx]["dt_ny_ts"].values
+        if idx > replay_start_idx:
+            ma_vals = df.iloc[replay_start_idx:idx]["MA20"].values
+            ma_vals_100 = df.iloc[replay_start_idx:idx]["MA100"].values
+            times = df.iloc[replay_start_idx:idx]["dt_based_ts"].values
             ma_curve_20.setData(times, ma_vals)
             if N_minutes == 1:
                 ma_curve_100.setData(times, ma_vals_100)
 
-            bull_mask = (df.iloc[:idx]["close"] > df.iloc[:idx]["open"]).values
-            bear_mask = (df.iloc[:idx]["close"] < df.iloc[:idx]["open"]).values
+            bull_mask = (df.iloc[replay_start_idx:idx]["close"] > df.iloc[replay_start_idx:idx]["open"]).values
+            bear_mask = (df.iloc[replay_start_idx:idx]["close"] < df.iloc[replay_start_idx:idx]["open"]).values
             set_scatter_by_mask(
                 bull_bar_scatter,
                 times,
-                df.iloc[:idx]["bull_bar_score"].values,
+                df.iloc[replay_start_idx:idx]["bull_bar_score"].values,
                 bull_mask,
             )
             set_scatter_by_mask(
                 bear_bar_scatter,
                 times,
-                df.iloc[:idx]["bear_bar_score"].values,
+                df.iloc[replay_start_idx:idx]["bear_bar_score"].values,
                 bear_mask,
             )
-            bull_step_x, bull_step_y = centered_step_xy(times, df.iloc[:idx]["bull_run"].values)
-            bear_step_x, bear_step_y = centered_step_xy(times, df.iloc[:idx]["bear_run"].values)
+            bull_step_x, bull_step_y = centered_step_xy(times, df.iloc[replay_start_idx:idx]["bull_run"].values)
+            bear_step_x, bear_step_y = centered_step_xy(times, df.iloc[replay_start_idx:idx]["bear_run"].values)
             bull_run_curve.setData(bull_step_x, bull_step_y)
             bear_run_curve.setData(bear_step_x, bear_step_y)
 
@@ -1298,16 +1507,17 @@ def main():
         # 重繪後更新 PnL 顯示
         update_pnl_labels()
 
-        if idx > 0:
-            update_indicator_axis_range(max(0, idx - 1))
+        if idx > replay_start_idx:
+            update_indicator_axis_range(max(replay_start_idx, idx - 1))
         else:
             indicator_plot.setYRange(-15, 15, padding=0)
 
-        if idx > 0:
-            update_indicator_value_panel(max(0, idx - 1))
+        if idx > replay_start_idx:
+            update_indicator_value_panel(max(replay_start_idx, idx - 1))
 
         if len(df) > 0:
-            update_kline_info_panel(max(0, min(idx - 1, len(df) - 1)))
+            anchor_idx = replay_start_idx if idx <= replay_start_idx else min(idx - 1, len(df) - 1)
+            update_kline_info_panel(max(0, anchor_idx))
 
         if auto_all_mode:
             apply_auto_all_view()
@@ -1341,7 +1551,7 @@ def main():
         else:
             ohlc_color = "#cfd7e6"
 
-        kline_ohlc_label.setStyleSheet(f"color: {ohlc_color}; font-size: 10.5pt; font-weight: 500;")
+        kline_ohlc_label.setStyleSheet(f"color: {ohlc_color}; font-size: 12pt; font-weight: 500;")
         kline_ohlc_label.setText(
             f"開={pfmt(row['open'])}   "
             f"高={pfmt(row['high'])}   "
@@ -1358,19 +1568,19 @@ def main():
 
     def get_visible_subset(max_row_idx: int) -> pd.DataFrame:
         upper = min(max_row_idx, len(df) - 1)
-        if upper < 0:
+        if upper < replay_start_idx:
             return df.iloc[0:0]
 
-        base = df.iloc[:upper + 1]
+        base = df.iloc[replay_start_idx:upper + 1]
         x0, x1 = plot.viewRange()[0]
         x_min, x_max = (x0, x1) if x0 <= x1 else (x1, x0)
-        vis = base[(base["dt_ny_ts"] >= x_min) & (base["dt_ny_ts"] <= x_max)]
+        vis = base[(base["dt_based_ts"] >= x_min) & (base["dt_based_ts"] <= x_max)]
         if len(vis) > 0:
             return vis
 
         # 視窗內沒有點時，回退到距離視窗中心最近的一根
         center_x = (x_min + x_max) * 0.5
-        nearest_idx = (base["dt_ny_ts"] - center_x).abs().idxmin()
+        nearest_idx = (base["dt_based_ts"] - center_x).abs().idxmin()
         return base.loc[[nearest_idx]]
 
     def update_main_axis_range(row_idx: int):
@@ -1415,20 +1625,26 @@ def main():
         bull_active = row["close"] > row["open"]
         bear_active = row["close"] < row["open"]
 
-        bull_bar_txt = f"{float(row['bull_bar_score']):.3f}" if bull_active else "-"
-        bear_bar_txt = f"{float(row['bear_bar_score']):.3f}" if bear_active else "-"
-        bull_run_txt = f"{float(row['bull_run']):.3f}" if bull_active else "-"
-        bear_run_txt = f"{float(row['bear_run']):.3f}" if bear_active else "-"
+        def fixed_slot(val: float, active: bool) -> str:
+            txt = " #.# " if not active else f"{float(val):.1f}"
+            if len(txt) > 6:
+                txt = txt[:6]
+            return txt.rjust(6).replace(" ", "&nbsp;")
+
+        bull_bar_txt = fixed_slot(row["bull_bar_score"], bull_active)
+        bear_bar_txt = fixed_slot(row["bear_bar_score"], bear_active)
+        bull_run_txt = fixed_slot(row["bull_run"], bull_active)
+        bear_run_txt = fixed_slot(row["bear_run"], bear_active)
 
         indicator_info_label.setText(
-            "<span style='font-size:10.5pt; color:#cfd7e6;'>SBS Run Score&nbsp;&nbsp;</span>"
-            f"<span style='font-size:10.5pt; color:#ffcc80;'>bull bar={bull_bar_txt}</span>"
-            "<span style='font-size:10.5pt; color:#7f8897;'>&nbsp;&nbsp;</span>"
-            f"<span style='font-size:10.5pt; color:#089981;'>bull run={bull_run_txt}</span>"
-            "<span style='font-size:10.5pt; color:#7f8897;'>&nbsp;&nbsp;</span>"
-            f"<span style='font-size:10.5pt; color:#f48fb1;'>bear bar={bear_bar_txt}</span>"
-            "<span style='font-size:10.5pt; color:#7f8897;'>&nbsp;&nbsp;</span>"
-            f"<span style='font-size:10.5pt; color:#e53935;'>bear run={bear_run_txt}</span>"
+            "<span style='font-size:12pt; color:#cfd7e6;'>SBS Run Score&nbsp;&nbsp;</span>"
+            f"<span style='font-size:12pt; color:#ffcc80;'>bull bar={bull_bar_txt}</span>"
+            "<span style='font-size:12pt; color:#7f8897;'>&nbsp;&nbsp;</span>"
+            f"<span style='font-size:12pt; color:#089981;'>bull run={bull_run_txt}</span>"
+            "<span style='font-size:12pt; color:#7f8897;'>&nbsp;&nbsp;</span>"
+            f"<span style='font-size:12pt; color:#f48fb1;'>bear bar={bear_bar_txt}</span>"
+            "<span style='font-size:12pt; color:#7f8897;'>&nbsp;&nbsp;</span>"
+            f"<span style='font-size:12pt; color:#e53935;'>bear run={bear_run_txt}</span>"
         )
 
     # Auto 按鈕或其他 range 變更後，強制套回自訂規則
@@ -1443,7 +1659,7 @@ def main():
 
         syncing_indicator_range = True
         try:
-            anchor_idx = min(max(idx - 1, 0), len(df) - 1)
+            anchor_idx = min(max(idx - 1, replay_start_idx), len(df) - 1)
             update_indicator_axis_range(anchor_idx)
             update_indicator_value_panel(anchor_idx)
         finally:
@@ -1457,13 +1673,13 @@ def main():
             return
         if auto_all_mode:
             auto_all_mode = False
-        anchor_idx = min(max(idx - 1, 0), len(df) - 1) if len(df) > 0 else 0
+        anchor_idx = min(max(idx - 1, replay_start_idx), len(df) - 1) if len(df) > 0 else 0
         update_axis_value_boxes(anchor_idx)
 
     plot.sigRangeChanged.connect(on_main_view_range_changed)
 
     def on_indicator_view_range_changed(*_args):
-        anchor_idx = min(max(idx - 1, 0), len(df) - 1) if len(df) > 0 else 0
+        anchor_idx = min(max(idx - 1, replay_start_idx), len(df) - 1) if len(df) > 0 else 0
         update_axis_value_boxes(anchor_idx)
 
     indicator_plot.sigRangeChanged.connect(on_indicator_view_range_changed)
@@ -1472,11 +1688,11 @@ def main():
     # 滑鼠移動
     # ================================================================
     def get_nearest_appeared_index_by_x(x_val: float) -> int:
-        appeared_end = min(max(idx, 1), len(df))
-        sub = df.iloc[:appeared_end]
+        appeared_end = min(max(idx, replay_start_idx), len(df))
+        sub = df.iloc[replay_start_idx:appeared_end]
         if len(sub) == 0:
-            return 0
-        return int((sub["dt_ny_ts"] - x_val).abs().idxmin())
+            return replay_start_idx
+        return int((sub["dt_based_ts"] - x_val).abs().idxmin())
 
     def update_axis_value_boxes(row_idx: int):
         if len(df) == 0:
@@ -1486,7 +1702,7 @@ def main():
         price_prec = int(df.iloc[row_idx].get("price_precision", price_precision_default))
         price_y = float(hline.value())
         indicator_y = float(hline_indicator.value())
-        snapped_x = float(df.iloc[row_idx]["dt_ny_ts"])
+        snapped_x = float(df.iloc[row_idx]["dt_based_ts"])
 
         # Main Y label on right axis band (overlay the axis area)
         main_axis_rect = plot.getAxis("right").sceneBoundingRect()
@@ -1522,7 +1738,7 @@ def main():
         ind_axis_left = max(0, indicator_win.width() - right_axis_width)
         ind_axis_right = indicator_win.width() - 1
 
-        indicator_axis_value_label.setText(f"{indicator_y:.3f}")
+        indicator_axis_value_label.setText(f"{indicator_y:.1f}")
         indicator_axis_value_label.setMinimumWidth(0)
         indicator_axis_value_label.setMaximumWidth(16777215)
         indicator_axis_value_label.adjustSize()
@@ -1536,13 +1752,13 @@ def main():
         i_y = max(0, min(i_y, indicator_win.height() - i_h))
         indicator_axis_value_label.move(i_x, i_y)
 
-        dt = pd.to_datetime(snapped_x, unit="s", utc=True).tz_convert("America/New_York")
+        dt = df.iloc[row_idx]["dt_based"]
         indicator_x_value_badge.setText(dt.strftime("%H:%M (%Y.%m.%d)"))
 
     def handle_crosshair_by_x(x_val: float, active: str, y_val: float):
         nonlocal current_crosshair_active
         nearest_idx = get_nearest_appeared_index_by_x(x_val)
-        snapped_x = float(df.iloc[nearest_idx]["dt_ny_ts"])
+        snapped_x = float(df.iloc[nearest_idx]["dt_based_ts"])
 
         vline.setPos(snapped_x)
         vline_indicator.setPos(snapped_x)
@@ -2177,39 +2393,39 @@ def main():
         # 新K出現後，處理委託
         process_pending_orders(bar)
 
-        ma_vals = df.iloc[:idx+1]["MA20"].values
-        ma_vals_100 = df.iloc[:idx+1]["MA100"].values
-        times = df.iloc[:idx+1]["dt_ny_ts"].values
+        ma_vals = df.iloc[replay_start_idx:idx+1]["MA20"].values
+        ma_vals_100 = df.iloc[replay_start_idx:idx+1]["MA100"].values
+        times = df.iloc[replay_start_idx:idx+1]["dt_based_ts"].values
         ma_curve_20.setData(times, ma_vals)
         if N_minutes == 1:
             ma_curve_100.setData(times, ma_vals_100)
-        bull_mask = (df.iloc[:idx+1]["close"] > df.iloc[:idx+1]["open"]).values
-        bear_mask = (df.iloc[:idx+1]["close"] < df.iloc[:idx+1]["open"]).values
+        bull_mask = (df.iloc[replay_start_idx:idx+1]["close"] > df.iloc[replay_start_idx:idx+1]["open"]).values
+        bear_mask = (df.iloc[replay_start_idx:idx+1]["close"] < df.iloc[replay_start_idx:idx+1]["open"]).values
         set_scatter_by_mask(
             bull_bar_scatter,
             times,
-            df.iloc[:idx+1]["bull_bar_score"].values,
+            df.iloc[replay_start_idx:idx+1]["bull_bar_score"].values,
             bull_mask,
         )
         set_scatter_by_mask(
             bear_bar_scatter,
             times,
-            df.iloc[:idx+1]["bear_bar_score"].values,
+            df.iloc[replay_start_idx:idx+1]["bear_bar_score"].values,
             bear_mask,
         )
-        bull_step_x, bull_step_y = centered_step_xy(times, df.iloc[:idx+1]["bull_run"].values)
-        bear_step_x, bear_step_y = centered_step_xy(times, df.iloc[:idx+1]["bear_run"].values)
+        bull_step_x, bull_step_y = centered_step_xy(times, df.iloc[replay_start_idx:idx+1]["bull_run"].values)
+        bear_step_x, bear_step_y = centered_step_xy(times, df.iloc[replay_start_idx:idx+1]["bear_run"].values)
         bull_run_curve.setData(bull_step_x, bull_step_y)
         bear_run_curve.setData(bear_step_x, bear_step_y)
         update_indicator_axis_range(idx)
 
         offset = (bar["high"] - bar["low"]) * 0.3
         txt = pg.TextItem(
-            text=str(bar["bar_index"]),
+            text=str(idx - replay_start_idx + 1),
             color="white",
             anchor=(0.5, 1.0)
         )
-        txt.setPos(bar["dt_ny"].timestamp(), bar["low"] - offset)
+        txt.setPos(bar["dt_based"].timestamp(), bar["low"] - offset)
         plot.addItem(txt)
         draw_vertical_grids()
 
@@ -2263,7 +2479,7 @@ def main():
             update()
 
         elif key == QtCore.Qt.Key_Left:
-            if idx > 1:
+            if idx > replay_start_idx:
                 idx -= 1
                 redraw_all()
 
@@ -2277,7 +2493,7 @@ def main():
 
     def step_back():
         nonlocal idx
-        if idx > 1:
+        if idx > replay_start_idx:
             idx -= 1
             redraw_all()
 
@@ -2293,11 +2509,11 @@ def main():
     root.setFocus()
 
     if len(df) > 0:
-        hline.setPos(float(df.iloc[0]["close"]))
+        hline.setPos(float(df.iloc[replay_start_idx]["close"]))
         hline_indicator.setPos(0.0)
         set_crosshair_visibility("none")
-        update_kline_info_panel(0)
-        update_axis_value_boxes(0)
+        update_kline_info_panel(replay_start_idx)
+        update_axis_value_boxes(replay_start_idx)
 
     root.resize(1400, 800)
     root.show()
