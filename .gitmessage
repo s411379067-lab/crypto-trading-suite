@@ -1,0 +1,16 @@
+# <type>(<scope>): <summary>
+#
+# type: feat | fix | refactor | perf | docs | test | build | ci | chore
+# scope: backtest | regime | journal | shared | release
+#
+# Example:
+# feat(backtest): add slippage setting in UI
+#
+# Body (optional):
+# - Why this change is needed
+# - What changed
+# - Risk and rollback notes
+#
+# Footer (optional):
+# BREAKING CHANGE: explain migration steps
+
