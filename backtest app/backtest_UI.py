@@ -4,6 +4,7 @@ import pyqtgraph as pg
 from pyqtgraph.Qt import QtWidgets, QtCore, QtGui
 import pyarrow.parquet as pq
 from typing import Tuple
+from pathlib import Path
 
 
 # ================================================================
@@ -242,8 +243,22 @@ def main():
     DATA_START_TIME = "2022-12-28 00:00"
     REPLAY_START_TIME = "2025-12-31 05:40"
 
+    timeframe_options = ["1m", "5m", "15m", "1H", "4H", "1D"]
+    product_options = ["BTC", "ETH"]
 
-    N_minutes = 5  # K 線時間週期
+    def timeframe_to_seconds(tf: str) -> int:
+        text = tf.strip()
+        if text.endswith("m"):
+            return int(text[:-1]) * 60
+        if text.endswith("H"):
+            return int(text[:-1]) * 3600
+        if text.endswith("D"):
+            return int(text[:-1]) * 86400
+        raise ValueError(f"Unsupported timeframe: {tf}")
+
+    coin_name = "ETH"
+    timeframe = "5m"  # K 線時間週期
+    market_df_cache = {}
     max_SL = 60  # 最大停損點數
     N_R_SL = 1  # 以 R 倍數計算停損
     line_mode = False
@@ -260,60 +275,53 @@ def main():
     range_mode = False  # 價格範圍測量模式
     range_start_price = None  # 價格範圍起點
     price_ranges = []  # 保存所有價格範圍物件
-    coin_name = "ETH"
 
-    # ----------------------------- 讀取 parquet -----------------------------
-    # df = pq.read_table("ETH_1m_6M_UTC.parquet").to_pandas()
-    df = pq.read_table(fr"backtest app/data source/{coin_name}_{N_minutes}m_48M_UTC.parquet").to_pandas()
-    
-    df["dt_utc"] = pd.to_datetime(df["dt_utc"], utc=True)
-    df["dt_ny"] = df["dt_utc"].dt.tz_convert("America/New_York")
-    df["dt_tp"] = df["dt_utc"].dt.tz_convert("Asia/Taipei")
-    time_base_name = "New York"
-    df["dt_based"] = df["dt_ny"]
-    df["dt_based_ts"] = df["dt_based"].map(lambda x: x.timestamp())
-    df["date"] = df["dt_ny"].dt.date
-    df = df.sort_values(["date", "dt_ny"]).reset_index(drop=True)
-    df["bar_index"] = df.groupby("date").cumcount() + 1
-    df["MA20"] = df["close"].ewm(span=20, adjust=False).mean()
-    df["MA100"] = df["close"].ewm(span=100, adjust=False).mean()
+    # ----------------------------- 讀取 parquet（優先 calculated） -----------------------------
+    data_dir = Path("backtest app/data source")
 
-    # 價格精度：以當日第一根開盤價判斷，<10 用 4 位，>=10 用 2 位
-    df["day_open_price"] = df.groupby("date")["open"].transform("first")
-    df["price_precision"] = df["day_open_price"].apply(lambda v: 4 if v < 10 else 2).astype(int)
-    price_precision_default = int(df["price_precision"].iloc[0]) if len(df) > 0 else 2
+    def build_calculated_dataframe(raw_df: pd.DataFrame) -> pd.DataFrame:
+        work_df = raw_df.copy()
+        work_df["dt_utc"] = pd.to_datetime(work_df["dt_utc"], utc=True)
+        work_df["dt_ny"] = work_df["dt_utc"].dt.tz_convert("America/New_York")
+        work_df["dt_tp"] = work_df["dt_utc"].dt.tz_convert("Asia/Taipei")
+        work_df["dt_based"] = work_df["dt_ny"]
+        work_df["dt_based_ts"] = work_df["dt_based"].map(lambda x: x.timestamp())
+        work_df["date"] = work_df["dt_ny"].dt.date
+        work_df = work_df.sort_values(["date", "dt_ny"]).reset_index(drop=True)
+        work_df["bar_index"] = work_df.groupby("date").cumcount() + 1
+        work_df["MA20"] = work_df["close"].ewm(span=20, adjust=False).mean()
+        work_df["MA100"] = work_df["close"].ewm(span=100, adjust=False).mean()
 
-    # 第一個時間：控制可用資料最早起點
-    data_start_dt = pd.to_datetime(DATA_START_TIME).tz_localize("America/New_York")
-    df = df[df["dt_ny"] >= data_start_dt]
-    df = df.reset_index(drop=True)
+        # 價格精度：以當日第一根開盤價判斷，<10 用 4 位，>=10 用 2 位
+        work_df["day_open_price"] = work_df.groupby("date")["open"].transform("first")
+        work_df["price_precision"] = work_df["day_open_price"].apply(lambda v: 4 if v < 10 else 2).astype(int)
 
-    # ================================================================
-    # ⭐ 新增 Body Ratio / ΔC 計算在 df
-    # ================================================================
-    df["body_ratio"] = (df["close"] - df["open"]).abs() / (df["high"] - df["low"])
-    df["body_ratio"] = 100*df["body_ratio"].replace([float('inf'), -float('inf')], 0).fillna(0)
-    df["body_ratio_level"] = pd.cut(df["body_ratio"], bins=[-1, 34, 68, 101], labels=['L', 'M', 'H'])
-    df["K_range"] = (df["high"] - df["low"])*100/df["open"]
-    df["K_range_level"] = pd.cut(df["K_range"], bins=[-1, 0.35, 0.6, 100], labels=['S', 'M', 'L'])
+        # ================================================================
+        # ⭐ 新增 Body Ratio / ΔC 計算在 df
+        # ================================================================
+        work_df["body_ratio"] = (work_df["close"] - work_df["open"]).abs() / (work_df["high"] - work_df["low"])
+        work_df["body_ratio"] = 100 * work_df["body_ratio"].replace([float('inf'), -float('inf')], 0).fillna(0)
+        work_df["body_ratio_level"] = pd.cut(work_df["body_ratio"], bins=[-1, 34, 68, 101], labels=['L', 'M', 'H'])
+        work_df["K_range"] = (work_df["high"] - work_df["low"]) * 100 / work_df["open"]
+        work_df["K_range_level"] = pd.cut(work_df["K_range"], bins=[-1, 0.35, 0.6, 100], labels=['S', 'M', 'L'])
 
-    # K1 C2_profit_R calculation
-    # if K0 is bear bar C2_profit_R = (K0_low - K1_close)/K0_K_range
-    # if K0 bull bar C2_profit_R = (K1_close - K0_high)/K0_K_range
-    df["C2_profit_R"] = 0.0
-    df["Max_K2_profit_R"] = 0.0
-    df["0.4R"] = 0.0
-    df["0.7R"] = 0.0
-    df["1.0R"] = 0.0
-    df["1.3R"] = 0.0
-    df["1.6R"] = 0.0
-    df["2.0R"] = 0.0
-    df["SL_price"] = 0.0
-    df["entry_price"] = 0.0
-    df["size"] = 0.0
-    df["shadow_ratio"] = 0.0
-    df["counter_shadow_ratio"] = 0.0
-    # for i in range(len(df)):
+        # K1 C2_profit_R calculation
+        # if K0 is bear bar C2_profit_R = (K0_low - K1_close)/K0_K_range
+        # if K0 bull bar C2_profit_R = (K1_close - K0_high)/K0_K_range
+        work_df["C2_profit_R"] = 0.0
+        work_df["Max_K2_profit_R"] = 0.0
+        work_df["0.4R"] = 0.0
+        work_df["0.7R"] = 0.0
+        work_df["1.0R"] = 0.0
+        work_df["1.3R"] = 0.0
+        work_df["1.6R"] = 0.0
+        work_df["2.0R"] = 0.0
+        work_df["SL_price"] = 0.0
+        work_df["entry_price"] = 0.0
+        work_df["size"] = 0.0
+        work_df["shadow_ratio"] = 0.0
+        work_df["counter_shadow_ratio"] = 0.0
+        # for i in range(len(work_df)):
     #     if i != 0:
     #         if df.at[i-1, "close"] < df.at[i-1, "open"]:  # K0 is bear bar
     #             df.at[i, "C2_profit_R"] = (df.at[i-1, "low"] - df.at[i, "close"]) / ((df.at[i-1, "high"] - df.at[i-1, "low"]) * N_R_SL)
@@ -349,21 +357,70 @@ def main():
         
     
 
-    df["delta_c"] = df["close"].diff().fillna(0)*100/df["close"]
+        work_df["delta_c"] = work_df["close"].diff().fillna(0) * 100 / work_df["close"]
 
-    if len(df) == 0:
-        raise ValueError(f"DATA_START_TIME {DATA_START_TIME} 超出資料範圍")
+        k_bar_score_df_local = K_bar_score(work_df)
+        k_run_score_df_local = K_run_score(work_df)
+        work_df["kbar_score"] = k_bar_score_df_local["bar_score"].astype(float)
+        work_df["run_score"] = k_run_score_df_local["run_score"].astype(float)
+        work_df["bull_bar_score"] = k_run_score_df_local["bull_bar_score"].astype(float)
+        work_df["bear_bar_score"] = k_run_score_df_local["bear_bar_score"].astype(float)
+        work_df["bull_run"] = k_run_score_df_local["bull_run"].astype(float)
+        work_df["bear_run"] = k_run_score_df_local["bear_run"].astype(float)
+        return work_df
 
-    df["bar_index"] = df.index
+    required_calculated_cols = {
+        "dt_utc", "dt_ny", "dt_tp", "MA20", "MA100", "price_precision",
+        "body_ratio", "K_range", "delta_c", "kbar_score", "run_score",
+        "bull_bar_score", "bear_bar_score", "bull_run", "bear_run"
+    }
 
-    k_bar_score_df = K_bar_score(df)
-    k_run_score_df = K_run_score(df)
-    df["kbar_score"] = k_bar_score_df["bar_score"].astype(float)
-    df["run_score"] = k_run_score_df["run_score"].astype(float)
-    df["bull_bar_score"] = k_run_score_df["bull_bar_score"].astype(float)
-    df["bear_bar_score"] = k_run_score_df["bear_bar_score"].astype(float)
-    df["bull_run"] = k_run_score_df["bull_run"].astype(float)
-    df["bear_run"] = k_run_score_df["bear_run"].astype(float)
+    def load_market_dataframe(product_name: str, timeframe_value: str) -> pd.DataFrame:
+        cache_key = (product_name, timeframe_value)
+        if cache_key in market_df_cache:
+            print(f"Loaded dataframe from memory cache: {product_name}_{timeframe_value}")
+            return market_df_cache[cache_key].copy(deep=True)
+
+        raw_path = data_dir / f"{product_name}_{timeframe_value}.parquet"
+        calculated_path = data_dir / f"{product_name}_{timeframe_value}_calculated.parquet"
+
+        loaded_df = None
+        if calculated_path.exists():
+            try:
+                cached_df = pq.read_table(str(calculated_path)).to_pandas()
+                if required_calculated_cols.issubset(set(cached_df.columns)):
+                    loaded_df = cached_df
+                    print(f"Loaded calculated parquet: {calculated_path.name}")
+                else:
+                    print(f"Calculated parquet missing required columns, rebuilding: {calculated_path.name}")
+            except Exception as e:
+                print(f"Failed to read calculated parquet ({calculated_path.name}), rebuilding from raw. reason={e}")
+
+        if loaded_df is None:
+            raw_df = pq.read_table(str(raw_path)).to_pandas()
+            loaded_df = build_calculated_dataframe(raw_df)
+            try:
+                loaded_df.to_parquet(calculated_path, index=False)
+                print(f"Saved calculated parquet: {calculated_path.name}")
+            except Exception as e:
+                print(f"Failed to save calculated parquet ({calculated_path.name}). reason={e}")
+
+        # 第一個時間：控制可用資料最早起點
+        data_start_dt = pd.to_datetime(DATA_START_TIME).tz_localize("America/New_York")
+        loaded_df = loaded_df[loaded_df["dt_ny"] >= data_start_dt]
+        loaded_df = loaded_df.reset_index(drop=True)
+
+        if len(loaded_df) == 0:
+            raise ValueError(f"DATA_START_TIME {DATA_START_TIME} 超出資料範圍")
+
+        loaded_df["bar_index"] = loaded_df.index
+        market_df_cache[cache_key] = loaded_df
+        return loaded_df.copy(deep=True)
+
+    df = load_market_dataframe(coin_name, timeframe)
+
+    price_precision_default = int(df["price_precision"].iloc[0]) if len(df) > 0 else 2
+    time_base_name = "New York"
 
     time_col_by_name = {
         "New York": "dt_ny",
@@ -377,19 +434,23 @@ def main():
         time_base_name = chosen
         base_col = time_col_by_name[chosen]
         df["dt_based"] = df[base_col]
-        df["dt_based_ts"] = df["dt_based"].map(lambda x: x.timestamp())
+        # Vectorized conversion avoids per-row Python calls.
+        df["dt_based_ts"] = df["dt_based"].astype("int64").to_numpy(dtype=np.float64) / 1_000_000_000.0
+
+    def get_replay_start_index(df_obj: pd.DataFrame) -> int:
+        replay_start_dt_ny_local = pd.to_datetime(REPLAY_START_TIME).tz_localize("America/New_York")
+        replay_idx = df_obj[df_obj["dt_ny"] >= replay_start_dt_ny_local].index.min()
+        if pd.isna(replay_idx):
+            raise ValueError(f"REPLAY_START_TIME {REPLAY_START_TIME} 超出資料範圍")
+        return int(replay_idx)
 
     set_time_base(time_base_name)
 
-    replay_start_dt_ny = pd.to_datetime(REPLAY_START_TIME).tz_localize("America/New_York")
-    replay_start_idx = df[df["dt_ny"] >= replay_start_dt_ny].index.min()
-    if pd.isna(replay_start_idx):
-        raise ValueError(f"REPLAY_START_TIME {REPLAY_START_TIME} 超出資料範圍")
-    replay_start_idx = int(replay_start_idx)
+    replay_start_idx = get_replay_start_index(df)
 
-    bars = df.to_dict("records")
-    total = len(bars)
     idx = replay_start_idx
+    visible_first_dt_ny = None
+    visible_last_dt_ny = None
 
 
     # ================================================================
@@ -403,7 +464,7 @@ def main():
     # ================================================================
     # 頂層視窗，左側為圖表，右側為下單面板
     root = QtWidgets.QWidget()
-    root.setWindowTitle(f"{coin_name} Replay UI 5m")
+    root.setWindowTitle(f"{coin_name} Replay UI {timeframe}")
     hbox = QtWidgets.QHBoxLayout(root)
     hbox.setContentsMargins(6, 6, 6, 6)
     hbox.setSpacing(6)
@@ -493,21 +554,59 @@ def main():
     kline_info_layout.setContentsMargins(10, 6, 10, 6)
     kline_info_layout.setSpacing(2)
 
-    kline_symbol_label = QtWidgets.QLabel(f"{coin_name} - {N_minutes}m")
-    kline_symbol_label.setStyleSheet("color: #f5f7fa; font-size: 16pt; font-weight: 700;")
+    market_selector_row = QtWidgets.QHBoxLayout()
+    market_selector_row.setContentsMargins(0, 0, 0, 0)
+    market_selector_row.setSpacing(8)
+
+    product_combo = QtWidgets.QComboBox()
+    product_combo.addItems(product_options)
+    product_combo.setCurrentText(coin_name)
+    product_combo.setFixedWidth(100)
+    product_combo.setStyleSheet(
+        "QComboBox {"
+        "background-color:#0d1420; border:1px solid #6b7fa1; border-radius:2px; "
+        "color:#f5f7fa; padding:2px 6px; font-size:12pt; font-weight:700;"
+        "}"
+        "QComboBox QAbstractItemView {"
+        "background-color:#0d1420; color:#e6edf7; selection-background-color:#2a3952;"
+        "}"
+    )
+
+    timeframe_combo = QtWidgets.QComboBox()
+    timeframe_combo.addItems(timeframe_options)
+    timeframe_combo.setCurrentText(timeframe)
+    timeframe_combo.setFixedWidth(100)
+    timeframe_combo.setStyleSheet(
+        "QComboBox {"
+        "background-color:#0d1420; border:1px solid #6b7fa1; border-radius:2px; "
+        "color:#f5f7fa; padding:2px 6px; font-size:12pt; font-weight:700;"
+        "}"
+        "QComboBox QAbstractItemView {"
+        "background-color:#0d1420; color:#e6edf7; selection-background-color:#2a3952;"
+        "}"
+    )
+
+    timeframe_loading_label = QtWidgets.QLabel("loading...")
+    timeframe_loading_label.setStyleSheet("color:#ffcc80; font-size:10pt; font-weight:700;")
+    timeframe_loading_label.setVisible(False)
+
+    market_selector_row.addWidget(product_combo, 0)
+    market_selector_row.addWidget(timeframe_combo, 0)
+    market_selector_row.addWidget(timeframe_loading_label, 0)
+    market_selector_row.addStretch(1)
 
     kline_ohlc_label = QtWidgets.QLabel("開=--  高=--  低=--  收=--  +0.00(+0.00%)")
-    kline_ohlc_label.setStyleSheet("color: #cfd7e6; font-size: 12pt; font-weight: 500;")
+    kline_ohlc_label.setStyleSheet("color: #cfd7e6; font-size: 12pt; font-weight: 700;")
 
     kline_ema_label = QtWidgets.QLabel("EMA 20=--")
-    kline_ema_label.setStyleSheet("color: #89a8ff; font-size: 12pt; font-weight: 500;")
+    kline_ema_label.setStyleSheet("color: #89a8ff; font-size: 12pt; font-weight: 700;")
 
-    kline_info_layout.addWidget(kline_symbol_label)
+    kline_info_layout.addLayout(market_selector_row)
     kline_info_layout.addWidget(kline_ohlc_label)
     kline_info_layout.addWidget(kline_ema_label)
     left_layout.addWidget(kline_info_panel)
 
-    win = pg.GraphicsLayoutWidget(title=f"{coin_name} Replay UI 5m")
+    win = pg.GraphicsLayoutWidget(title=f"{coin_name} Replay UI {timeframe}")
     left_layout.addWidget(win, 4)
 
     # 固定指標資訊欄（樣式與價格資訊欄一致）
@@ -531,7 +630,7 @@ def main():
         "<span style='font-size:12pt; color:#7f8897;'>&nbsp;&nbsp;</span>"
         "<span style='font-size:12pt; color:#e53935;'>bear run=&nbsp;#.#</span>"
     )
-    indicator_info_label.setStyleSheet("color: #cfd7e6; font-size: 12pt; font-weight: 500;")
+    indicator_info_label.setStyleSheet("color: #cfd7e6; font-size: 12pt; font-weight: 700;")
     indicator_info_label.setTextFormat(QtCore.Qt.RichText)
 
     indicator_x_value_badge = QtWidgets.QLabel("--:-- (----.--.--)")
@@ -578,6 +677,8 @@ def main():
 
     plot.setAutoVisible(y=True)
     plot.showGrid(x=False, y=True, alpha=0.3)
+    plot.getAxis("right").setStyle(maxTickLevel=0)
+    plot.getAxis("bottom").setStyle(maxTickLevel=0)
 
     plot.showAxis("right", True)
     plot.showAxis("left", False)
@@ -591,6 +692,8 @@ def main():
     indicator_plot = indicator_win.addPlot(axisItems={"bottom": time_axis}, row=0, col=0)
     indicator_plot.getViewBox().setBackgroundColor("#141822")
     indicator_plot.showGrid(x=False, y=True, alpha=0.2)
+    indicator_plot.getAxis("right").setStyle(maxTickLevel=0)
+    indicator_plot.getAxis("bottom").setStyle(maxTickLevel=0)
     indicator_plot.showAxis("left", False)
     indicator_plot.showAxis("right", True)
     indicator_plot.setLabel("right", "Score")
@@ -754,6 +857,34 @@ def main():
         jump_date_edit.setDate(QtCore.QDate(dt_cur.year, dt_cur.month, dt_cur.day))
         jump_time_edit.setTime(QtCore.QTime(dt_cur.hour, dt_cur.minute))
 
+    def get_current_visible_candle_bounds_ny() -> tuple[pd.Timestamp, pd.Timestamp] | None:
+        if len(df) == 0:
+            return None
+
+        appeared_end = min(max(idx, replay_start_idx), len(df))
+        if appeared_end <= replay_start_idx:
+            return None
+
+        appeared = df.iloc[replay_start_idx:appeared_end]
+        x0, x1 = plot.viewRange()[0]
+        x_min, x_max = (x0, x1) if x0 <= x1 else (x1, x0)
+        visible = appeared[(appeared["dt_based_ts"] >= x_min) & (appeared["dt_based_ts"] <= x_max)]
+        if len(visible) == 0:
+            return None
+
+        first_dt = pd.Timestamp(visible.iloc[0]["dt_ny"])
+        last_dt = pd.Timestamp(visible.iloc[-1]["dt_ny"])
+        if last_dt < first_dt:
+            first_dt, last_dt = last_dt, first_dt
+        return first_dt, last_dt
+
+    def refresh_visible_candle_record():
+        nonlocal visible_first_dt_ny, visible_last_dt_ny
+        bounds = get_current_visible_candle_bounds_ny()
+        if bounds is None:
+            return
+        visible_first_dt_ny, visible_last_dt_ny = bounds
+
     def apply_auto_all_view():
         nonlocal syncing_auto_all_range
         if len(df) == 0:
@@ -764,7 +895,7 @@ def main():
         if len(appeared) == 0:
             return
 
-        one_tick_sec = float(N_minutes * 60)
+        one_tick_sec = float(timeframe_to_seconds(timeframe))
         x_min = float(appeared["dt_based_ts"].min()) - one_tick_sec
         x_max = float(appeared["dt_based_ts"].max()) + one_tick_sec
         if x_max <= x_min:
@@ -799,7 +930,7 @@ def main():
         auto_all_mode = False
         anchor_idx = min(max(idx - 1, replay_start_idx), len(df) - 1)
         x0, x1 = plot.viewRange()[0]
-        one_tick_sec = float(N_minutes * 60)
+        one_tick_sec = float(timeframe_to_seconds(timeframe))
         if x1 <= x0:
             x1 = x0 + one_tick_sec
         plot.setXRange(x0 - one_tick_sec, x1 + one_tick_sec, padding=0)
@@ -876,16 +1007,12 @@ def main():
     btn_run_from_dt.clicked.connect(on_run_from_datetime_clicked)
 
     def on_timezone_changed(chosen_name: str):
-        nonlocal bars, total
         if len(df) == 0:
             return
 
         x0, x1 = plot.viewRange()[0]
         set_time_base(chosen_name)
         time_axis.set_timezone(time_base_name)
-
-        bars = df.to_dict("records")
-        total = len(bars)
 
         redraw_all()
         plot.setXRange(x0, x1, padding=0)
@@ -997,6 +1124,7 @@ def main():
     order_id_seq = 1
     trade_history = []  # list of {time, side, price, qty, pnl, r_pnl, action}
     trade_markers = []  # 成交標記（三角形）圖形物件
+    trade_marker_events = []  # list of {timestamp, price, side, action, source_timeframe, origin}
 
     def current_price():
         # 目前已繪製最後一根的收盤價作為成交基準
@@ -1047,7 +1175,14 @@ def main():
             trades_table.setItem(r, 5, QtWidgets.QTableWidgetItem(r_pnl_text))
             trades_table.setItem(r, 6, QtWidgets.QTableWidgetItem(trade['action']))
 
-    def fill_order(fill_side: str, fill_price: float, fill_qty: float, fill_timestamp: float = 0, fill_time_str: str = ""):
+    def fill_order(
+        fill_side: str,
+        fill_price: float,
+        fill_qty: float,
+        fill_timestamp: float = 0,
+        fill_time_str: str = "",
+        marker_origin: str = "market",
+    ):
         nonlocal position, realized_pnl, realized_r_pnl
         fprice = float(fill_price)
         fqty = float(fill_qty)
@@ -1070,7 +1205,7 @@ def main():
                 "action": "OPEN"
             })
             # 在圖表上添加三角形標記
-            add_trade_marker(current_ts, fprice, fill_side, "OPEN")
+            add_trade_marker(current_ts, fprice, fill_side, "OPEN", marker_origin)
         else:
             if position["side"] == fill_side:
                 # 同向加倉：以加權平均價格更新
@@ -1088,7 +1223,7 @@ def main():
                     "action": "ADD"
                 })
                 # 在圖表上添加三角形標記
-                add_trade_marker(current_ts, fprice, fill_side, "ADD")
+                add_trade_marker(current_ts, fprice, fill_side, "ADD", marker_origin)
             else:
                 # 反向下單：先抵消
                 close_qty = min(position["qty"], fqty)
@@ -1107,7 +1242,7 @@ def main():
                     "action": "CLOSE"
                 })
                 # 在圖表上添加三角形標記
-                add_trade_marker(current_ts, fprice, fill_side, "CLOSE")
+                add_trade_marker(current_ts, fprice, fill_side, "CLOSE", marker_origin)
                 remaining = fqty - close_qty
                 if position["qty"] > close_qty:
                     # 原部位剩餘
@@ -1130,7 +1265,7 @@ def main():
                         "action": "OPEN"
                     })
                     # 在圖表上添加三角形標記（反手開倉）
-                    add_trade_marker(current_ts, fprice, fill_side, "OPEN")
+                    add_trade_marker(current_ts, fprice, fill_side, "OPEN", marker_origin)
         refresh_trades_table()
         update_pnl_labels()
 
@@ -1153,7 +1288,7 @@ def main():
             if idx > replay_start_idx:
                 fill_ts = df.iloc[idx-1]["dt_based_ts"]
                 fill_time = str(df.iloc[idx-1]["dt_based"]).split('.')[0]
-            fill_order(s, cp, q_val, fill_ts, fill_time)
+            fill_order(s, cp, q_val, fill_ts, fill_time, marker_origin="market")
             return
 
         # 非市價需要價格
@@ -1205,7 +1340,7 @@ def main():
             "action": "CLOSE"
         })
         # 在圖表上添加三角形標記
-        add_trade_marker(fill_ts, cp, close_side, "CLOSE")
+        add_trade_marker(fill_ts, cp, close_side, "CLOSE", marker_origin="manual-close")
         
         position = None
         refresh_trades_table()
@@ -1253,15 +1388,26 @@ def main():
             QtWidgets.QMessageBox.critical(None, "Export Error", f"Failed to export:\n{str(e)}")
 
     def clean_trade_history():
+        nonlocal position, realized_pnl, realized_r_pnl, order_id_seq
         if trade_markers:
             for marker in trade_markers:
                 try:
                     plot.removeItem(marker)
                 except Exception:
                     pass
+
+        position = None
+        realized_pnl = 0.0
+        realized_r_pnl = 0.0
+        pending_orders.clear()
+        order_id_seq = 1
+
         trade_markers.clear()
+        trade_marker_events.clear()
         trade_history.clear()
+        refresh_orders_table()
         refresh_trades_table()
+        update_pnl_labels()
     
     btn_place.clicked.connect(place_order)
     btn_close.clicked.connect(close_position)
@@ -1269,22 +1415,156 @@ def main():
     btn_export_trades.clicked.connect(export_trade_history)
     btn_clean_trades.clicked.connect(clean_trade_history)
 
+    def on_market_selection_changed(_text: str):
+        nonlocal coin_name, timeframe
+        nonlocal df, idx, replay_start_idx, price_precision_default
+        nonlocal position, realized_pnl, realized_r_pnl, order_id_seq
+        nonlocal line_mode, line_start, temp_line, selected_item, fibo_mode, fibo_base_price, text_mode, range_mode, range_start_price
+        nonlocal auto_all_mode
+        nonlocal visible_first_dt_ny, visible_last_dt_ny
+
+        next_coin = product_combo.currentText().strip()
+        next_timeframe = timeframe_combo.currentText().strip()
+        if next_timeframe not in timeframe_options:
+            return
+
+        if next_coin == coin_name and next_timeframe == timeframe:
+            return
+
+        refresh_visible_candle_record()
+        target_first_dt_ny = visible_first_dt_ny
+        target_last_dt_ny = visible_last_dt_ny
+
+        timeframe_loading_label.setVisible(True)
+        QtWidgets.QApplication.processEvents()
+
+        try:
+            next_df = load_market_dataframe(next_coin, next_timeframe)
+
+            if target_first_dt_ny is not None and target_last_dt_ny is not None:
+                next_first_idx = next_df[next_df["dt_ny"] >= target_first_dt_ny].index.min()
+                if pd.isna(next_first_idx):
+                    next_first_idx = 0
+
+                next_last_idx = next_df[next_df["dt_ny"] >= target_last_dt_ny].index.min()
+                if pd.isna(next_last_idx):
+                    next_last_idx = len(next_df) - 1
+
+                next_replay_start_idx = int(next_first_idx)
+                next_idx = int(max(next_replay_start_idx + 1, int(next_last_idx) + 1))
+                next_idx = min(next_idx, len(next_df))
+            else:
+                next_replay_start_idx = get_replay_start_index(next_df)
+                next_idx = next_replay_start_idx
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(None, "切換失敗", f"無法載入 {next_coin} {next_timeframe} 資料\n{e}")
+            product_combo.blockSignals(True)
+            timeframe_combo.blockSignals(True)
+            product_combo.setCurrentText(coin_name)
+            timeframe_combo.setCurrentText(timeframe)
+            product_combo.blockSignals(False)
+            timeframe_combo.blockSignals(False)
+            timeframe_loading_label.setVisible(False)
+            return
+
+        is_product_changed = next_coin != coin_name
+
+        coin_name = next_coin
+        timeframe = next_timeframe
+
+        df = next_df
+        set_time_base(time_base_name)
+        replay_start_idx = int(next_replay_start_idx)
+        idx = int(next_idx)
+        price_precision_default = int(df["price_precision"].iloc[0]) if len(df) > 0 else 2
+
+        # 切換商品/週期後，重置 replay 相關狀態
+        auto_all_mode = False
+        if is_product_changed:
+            # 商品切換時才清部位與掛單；單純 timeframe 切換需保留
+            position = None
+            realized_pnl = 0.0
+            realized_r_pnl = 0.0
+            pending_orders.clear()
+            trade_markers.clear()
+            trade_marker_events.clear()
+            order_id_seq = 1
+        saved_lines.clear()
+        fibo_groups.clear()
+        line_custom_pens.clear()
+        price_ranges.clear()
+        line_mode = False
+        line_start = None
+        temp_line = None
+        selected_item = None
+        fibo_mode = False
+        fibo_base_price = None
+        text_mode = False
+        range_mode = False
+        range_start_price = None
+
+        title_text = f"{coin_name} Replay UI {timeframe}"
+        root.setWindowTitle(title_text)
+        win.setWindowTitle(title_text)
+
+        refresh_orders_table()
+        refresh_trades_table()
+        redraw_all()
+
+        if idx > replay_start_idx:
+            one_tick_sec = float(timeframe_to_seconds(timeframe))
+            x_left = float(df.iloc[replay_start_idx]["dt_based_ts"]) - one_tick_sec
+            x_right = float(df.iloc[idx - 1]["dt_based_ts"]) + one_tick_sec
+            if x_right <= x_left:
+                x_right = x_left + 1.0
+            plot.setXRange(x_left, x_right, padding=0)
+
+        update_pnl_labels()
+
+        anchor_idx = min(max(idx - 1, replay_start_idx), len(df) - 1)
+        update_indicator_value_panel(anchor_idx)
+        update_kline_info_panel(anchor_idx)
+        update_axis_value_boxes(anchor_idx)
+        refresh_visible_candle_record()
+        sync_jump_datetime_controls(anchor_idx)
+        timeframe_loading_label.setVisible(False)
+
+    product_combo.currentTextChanged.connect(on_market_selection_changed)
+    timeframe_combo.currentTextChanged.connect(on_market_selection_changed)
+
+    preload_queue = [(product, tf) for product in product_options for tf in ["1m", "5m"]]
+
+    def preload_hot_market_data_step():
+        if not preload_queue:
+            return
+
+        product, tf = preload_queue.pop(0)
+        if (product, tf) not in market_df_cache:
+            try:
+                load_market_dataframe(product, tf)
+                print(f"Preloaded dataframe: {product}_{tf}")
+            except Exception as e:
+                print(f"Preload skipped for {product}_{tf}. reason={e}")
+
+        # 分批預載，避免啟動時阻塞 UI 造成白屏
+        QtCore.QTimer.singleShot(50, preload_hot_market_data_step)
+
+    QtCore.QTimer.singleShot(300, preload_hot_market_data_step)
+
     # ================================================================
     # 成交標記功能
     # ================================================================
-    def add_trade_marker(timestamp, price, side, action):
-        """在圖表上添加成交三角形標記"""
+    def draw_trade_marker_scatter(timestamp: float, price: float, side: str):
         if timestamp == 0 or price == 0:
-            return
-        
-        # long: 綠色上三角 ▲, short: 紅色下三角 ▼
+            return None
+
         if side == "long":
-            symbol = 't1'  # 上三角
-            color = (0, 255, 0)  # 綠色
+            symbol = 't1'
+            color = (0, 255, 0)
         else:
-            symbol = 't'  # 下三角
-            color = (255, 0, 0)  # 紅色
-        
+            symbol = 't'
+            color = (255, 0, 0)
+
         scatter = pg.ScatterPlotItem(
             pos=[[timestamp, price]],
             size=8,
@@ -1293,7 +1573,80 @@ def main():
             pen=pg.mkPen('w', width=1)
         )
         plot.addItem(scatter)
-        trade_markers.append(scatter)
+        return scatter
+
+    def remap_marker_timestamp_for_timeframe(event: dict) -> float:
+        if len(df) == 0:
+            return float(event["timestamp"])
+
+        source_ts = float(event["timestamp"])
+        if source_ts == 0:
+            return 0.0
+
+        source_tf = event.get("source_timeframe", timeframe)
+        origin = event.get("origin", "market")
+        price = float(event.get("price", 0.0))
+
+        target_sec = float(timeframe_to_seconds(timeframe))
+        source_sec = float(timeframe_to_seconds(source_tf)) if source_tf in timeframe_options else target_sec
+
+        # 使用完整資料映射，避免切換多次時因當前 idx 視窗裁切導致標記消失
+        sub_df = df
+        ts_arr = sub_df["dt_based_ts"].to_numpy(dtype=float)
+        if ts_arr.size == 0:
+            return source_ts
+
+        # 小 -> 大：往下對齊到目標週期整點（例如 12:05 -> 12:00）
+        if target_sec >= source_sec:
+            snapped = np.floor(source_ts / target_sec) * target_sec
+            pos = int(np.searchsorted(ts_arr, snapped, side="left"))
+            if pos >= ts_arr.size:
+                pos = ts_arr.size - 1
+            if pos > 0 and ts_arr[pos] > source_ts:
+                pos -= 1
+            return float(ts_arr[pos])
+
+        # 大 -> 小：掛單成交標記優先找原大K區間內「第一根可成交」小K
+        if origin == "pending":
+            window_start = source_ts - source_sec
+            candidates = sub_df[(sub_df["dt_based_ts"] > window_start) & (sub_df["dt_based_ts"] <= source_ts)]
+            if len(candidates) > 0:
+                touched = candidates[(candidates["low"] <= price) & (candidates["high"] >= price)]
+                if len(touched) > 0:
+                    return float(touched.iloc[0]["dt_based_ts"])
+
+        pos = int(np.searchsorted(ts_arr, source_ts, side="left"))
+        if pos >= ts_arr.size:
+            pos = ts_arr.size - 1
+        return float(ts_arr[pos])
+
+    def rebuild_trade_markers_for_current_timeframe():
+        trade_markers.clear()
+        for event in trade_marker_events:
+            mapped_ts = remap_marker_timestamp_for_timeframe(event)
+            marker = draw_trade_marker_scatter(mapped_ts, float(event["price"]), str(event["side"]))
+            if marker is not None:
+                trade_markers.append(marker)
+
+    def add_trade_marker(timestamp, price, side, action, marker_origin: str = "market"):
+        """在圖表上添加成交三角形標記"""
+        if timestamp == 0 or price == 0:
+            return
+
+        event = {
+            "timestamp": float(timestamp),
+            "price": float(price),
+            "side": side,
+            "action": action,
+            "source_timeframe": timeframe,
+            "origin": marker_origin,
+        }
+        trade_marker_events.append(event)
+
+        mapped_ts = remap_marker_timestamp_for_timeframe(event)
+        scatter = draw_trade_marker_scatter(mapped_ts, float(price), side)
+        if scatter is not None:
+            trade_markers.append(scatter)
 
     # MA 曲線
     ma_curve_20 = plot.plot(pen=pg.mkPen("green", width=2))
@@ -1323,6 +1676,48 @@ def main():
     # ================================================================
     # 畫 K 線 function
     # ================================================================
+    def draw_bars_batch(sub_df: pd.DataFrame):
+        if len(sub_df) == 0:
+            return
+
+        t = sub_df["dt_based_ts"].to_numpy(dtype=float)
+        o = sub_df["open"].to_numpy(dtype=float)
+        h = sub_df["high"].to_numpy(dtype=float)
+        l = sub_df["low"].to_numpy(dtype=float)
+        c = sub_df["close"].to_numpy(dtype=float)
+
+        # Draw all wicks as independent (x0,y0)-(x1,y1) pairs to avoid cross-candle connecting lines.
+        x_wick = np.repeat(t, 2)
+        y_wick = np.empty(t.size * 2, dtype=float)
+        y_wick[0::2] = l
+        y_wick[1::2] = h
+        plot.addItem(pg.PlotDataItem(x=x_wick, y=y_wick, connect='pairs', pen=pg.mkPen("white", width=1.3)))
+
+        center_y = (o + c) * 0.5
+        body_h = np.abs(c - o)
+        body_w = 0.8 * float(timeframe_to_seconds(timeframe))
+        bull_mask = c >= o
+        bear_mask = ~bull_mask
+
+        if bull_mask.any():
+            plot.addItem(pg.BarGraphItem(
+                x=t[bull_mask],
+                width=body_w,
+                height=body_h[bull_mask],
+                y=center_y[bull_mask],
+                brush=(31, 121, 245),
+                pen=None,
+            ))
+        if bear_mask.any():
+            plot.addItem(pg.BarGraphItem(
+                x=t[bear_mask],
+                width=body_w,
+                height=body_h[bear_mask],
+                y=center_y[bear_mask],
+                brush=(247, 82, 95),
+                pen=None,
+            ))
+
     def draw_bar(record):
         t = record["dt_based"].timestamp()
         o, h, l, c = record["open"], record["high"], record["low"], record["close"]
@@ -1342,7 +1737,7 @@ def main():
         body_bottom = min(o, c)
         body_height = body_top - body_bottom
         center_y = (body_top + body_bottom) / 2
-        w = 24*N_minutes
+        w = 0.4 * float(timeframe_to_seconds(timeframe))
 
         body = pg.BarGraphItem(
             x=[t],
@@ -1379,7 +1774,7 @@ def main():
                     filled = True
             if filled:
                 od["status"] = "filled"
-                fill_order(s, px, qv, fill_ts, fill_time)
+                fill_order(s, px, qv, fill_ts, fill_time, marker_origin="pending")
                 to_close.append(od)
         # 清除已成交
         if to_close:
@@ -1427,7 +1822,7 @@ def main():
 
         nonlocal ma_curve_20, ma_curve_100, bull_run_curve, bear_run_curve, bull_bar_scatter, bear_bar_scatter
         ma_curve_20 = plot.plot(pen=pg.mkPen("green", width=2))
-        if N_minutes == 1:
+        if timeframe == "1m":
             ma_curve_100 = plot.plot(pen=pg.mkPen("orange", width=2))
         bull_bar_scatter = pg.ScatterPlotItem(
             size=8,
@@ -1449,25 +1844,29 @@ def main():
         bear_run_curve = indicator_plot.plot(pen=pg.mkPen((229, 57, 53), width=2), name="bear_run")
         indicator_plot.addItem(pg.InfiniteLine(pos=0, angle=0, pen=pg.mkPen((255, 255, 255, 80), width=1)))
 
-        for i in range(replay_start_idx, idx):
-            bar = bars[i]
-            draw_bar(bar)
+        if idx > replay_start_idx:
+            shown = df.iloc[replay_start_idx:idx]
+            draw_bars_batch(shown)
 
-            offset = (bar["high"] - bar["low"]) * 0.3
-            txt = pg.TextItem(
-                text=str(i - replay_start_idx + 1),
-                color="white",
-                anchor=(0.5, 1.0)
-            )
-            txt.setPos(bar["dt_based"].timestamp(), bar["low"] - offset)
-            plot.addItem(txt)
+            # Cap text items to keep redraw responsive on large 1m windows.
+            label_step = max(1, len(shown) // 240)
+            for i in range(replay_start_idx, idx, label_step):
+                bar = df.iloc[i]
+                offset = (bar["high"] - bar["low"]) * 0.3
+                txt = pg.TextItem(
+                    text=str(i - replay_start_idx + 1),
+                    color="white",
+                    anchor=(0.5, 1.0)
+                )
+                txt.setPos(float(bar["dt_based_ts"]), bar["low"] - offset)
+                plot.addItem(txt)
 
         if idx > replay_start_idx:
             ma_vals = df.iloc[replay_start_idx:idx]["MA20"].values
             ma_vals_100 = df.iloc[replay_start_idx:idx]["MA100"].values
             times = df.iloc[replay_start_idx:idx]["dt_based_ts"].values
             ma_curve_20.setData(times, ma_vals)
-            if N_minutes == 1:
+            if timeframe == "1m":
                 ma_curve_100.setData(times, ma_vals_100)
 
             bull_mask = (df.iloc[replay_start_idx:idx]["close"] > df.iloc[replay_start_idx:idx]["open"]).values
@@ -1496,9 +1895,8 @@ def main():
         set_crosshair_visibility(current_crosshair_active)
         draw_vertical_grids()
         
-        # 重繪成交標記
-        for marker in trade_markers:
-            plot.addItem(marker)
+        # 重繪成交標記（依當前 timeframe 重新映射 X 位置）
+        rebuild_trade_markers_for_current_timeframe()
         
         # 重繪保存的劃線
         for line in saved_lines:
@@ -1521,6 +1919,8 @@ def main():
 
         if auto_all_mode:
             apply_auto_all_view()
+
+        refresh_visible_candle_record()
 
     def update_kline_info_panel(row_idx: int):
         if len(df) == 0:
@@ -1551,7 +1951,7 @@ def main():
         else:
             ohlc_color = "#cfd7e6"
 
-        kline_ohlc_label.setStyleSheet(f"color: {ohlc_color}; font-size: 12pt; font-weight: 500;")
+        kline_ohlc_label.setStyleSheet(f"color: {ohlc_color}; font-size: 12pt; font-weight: 700;")
         kline_ohlc_label.setText(
             f"開={pfmt(row['open'])}   "
             f"高={pfmt(row['high'])}   "
@@ -1675,6 +2075,7 @@ def main():
             auto_all_mode = False
         anchor_idx = min(max(idx - 1, replay_start_idx), len(df) - 1) if len(df) > 0 else 0
         update_axis_value_boxes(anchor_idx)
+        refresh_visible_candle_record()
 
     plot.sigRangeChanged.connect(on_main_view_range_changed)
 
@@ -2375,7 +2776,7 @@ def main():
     # ================================================================
     def update():
         nonlocal idx
-        if idx >= total:
+        if idx >= len(df):
             return
 
         def set_scatter_by_mask(scatter_obj, x_vals, y_vals, mask_vals):
@@ -2387,7 +2788,7 @@ def main():
                 return
             scatter_obj.setData(x=x_arr[mask_arr], y=y_arr[mask_arr])
 
-        bar = bars[idx]
+        bar = df.iloc[idx]
         draw_bar(bar)
 
         # 新K出現後，處理委託
@@ -2397,7 +2798,7 @@ def main():
         ma_vals_100 = df.iloc[replay_start_idx:idx+1]["MA100"].values
         times = df.iloc[replay_start_idx:idx+1]["dt_based_ts"].values
         ma_curve_20.setData(times, ma_vals)
-        if N_minutes == 1:
+        if timeframe == "1m":
             ma_curve_100.setData(times, ma_vals_100)
         bull_mask = (df.iloc[replay_start_idx:idx+1]["close"] > df.iloc[replay_start_idx:idx+1]["open"]).values
         bear_mask = (df.iloc[replay_start_idx:idx+1]["close"] < df.iloc[replay_start_idx:idx+1]["open"]).values
@@ -2436,6 +2837,7 @@ def main():
         if auto_all_mode:
             apply_auto_all_view()
         update_pnl_labels()
+        refresh_visible_candle_record()
 
     # ================================================================
     # key press
