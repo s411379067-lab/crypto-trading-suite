@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
+const crypto = require("crypto");
 const XLSX = require("xlsx");
 
 let win;
@@ -24,6 +26,212 @@ try {
 const DEFAULT_EXCEL_PATH = path.join(__dirname, 'data', 'trading_journal.xlsx');
 // 或：path.join(__dirname, 'data', 'trading_journal.xlsx')
 
+const AUTH_USERS = Object.freeze({
+  admin: "admin123",
+  demo: "demo123",
+  jack77: "jack77123",
+});
+
+function stableStringify(v) {
+  if (v === null || typeof v !== "object") return JSON.stringify(v);
+  if (Array.isArray(v)) return "[" + v.map(stableStringify).join(",") + "]";
+  const keys = Object.keys(v).sort();
+  return "{" + keys.map((k) => JSON.stringify(k) + ":" + stableStringify(v[k])).join(",") + "}";
+}
+
+function b64urlDecode(s) {
+  const base64 = String(s).replace(/-/g, "+").replace(/_/g, "/");
+  const padLen = (4 - (base64.length % 4)) % 4;
+  return Buffer.from(base64 + "=".repeat(padLen), "base64");
+}
+
+function parseDateStrict(isoDate) {
+  const s = String(isoDate || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const dt = new Date(`${s}T00:00:00.000Z`);
+  return Number.isFinite(dt.getTime()) ? dt : null;
+}
+
+function parseIsoStrict(isoTs) {
+  const dt = new Date(String(isoTs || ""));
+  return Number.isFinite(dt.getTime()) ? dt : null;
+}
+
+function stateHmac(stateObj, machineId, secret) {
+  const signed = stableStringify({ state: stateObj, machine_id: machineId });
+  return crypto.createHmac("sha256", secret).update(signed).digest("hex");
+}
+
+function readJson(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
+
+function writeJson(filePath, obj) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(obj, null, 2), "utf8");
+}
+
+function utcTodayDate() {
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(now.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function ensure(cond, msg) {
+  if (!cond) throw new Error(msg);
+}
+
+function firstExistingPath(paths) {
+  for (const p of paths) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+function getMachineId() {
+  const fromEnv = String(process.env.TJ_MACHINE_ID || "").trim();
+  if (fromEnv) return fromEnv;
+  return String(os.hostname() || "UNKNOWN-MACHINE").trim();
+}
+
+function verifyLicenseEnvelope(licenseObj, publicPem) {
+  ensure(licenseObj && typeof licenseObj === "object", "License must be JSON object");
+  ensure(licenseObj.meta && licenseObj.payload && licenseObj.signature, "License missing meta/payload/signature");
+  ensure(licenseObj.meta.alg === "Ed25519", "Unsupported license alg");
+
+  const signedText = stableStringify({ meta: licenseObj.meta, payload: licenseObj.payload });
+  const ok = crypto.verify(
+    null,
+    Buffer.from(signedText, "utf8"),
+    publicPem,
+    b64urlDecode(String(licenseObj.signature))
+  );
+  ensure(ok, "License signature verification failed");
+}
+
+function validateLicensePayload(payload) {
+  const required = [
+    "license_id",
+    "customer_id",
+    "machine_id",
+    "plan",
+    "permissions",
+    "issue_seq",
+    "issued_at",
+    "valid_from",
+    "valid_to",
+  ];
+  required.forEach((k) => ensure(Object.prototype.hasOwnProperty.call(payload, k), `Missing payload.${k}`));
+  ensure(Number.isInteger(payload.issue_seq) && payload.issue_seq > 0, "payload.issue_seq must be positive integer");
+  ensure(parseIsoStrict(payload.issued_at), "payload.issued_at invalid");
+  const from = parseDateStrict(payload.valid_from);
+  const to = parseDateStrict(payload.valid_to);
+  ensure(from && to, "payload.valid_from/valid_to must be YYYY-MM-DD");
+  ensure(from.getTime() <= to.getTime(), "payload.valid_from must be <= payload.valid_to");
+}
+
+function loadState(statePath, machineId, stateSecret) {
+  if (!fs.existsSync(statePath)) {
+    return {
+      max_issue_seq: 0,
+      max_valid_from: "1970-01-01",
+      max_issued_at: "1970-01-01T00:00:00.000Z",
+      last_verified_at: "1970-01-01T00:00:00.000Z",
+    };
+  }
+
+  const doc = readJson(statePath);
+  ensure(doc && doc.state && doc.hmac, "Corrupted license state file");
+  const expected = stateHmac(doc.state, machineId, stateSecret);
+  ensure(expected === doc.hmac, "License state tampered");
+  return doc.state;
+}
+
+function saveState(statePath, stateObj, machineId, stateSecret) {
+  writeJson(statePath, {
+    state: stateObj,
+    hmac: stateHmac(stateObj, machineId, stateSecret),
+  });
+}
+
+function verifyJack77License() {
+  const licensePath = firstExistingPath([
+    path.join(process.cwd(), "license", "jack77.lic.json"),
+    path.join(APP_DATA_DIR, "license", "jack77.lic.json"),
+    path.join(__dirname, "license", "jack77.lic.json"),
+    path.join(__dirname, "license_system", "licenses", "jack77-sample.lic.json"),
+  ]);
+  ensure(licensePath, "找不到 jack77 授權檔，請放在 license/jack77.lic.json");
+
+  const publicKeyPath = firstExistingPath([
+    path.join(process.cwd(), "license", "public_key.pem"),
+    path.join(APP_DATA_DIR, "license", "public_key.pem"),
+    path.join(__dirname, "license", "public_key.pem"),
+    path.join(__dirname, "license_system", "keys", "public_key.pem"),
+  ]);
+  ensure(publicKeyPath, "找不到授權公鑰 public_key.pem");
+
+  const licenseObj = readJson(licensePath);
+  const publicPem = fs.readFileSync(publicKeyPath, "utf8");
+  verifyLicenseEnvelope(licenseObj, publicPem);
+  validateLicensePayload(licenseObj.payload);
+
+  const now = new Date();
+  const today = parseDateStrict(utcTodayDate());
+  const from = parseDateStrict(licenseObj.payload.valid_from);
+  const to = parseDateStrict(licenseObj.payload.valid_to);
+  ensure(today.getTime() >= from.getTime(), "授權尚未生效");
+  ensure(today.getTime() <= to.getTime(), "授權已過期");
+
+  const machineId = getMachineId();
+  const licenseMachine = String(licenseObj.payload.machine_id || "").trim();
+  const machineMatch = licenseMachine === "*" || licenseMachine === machineId;
+  ensure(machineMatch, `Machine mismatch: license=${licenseMachine}, local=${machineId}`);
+
+  const stateSecret = String(process.env.LICENSE_STATE_SECRET || "dev-license-state-secret-change-me");
+  const statePath = path.join(APP_DATA_DIR, "license", "jack77_license_state.json");
+  const state = loadState(statePath, machineId, stateSecret);
+
+  const issuedAt = parseIsoStrict(licenseObj.payload.issued_at);
+  const stateIssued = parseIsoStrict(state.max_issued_at);
+  const stateFrom = parseDateStrict(state.max_valid_from);
+  const stateLast = parseIsoStrict(state.last_verified_at);
+
+  ensure(licenseObj.payload.issue_seq >= state.max_issue_seq, "Rollback detected: issue_seq smaller than local state");
+  ensure(parseDateStrict(licenseObj.payload.valid_from).getTime() >= stateFrom.getTime(), "Rollback detected: valid_from older than local state");
+  ensure(issuedAt.getTime() >= stateIssued.getTime(), "Rollback detected: issued_at older than local state");
+
+  const CLOCK_SKEW_TOLERANCE_MS = 48 * 3600 * 1000;
+  ensure(now.getTime() + CLOCK_SKEW_TOLERANCE_MS >= stateLast.getTime(), "Clock rollback detected");
+
+  saveState(
+    statePath,
+    {
+      max_issue_seq: Math.max(state.max_issue_seq || 0, licenseObj.payload.issue_seq),
+      max_valid_from: parseDateStrict(licenseObj.payload.valid_from).getTime() > stateFrom.getTime()
+        ? licenseObj.payload.valid_from
+        : state.max_valid_from,
+      max_issued_at: issuedAt.getTime() > stateIssued.getTime()
+        ? licenseObj.payload.issued_at
+        : state.max_issued_at,
+      last_verified_at: now.toISOString(),
+    },
+    machineId,
+    stateSecret
+  );
+
+  return {
+    licensePath,
+    machineId,
+    plan: licenseObj.payload.plan,
+    permissions: licenseObj.payload.permissions || {},
+    validFrom: licenseObj.payload.valid_from,
+    validTo: licenseObj.payload.valid_to,
+  };
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1400,
@@ -38,6 +246,52 @@ function createWindow() {
 }
 
 app.whenReady().then(createWindow);
+
+ipcMain.handle("auth:login", async (_evt, payload) => {
+  const username = String(payload?.username || "").trim();
+  const password = String(payload?.password || "");
+
+  if (!username || !password) {
+    return { ok: false, message: "請輸入帳號與密碼" };
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(AUTH_USERS, username)) {
+    return { ok: false, message: "帳號不存在" };
+  }
+
+  if (AUTH_USERS[username] !== password) {
+    return { ok: false, message: "密碼錯誤" };
+  }
+
+  if (username !== "jack77") {
+    return {
+      ok: true,
+      user: username,
+      plan: "basic",
+      permissions: {},
+      license: { mode: "bypass-non-license-user" },
+    };
+  }
+
+  try {
+    const verified = verifyJack77License();
+    return {
+      ok: true,
+      user: username,
+      plan: verified.plan,
+      permissions: verified.permissions,
+      license: {
+        mode: "signed-license",
+        path: verified.licensePath,
+        machine_id: verified.machineId,
+        valid_from: verified.validFrom,
+        valid_to: verified.validTo,
+      },
+    };
+  } catch (e) {
+    return { ok: false, message: `授權驗證失敗: ${e?.message || e}` };
+  }
+});
 
 // --- 共用：確保檔案存在（不存在就建立一個空 Excel）---
 function ensureExcelFileExists(filePath) {

@@ -6,3 +6,7 @@ contextBridge.exposeInMainWorld('desktopExcel', {
   openPath: (p) => ipcRenderer.invoke('excel:openPath', p),     // 新增：指定路徑
   save: (payload) => ipcRenderer.invoke('excel:save', payload), // 你原本的：存回同檔
 });
+
+contextBridge.exposeInMainWorld('desktopAuth', {
+  login: (payload) => ipcRenderer.invoke('auth:login', payload),
+});

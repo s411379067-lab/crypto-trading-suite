@@ -8,6 +8,7 @@
   *{box-sizing:border-box}
   body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f6f7f9}
   .topbar{height:48px;background:#111;color:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 16px}
+  .topbarRight{display:flex;align-items:center;gap:10px}
   .layout{display:flex;height:calc(100vh - 48px)}
   .sidebar{width:220px;background:#1c1c1c;color:#ccc;padding:12px}
   .sidebar h4{font-size:12px;color:#888;margin:16px 0 8px}
@@ -157,6 +158,19 @@
   .modalFull .box .tileBody{flex:1}
   .modalFull .canvasWrap{height:100%}
 
+  /* Login Gate */
+  .authGate{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:20px;background:radial-gradient(circle at 20% 20%, #e5ecff 0%, #f3f4f6 45%, #eceff4 100%);z-index:4000}
+  .authCard{width:min(420px,94vw);background:#fff;border:1px solid #d9dde7;border-radius:16px;padding:22px;box-shadow:0 16px 50px rgba(15,23,42,.12)}
+  .authTitle{margin:0 0 6px;font-size:24px;color:#111827}
+  .authSub{margin:0 0 16px;font-size:13px;color:#4b5563}
+  .authField{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+  .authField label{font-size:12px;color:#4b5563}
+  .authField input{width:100%;border:1px solid #cfd5df;border-radius:10px;padding:9px 10px;font-size:13px;outline:none}
+  .authField input:focus{border-color:#4a90e2;box-shadow:0 0 0 3px rgba(74,144,226,.16)}
+  .authError{min-height:18px;margin:4px 0 10px;color:#dc2626;font-size:12px}
+  .authHint{margin-top:10px;font-size:11px;color:#6b7280}
+  #btnLogout{display:none}
+
 </style>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <script type="module" src="./js/dashboard_registry.js"></script>
@@ -164,9 +178,35 @@
 </head>
 
 <body>
+<div id="authGate" class="authGate">
+  <form id="loginForm" class="authCard" autocomplete="off">
+    <h1 class="authTitle">Trading Journal Login</h1>
+    <p class="authSub">請先登入後再使用桌面功能。</p>
+
+    <div class="authField">
+      <label for="loginUser">Username</label>
+      <input id="loginUser" type="text" placeholder="輸入帳號" required>
+    </div>
+
+    <div class="authField">
+      <label for="loginPass">Password</label>
+      <input id="loginPass" type="password" placeholder="輸入密碼" required>
+    </div>
+
+    <div id="loginError" class="authError"></div>
+    <button type="submit" style="width:100%;padding:10px 12px;font-size:13px;">Login</button>
+    <div class="authHint">預設測試帳號：admin / admin123、demo / demo123、jack77 / jack77123（需授權檔）</div>
+  </form>
+</div>
+
+<div id="appShell" style="display:none;">
 <div class="topbar">
   <div>Trading Journal v0.6</div>
-  <div class="muted">Full Columns • Filter: column | 判斷 | option(s)</div>
+  <div class="topbarRight">
+    <div class="muted">Full Columns • Filter: column | 判斷 | option(s)</div>
+    <span id="loginUserLabel" class="muted"></span>
+    <button id="btnLogout" type="button">Logout</button>
+  </div>
 </div>
 
 <div class="layout">
@@ -479,6 +519,8 @@
   </div>
 </div>
 
+</div>
+
 <script>
   // =====================
   // Constants (avoid backslash literals to keep canvas-safe)
@@ -486,6 +528,48 @@
   const TAB = String.fromCharCode(9);
   const LF = String.fromCharCode(10);
   const CR = String.fromCharCode(13);
+
+  const AUTH_SESSION_KEY = 'tj_logged_in_user';
+
+  function getSessionUser(){
+    const u = sessionStorage.getItem(AUTH_SESSION_KEY) || '';
+    return String(u || '').trim();
+  }
+
+  function setSessionUser(username){
+    sessionStorage.setItem(AUTH_SESSION_KEY, username);
+  }
+
+  function clearSessionUser(){
+    sessionStorage.removeItem(AUTH_SESSION_KEY);
+  }
+
+  function setAuthError(msg){
+    const err = document.getElementById('loginError');
+    if(err) err.textContent = msg || '';
+  }
+
+  function setCurrentUserUI(username){
+    const label = document.getElementById('loginUserLabel');
+    if(label) label.textContent = username ? `User: ${username}` : '';
+  }
+
+  function toggleAppVisibility(isLoggedIn){
+    const gate = document.getElementById('authGate');
+    const shell = document.getElementById('appShell');
+    const logoutBtn = document.getElementById('btnLogout');
+
+    if(gate) gate.style.display = isLoggedIn ? 'none' : 'flex';
+    if(shell) shell.style.display = isLoggedIn ? 'block' : 'none';
+    if(logoutBtn) logoutBtn.style.display = isLoggedIn ? 'inline-block' : 'none';
+  }
+
+  async function verifyDesktopLogin(username, password){
+    if(!window.desktopAuth?.login){
+      return { ok:false, message:'desktopAuth API not found (check preload/main).' };
+    }
+    return await window.desktopAuth.login({ username, password });
+  }
 
   // =====================
   // Column schema
@@ -4067,7 +4151,11 @@ function normalizeTradeDates(trade){
   // =====================
   let __excelPath = null;
   let __sheetName = null;
-  async function init() {
+  let __appInitialized = false;
+
+  async function initApp() {
+  if(__appInitialized) return;
+  __appInitialized = true;
   // ===== Excel: open / openDefault / save =====
   console.log('[init] start', !!window.desktopExcel, window.desktopExcel && Object.keys(window.desktopExcel));
 
@@ -4451,7 +4539,64 @@ function normalizeTradeDates(trade){
 
 }
 
-window.addEventListener('DOMContentLoaded', init);
+async function enterApp(username){
+  setSessionUser(username);
+  setCurrentUserUI(username);
+  setAuthError('');
+  toggleAppVisibility(true);
+  await initApp();
+}
+
+function bindAuthEvents(){
+  const form = document.getElementById('loginForm');
+  const logoutBtn = document.getElementById('btnLogout');
+
+  if(form){
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const username = document.getElementById('loginUser')?.value || '';
+      const password = document.getElementById('loginPass')?.value || '';
+      const result = await verifyDesktopLogin(username, password);
+
+      if(!result.ok){
+        setAuthError(result.message);
+        return;
+      }
+
+      await enterApp(result.user);
+      const passEl = document.getElementById('loginPass');
+      if(passEl) passEl.value = '';
+    });
+  }
+
+  if(logoutBtn){
+    logoutBtn.addEventListener('click', () => {
+      clearSessionUser();
+      setCurrentUserUI('');
+      toggleAppVisibility(false);
+      setAuthError('已登出');
+      const userEl = document.getElementById('loginUser');
+      if(userEl) userEl.focus();
+    });
+  }
+}
+
+async function bootstrap(){
+  bindAuthEvents();
+
+  const user = getSessionUser();
+  if(user){
+    await enterApp(user);
+    return;
+  }
+
+  toggleAppVisibility(false);
+  const userEl = document.getElementById('loginUser');
+  if(userEl) userEl.focus();
+}
+
+window.addEventListener('DOMContentLoaded', bootstrap);
 window.CUSTOM_CHART_RENDERERS = window.CUSTOM_CHART_RENDERERS || {};
 // Equity Curve
 
