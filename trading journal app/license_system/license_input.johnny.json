@@ -1,0 +1,19 @@
+{
+  "license_id": "LIC-johnny-2026-04",
+  "customer_id": "johnny",
+  "machine_id": "*",
+  "plan": "pro",
+  "permissions": {
+    "can_open_excel": true,
+    "can_save_excel": true,
+    "can_use_analytics": true,
+    "can_use_charts": true,
+    "max_rows": 50000
+  },
+  "issue_seq": 202604,
+  "issued_at": "2026-04-15T00:00:00.000Z",
+  "valid_from": "2026-04-15",
+  "valid_to": "2026-12-31",
+  "not_before": "2026-04-15T00:00:00.000Z",
+  "not_after": "2027-01-03T00:00:00.000Z"
+}
