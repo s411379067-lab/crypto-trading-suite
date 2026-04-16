@@ -26,6 +26,35 @@ try {
 const DEFAULT_EXCEL_PATH = path.join(__dirname, 'data', 'trading_journal.xlsx');
 // 或：path.join(__dirname, 'data', 'trading_journal.xlsx')
 
+function getCustomizePlatformDir() {
+  if (app.isPackaged) {
+    return path.join(path.dirname(app.getPath("exe")), "customize platform");
+  }
+  return path.join(__dirname, "customize platform");
+}
+
+function ensureCustomizePlatformDir() {
+  const dir = getCustomizePlatformDir();
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function sanitizePlatformName(inputName) {
+  const raw = String(inputName || "").trim();
+  const fallback = "platform_" + Date.now();
+  const safe = (raw || fallback)
+    .replace(/[<>:"/\\|?*]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim();
+  const capped = Array.from(safe || fallback).slice(0, 8).join("").trim();
+  return capped || "platform";
+}
+
+function normalizePlatformFileName(inputName) {
+  const name = sanitizePlatformName(inputName);
+  return name.toLowerCase().endsWith(".json") ? name : `${name}.json`;
+}
+
 const AUTH_USERS = Object.freeze({
   admin: "admin123",
   demo: "demo123",
@@ -327,6 +356,16 @@ async function openExcelAtPath(filePath) {
   return { path: filePath, sheetName, rows };
 }
 
+function writeExcelAtPath(filePath, rows, sheetName) {
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(rows || []);
+  XLSX.utils.book_append_sheet(wb, ws, sheetName || "Sheet1");
+
+  const out = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, out);
+}
+
 // --- IPC: 固定開預設檔 ---
 ipcMain.handle("excel:openDefault", async () => {
   return await openExcelAtPath(DEFAULT_EXCEL_PATH);
@@ -353,13 +392,124 @@ ipcMain.handle("excel:save", async (_evt, payload) => {
   const savePath = payload?.path || lastExcelPath;
   if (!savePath) throw new Error("尚未選擇 Excel 檔案");
 
-  const wb = XLSX.utils.book_new();
-  const ws = XLSX.utils.json_to_sheet(payload.rows || []);
-  XLSX.utils.book_append_sheet(wb, ws, payload.sheetName || "Sheet1");
-
-  const out = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-  fs.writeFileSync(savePath, out);
+  writeExcelAtPath(savePath, payload?.rows || [], payload?.sheetName || "Sheet1");
 
   lastExcelPath = savePath;
   return { ok: true, path: savePath };
+});
+
+// --- IPC: 另存新檔（讓 renderer 可選路徑）---
+ipcMain.handle("excel:saveAs", async (_evt, payload) => {
+  const defaultPath = payload?.path || lastExcelPath || DEFAULT_EXCEL_PATH;
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    defaultPath,
+    filters: [{ name: "Excel", extensions: ["xlsx"] }],
+  });
+
+  if (canceled || !filePath) {
+    return { ok: false, canceled: true };
+  }
+
+  const targetPath = String(filePath).toLowerCase().endsWith(".xlsx")
+    ? filePath
+    : `${filePath}.xlsx`;
+
+  writeExcelAtPath(targetPath, payload?.rows || [], payload?.sheetName || "Sheet1");
+  lastExcelPath = targetPath;
+  return { ok: true, path: targetPath };
+});
+
+ipcMain.handle("customize:listPlatforms", async () => {
+  const dir = ensureCustomizePlatformDir();
+  const files = fs.readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".json"))
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }));
+
+  return {
+    ok: true,
+    dir,
+    files: files.map((fileName) => ({
+      fileName,
+      name: fileName.replace(/\.json$/i, ""),
+    })),
+  };
+});
+
+ipcMain.handle("customize:savePlatform", async (_evt, payload) => {
+  const dir = ensureCustomizePlatformDir();
+  const fileName = normalizePlatformFileName(payload?.name);
+  const targetPath = path.join(dir, fileName);
+
+  const platformData = {
+    savedAt: new Date().toISOString(),
+    data: payload?.data ?? {},
+  };
+
+  fs.writeFileSync(targetPath, JSON.stringify(platformData, null, 2), "utf8");
+
+  return {
+    ok: true,
+    dir,
+    fileName,
+    name: fileName.replace(/\.json$/i, ""),
+    path: targetPath,
+  };
+});
+
+ipcMain.handle("customize:savePlatformAs", async (_evt, payload) => {
+  const dir = ensureCustomizePlatformDir();
+  const defaultName = normalizePlatformFileName(payload?.defaultName || "platform");
+  const defaultPath = path.join(dir, defaultName);
+
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    defaultPath,
+    filters: [{ name: "Customize Platform", extensions: ["json"] }],
+  });
+
+  if (canceled || !filePath) {
+    return { ok: false, canceled: true };
+  }
+
+  const chosenDir = path.dirname(filePath);
+  const chosenBase = path.basename(filePath, path.extname(filePath));
+  const fileName = normalizePlatformFileName(chosenBase);
+  const targetPath = path.join(chosenDir, fileName);
+
+  const platformData = {
+    savedAt: new Date().toISOString(),
+    data: payload?.data ?? {},
+  };
+
+  fs.writeFileSync(targetPath, JSON.stringify(platformData, null, 2), "utf8");
+
+  return {
+    ok: true,
+    dir,
+    fileName,
+    name: fileName.replace(/\.json$/i, ""),
+    path: targetPath,
+  };
+});
+
+ipcMain.handle("customize:loadPlatform", async (_evt, payload) => {
+  const dir = ensureCustomizePlatformDir();
+  const fileName = normalizePlatformFileName(payload?.name);
+  const targetPath = path.join(dir, fileName);
+
+  if (!fs.existsSync(targetPath)) {
+    return { ok: false, message: `Platform not found: ${fileName}` };
+  }
+
+  const raw = fs.readFileSync(targetPath, "utf8");
+  const parsed = JSON.parse(raw || "{}");
+
+  return {
+    ok: true,
+    dir,
+    fileName,
+    name: fileName.replace(/\.json$/i, ""),
+    data: parsed?.data ?? {},
+    savedAt: parsed?.savedAt || null,
+  };
 });

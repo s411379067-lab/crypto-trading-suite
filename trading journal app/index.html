@@ -130,6 +130,34 @@
   .pill{font-size:11px;color:#666;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:999px;padding:2px 8px}
   .miniBtn{border:1px solid #ddd;background:#fff;border-radius:8px;cursor:pointer;padding:4px 8px;font-size:12px}
   .miniBtn:hover{background:#f7f7f7}
+  #customGrid .tile{cursor:grab}
+  #customGrid .tile.isDragging{opacity:.55;cursor:grabbing}
+  #customGrid.cusMosaic{--metric-h:110px;grid-template-columns:repeat(6,minmax(0,1fr));grid-auto-rows:var(--metric-h);grid-auto-flow:row;align-content:start}
+  #customGrid.cusMosaic .cusMetricTile{grid-column:span 1;grid-row:span 1}
+  #customGrid.cusMosaic .cusChartTile{grid-column:span 2;grid-row:span 2;display:flex;flex-direction:column}
+  #customGrid.cusMosaic .cusChartTile .tileBody{flex:1;min-height:0}
+  #customGrid.cusMosaic .cusChartTile .chartHost{height:100%!important}
+  #customGrid.cusMosaic .cusDropHint{pointer-events:none;border:2px dashed #4a90e2;border-radius:12px;background:rgba(74,144,226,.08);z-index:3}
+  #customGrid .tile{position:relative}
+  #customGrid .tile.isResizing{opacity:.88}
+  #customGrid .cusResizeHandle{position:absolute;right:4px;bottom:4px;width:16px;height:16px;cursor:nwse-resize;border-radius:4px;background:linear-gradient(135deg,transparent 0 48%,rgba(107,114,128,.75) 48% 56%,transparent 56% 64%,rgba(107,114,128,.75) 64% 72%,transparent 72% 100%);opacity:.72;z-index:4}
+  #customGrid .cusResizeHandle:hover{opacity:1}
+  @media (max-width:720px){
+    #customGrid.cusMosaic{--metric-h:96px}
+  }
+
+  .cusControlWrap{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}
+  .cusAddGrid{display:grid;grid-template-columns:repeat(2,minmax(320px,1fr));gap:12px;flex:1 1 760px;min-width:320px}
+  .cusBlock{display:grid;grid-template-columns:110px minmax(0,1fr);grid-template-rows:34px 34px;column-gap:8px;row-gap:0;align-items:stretch}
+  .cusAddBtn{grid-column:1;grid-row:1 / span 2;width:110px;height:68px;line-height:1.2}
+  .cusMainSel{grid-column:2;grid-row:1;width:100%;height:34px}
+  .cusPair{grid-column:2;grid-row:2;display:flex;gap:8px;align-items:stretch}
+  .cusPair select{width:110px;height:34px}
+  .cusBlock .span2{grid-column:span 2}
+  .cusActions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end;flex:0 0 auto}
+  @media (max-width:900px){
+    .cusAddGrid{grid-template-columns:1fr}
+  }
 
   /* Calendar tab */
   .calendarWrap{display:flex;flex-direction:column;gap:10px}
@@ -242,7 +270,6 @@
 
       <div class="toolbar">
         <button onclick="addRow()">+ Add Trade</button>
-        <button onclick="runSelfTests()">Run self-tests</button>
         <button id="btnOpenExcel" type="button">Open Excel</button>
         <button id="btnSaveExcel" type="button" disabled>Save Table</button>
         <span id="excelStatus" style="margin-left:8px;opacity:.7"></span>
@@ -424,6 +451,23 @@
             </select>
           </label>
 
+          <label class="muted">Time dimension
+            <select id="c_time_dim">
+              <option value="day">of-day (HH:mm)</option>
+              <option value="month">of-month (dd)</option>
+              <option value="year">of-year (MM)</option>
+            </select>
+          </label>
+
+          <label class="muted">分類顯示筆數
+            <select id="c_compare_visible">
+              <option value="8">8</option>
+              <option value="12" selected>12</option>
+              <option value="20">20</option>
+              <option value="30">30</option>
+            </select>
+          </label>
+
           <span class="muted">(這些是圖表參數，不是 filter)</span>
         </div>
       </div>
@@ -476,29 +520,89 @@
       <div class="muted">空白頁。按「＋」新增 Analytics 或 Chart 格子。</div>
 
       <div class="panel" style="margin-top:10px;">
-        <div class="row" style="justify-content:space-between;">
-          <div class="row">
-            <button id="btnCusAdd" type="button">＋ Add</button>
-            <select id="cusMetricTest"></select>
-            
-            <button id="btnCusAddChart" type="button">＋ Add Chart</button>
-            <select id="cusChartTest"></select>
-            <button id="btnCusSave" type="button">Save</button>
+        <div class="cusControlWrap">
+          <div class="cusAddGrid">
+            <div class="cusBlock">
+              <button id="btnCusAdd" class="cusAddBtn" type="button">＋ Add<br>Metric</button>
+              <select id="cusMetricTest" class="cusMainSel"></select>
+              <div class="cusPair">
+                <select id="cusMetricBase">
+                  <option value="pnl_pct">總倉損益%</option>
+                  <option value="pnl" selected>損益金額</option>
+                  <option value="rr">R (盈虧比)</option>
+                </select>
+                <select id="cusMetricFee">
+                  <option value="net" selected>包含手續費</option>
+                  <option value="gross">不含手續費</option>
+                </select>
+              </div>
+            </div>
 
-            <label class="muted">Module
-              <select id="cusModuleSel"></select>
-            </label>
+            <div class="cusBlock">
+              <button id="btnCusAddChart" class="cusAddBtn" type="button">＋ Add<br>Chart</button>
+              <select id="cusChartTest" class="cusMainSel"></select>
+              <div class="cusPair">
+                <select id="cusChartBase">
+                  <option value="rr" selected>R (盈虧比)</option>
+                  <option value="pnl_pct">總倉損益%</option>
+                  <option value="pnl">損益金額</option>
+                </select>
+                <select id="cusChartFee">
+                  <option value="net" selected>包含手續費</option>
+                  <option value="gross">不含手續費</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="row" style="margin-top:8px;">
+          <div class="cusActions">
+            <button id="btnCusSave" type="button">Save</button>
+            <select id="cusModuleSel"></select>
             <button id="btnCusLoad" type="button">Load</button>
             <button id="btnCusRefresh" type="button">Refresh</button>
-          </div>
-
-          <div class="row">
             <span class="muted" id="cusStatus"></span>
           </div>
+
+          <label class="muted">Chart Roll
+            <select id="cusChartRoll">
+              <option value="10">10</option>
+              <option value="20">20</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+            </select>
+          </label>
+
+          <label class="muted">Chart Bucket
+            <select id="cusChartBucket">
+              <option value="15">15</option>
+              <option value="30" selected>30</option>
+              <option value="60">60</option>
+            </select>
+          </label>
+
+          <label class="muted">Chart Time Dim
+            <select id="cusChartTimeDim">
+              <option value="day" selected>of-day (HH:mm)</option>
+              <option value="month">of-month (dd)</option>
+              <option value="year">of-year (MM)</option>
+            </select>
+          </label>
+
+          <label class="muted">Chart Compare Visible
+            <select id="cusChartCompareVisible">
+              <option value="8">8</option>
+              <option value="12" selected>12</option>
+              <option value="20">20</option>
+              <option value="30">30</option>
+            </select>
+          </label>
         </div>
       </div>
 
-      <div id="customGrid" class="chartGrid cols6" style="margin-top:12px;"></div>
+      <div id="customGrid" class="chartGrid cusMosaic" style="margin-top:12px;"></div>
     </div>
 
 <!-- Column Options Editor Modal -->
@@ -1270,9 +1374,27 @@
     applySort();
     renderCounts();
     renderTable();
-    renderAnalytics();
-    renderCharts();
-    renderCalendarTab();
+    renderHeavyByActivePage();
+  }
+
+  function getActivePageId(){
+    const page = document.querySelector('.page.active');
+    return page?.id || 'trades';
+  }
+
+  function renderHeavyByActivePage(){
+    const pageId = getActivePageId();
+    if(pageId === 'analytics'){
+      renderAnalytics();
+      return;
+    }
+    if(pageId === 'charts'){
+      renderCharts();
+      return;
+    }
+    if(pageId === 'calendar'){
+      renderCalendarTab();
+    }
   }
 
   // =====================
@@ -1301,8 +1423,9 @@
     document.getElementById(id).classList.add('active');
     document.querySelectorAll('.sidebar .item').forEach(i => i.classList.remove('active'));
     if(el) el.classList.add('active');
-    renderAnalytics();
-    if(id === 'calendar') renderCalendarTab();
+    if(id === 'analytics') renderAnalytics();
+    else if(id === 'charts') renderCharts();
+    else if(id === 'calendar') renderCalendarTab();
   }
 
   // =====================
@@ -1600,9 +1723,13 @@
     const tb = document.getElementById('tbody');
     tb.innerHTML = '';
 
+    const rawIndexMap = new Map();
+    rawTrades.forEach((row, idx) => rawIndexMap.set(row, idx));
+
     filteredTrades.forEach(t => {
       const r = document.createElement('tr');
-      const rawIdx = rawTrades.indexOf(t);
+      const rawIdx = rawIndexMap.get(t);
+      if(!Number.isInteger(rawIdx)) return;
       r.dataset.rowIndex = String(rawIdx);
 
       colOrder.forEach(key => {
@@ -2406,11 +2533,7 @@ function normalizeTradeDates(trade){
     { id:'tod_avg', group:'時間維度', name:'Time-of-Day Avg (by entry time)' },
     { id:'tod_count', group:'時間維度', name:'Time-of-Day Trade Count' },
     { id:'tod_sum', group:'時間維度', name:'Time-of-Day Total' },
-    { id:'by_strategy_avg', group:'分類比較', name:'策略 × Avg' },
-    { id:'by_structure_avg', group:'分類比較', name:'結構 × Avg' },
-    { id:'by_context_avg', group:'分類比較', name:'Context Rating × Avg' },
-    { id:'by_strategy_wr', group:'分類比較', name:'策略 × 勝率' },
-    { id:'by_strategy_pf', group:'分類比較', name:'策略 × Profit Factor' }
+    { id:'by_group_metric', group:'分類比較', name:'分類 A × 指標 B' }
   ];
 
   const CHART_GROUPS = Array.from(new Set(CHART_TYPES.map(x => x.group)));
@@ -2425,6 +2548,8 @@ function normalizeTradeDates(trade){
     { id:'t6', type:'roll_pf' }
   ];
 
+  const CHART_COMPARE_METRICS = ['avg', 'winrate', 'pf', 'sum', 'count'];
+
   function setChartLayout(v){
     chartLayout = String(v || '4');
     renderCharts();
@@ -2437,11 +2562,118 @@ function normalizeTradeDates(trade){
   }
 
   function getChartsConfig(){
+    syncChartCompareGroupOptions();
+
     const base = document.getElementById('c_base')?.value || 'rr';
     const fee = document.getElementById('c_fee')?.value || 'net';
     const roll = Number(document.getElementById('c_roll')?.value || '50');
     const bucket = Number(document.getElementById('c_bucket')?.value || '30');
-    return { base, fee, roll, bucket };
+    const timeDim = document.getElementById('c_time_dim')?.value || 'day';
+    const compareVisible = Number(document.getElementById('c_compare_visible')?.value || '12');
+    return { base, fee, roll, bucket, timeDim, compareVisible };
+  }
+
+  function chartCompareMetricName(metric){
+    if(metric === 'avg') return 'Avg';
+    if(metric === 'winrate') return 'Win %';
+    if(metric === 'pf') return 'Profit Factor';
+    if(metric === 'sum') return 'Total';
+    if(metric === 'count') return 'Count';
+    return String(metric || 'Metric');
+  }
+
+  function ellipsisLabel(text, maxLen){
+    const s = String(text ?? '');
+    if(s.length <= maxLen) return s;
+    return s.slice(0, Math.max(1, maxLen - 1)) + '…';
+  }
+
+  function chartGroupLabel(field){
+    const anaSel = document.getElementById('ana_group');
+    if(anaSel){
+      const opt = Array.from(anaSel.options || []).find(o => o.value === field);
+      if(opt && opt.textContent) return opt.textContent;
+    }
+    return FIELD_META[field]?.label || field || '(group)';
+  }
+
+  function getAnaGroupOptions(){
+    const anaSel = document.getElementById('ana_group');
+    if(!anaSel) return [];
+    return Array.from(anaSel.options || []).map(o => ({ value: o.value, label: o.textContent || o.value }));
+  }
+
+  function normalizeCompareField(field, fallback){
+    const options = getAnaGroupOptions();
+    if(options.length === 0) return '';
+    if(options.some(o => o.value === field)) return field;
+    if(options.some(o => o.value === fallback)) return fallback;
+    return options[0].value;
+  }
+
+  function normalizeCompareMetric(metric){
+    return CHART_COMPARE_METRICS.includes(metric) ? metric : 'avg';
+  }
+
+  function getTileCompareField(tile, cfg){
+    const fallback = cfg?.compareField || document.getElementById('ana_group')?.value || 'strategy';
+    return normalizeCompareField(tile?.compareField, fallback);
+  }
+
+  function getTileCompareMetric(tile, cfg){
+    const fallback = cfg?.compareMetric || 'avg';
+    return normalizeCompareMetric(tile?.compareMetric || fallback);
+  }
+
+  function getTileChartCfg(tile, cfg){
+    if(tile?.type !== 'by_group_metric') return cfg;
+    return {
+      ...cfg,
+      compareField: getTileCompareField(tile, cfg),
+      compareMetric: getTileCompareMetric(tile, cfg)
+    };
+  }
+
+  function buildCompareFieldSelect(sel, current){
+    sel.innerHTML = '';
+    const opts = getAnaGroupOptions();
+    opts.forEach(x => {
+      const o = document.createElement('option');
+      o.value = x.value;
+      o.textContent = x.label;
+      sel.appendChild(o);
+    });
+    if(opts.length > 0) sel.value = normalizeCompareField(current, opts[0].value);
+  }
+
+  function buildCompareMetricSelect(sel, current){
+    sel.innerHTML = '';
+    CHART_COMPARE_METRICS.forEach(metric => {
+      const o = document.createElement('option');
+      o.value = metric;
+      o.textContent = chartCompareMetricName(metric);
+      sel.appendChild(o);
+    });
+    sel.value = normalizeCompareMetric(current);
+  }
+
+  function syncChartCompareGroupOptions(){
+    const anaSel = document.getElementById('ana_group');
+    if(!anaSel) return;
+
+    const options = Array.from(anaSel.options || []);
+    if(options.length === 0) return;
+
+    const candidate = options.some(o => o.value === anaSel.value) ? anaSel.value : options[0].value;
+
+    chartTiles = chartTiles.map(t => {
+      if(t.type !== 'by_group_metric') return t;
+      return {
+        ...t,
+        compareField: normalizeCompareField(t.compareField, candidate),
+        compareMetric: normalizeCompareMetric(t.compareMetric)
+      };
+    });
   }
 
   function renderFilterSummary(){
@@ -2546,6 +2778,21 @@ function normalizeTradeDates(trade){
       tag.innerText = 'N=' + String(filteredTrades.length);
 
       left.appendChild(sel);
+
+      if(tile.type === 'by_group_metric'){
+        const compareFieldSel = document.createElement('select');
+        compareFieldSel.dataset.tile = tile.id;
+        compareFieldSel.className = 'tileCompareFieldSel';
+        buildCompareFieldSelect(compareFieldSel, getTileCompareField(tile, cfg));
+        left.appendChild(compareFieldSel);
+
+        const compareMetricSel = document.createElement('select');
+        compareMetricSel.dataset.tile = tile.id;
+        compareMetricSel.className = 'tileCompareMetricSel';
+        buildCompareMetricSelect(compareMetricSel, getTileCompareMetric(tile, cfg));
+        left.appendChild(compareMetricSel);
+      }
+
       left.appendChild(tag);
 
       const right = document.createElement('div');
@@ -2585,7 +2832,12 @@ function normalizeTradeDates(trade){
 
       const rightFoot = document.createElement('span');
       rightFoot.className = 'muted';
-      rightFoot.innerText = cfg.base + ' • ' + cfg.fee + ' • roll ' + cfg.roll;
+      if(tile.type === 'by_group_metric'){
+        const tileCfg = getTileChartCfg(tile, cfg);
+        rightFoot.innerText = chartGroupLabel(tileCfg.compareField) + ' × ' + chartCompareMetricName(tileCfg.compareMetric);
+      } else {
+        rightFoot.innerText = cfg.base + ' • ' + cfg.fee + ' • roll ' + cfg.roll;
+      }
 
       foot.appendChild(leftFoot);
       foot.appendChild(rightFoot);
@@ -2607,6 +2859,20 @@ function normalizeTradeDates(trade){
       });
     });
 
+    grid.querySelectorAll('.tileCompareFieldSel').forEach(sel => {
+      sel.addEventListener('change', (e) => {
+        const tileId = e.target.dataset.tile;
+        setTileCompareField(tileId, e.target.value);
+      });
+    });
+
+    grid.querySelectorAll('.tileCompareMetricSel').forEach(sel => {
+      sel.addEventListener('change', (e) => {
+        const tileId = e.target.dataset.tile;
+        setTileCompareMetric(tileId, e.target.value);
+      });
+    });
+
     const cLayout = document.getElementById('c_layout');
     if(cLayout) cLayout.value = chartLayout;
   }
@@ -2621,7 +2887,26 @@ function normalizeTradeDates(trade){
   }
 
   function setTileType(tileId, type){
-    chartTiles = chartTiles.map(t => t.id === tileId ? ({ ...t, type }) : t);
+    chartTiles = chartTiles.map(t => {
+      if(t.id !== tileId) return t;
+      if(type !== 'by_group_metric') return { ...t, type };
+      return {
+        ...t,
+        type,
+        compareField: getTileCompareField(t, getChartsConfig()),
+        compareMetric: getTileCompareMetric(t, getChartsConfig())
+      };
+    });
+    renderCharts();
+  }
+
+  function setTileCompareField(tileId, field){
+    chartTiles = chartTiles.map(t => t.id === tileId ? ({ ...t, compareField: normalizeCompareField(field, getChartsConfig().compareField) }) : t);
+    renderCharts();
+  }
+
+  function setTileCompareMetric(tileId, metric){
+    chartTiles = chartTiles.map(t => t.id === tileId ? ({ ...t, compareMetric: normalizeCompareMetric(metric) }) : t);
     renderCharts();
   }
 
@@ -2706,10 +2991,14 @@ function normalizeTradeDates(trade){
     if(title) title.innerText = t ? t.name : tile.type;
     if(pill) pill.innerText = 'N=' + String(filteredTrades.length);
     if(sub) sub.innerText = 'Uses global filters only';
-    if(cfgEl) cfgEl.innerText = cfg.base + ' • ' + cfg.fee + ' • roll ' + cfg.roll + ' • bucket ' + cfg.bucket;
+    if(cfgEl){
+      const tileCfg = getTileChartCfg(tile, cfg);
+      const compareText = chartGroupLabel(tileCfg.compareField) + ' × ' + chartCompareMetricName(tileCfg.compareMetric);
+      cfgEl.innerText = cfg.base + ' • ' + cfg.fee + ' • roll ' + cfg.roll + ' • bucket ' + cfg.bucket + ' • ' + compareText;
+    }
 
     if(chartDiv){
-      renderChartToDiv(chartDiv, tile.type, cfg, true);
+      renderChartToDiv(chartDiv, tile.type, getTileChartCfg(tile, cfg), true);
       if(fallback) fallback.style.display = 'none';
     } else {
       if(fallback) fallback.style.display = 'flex';
@@ -2833,9 +3122,53 @@ function normalizeTradeDates(trade){
     return out;
   }
 
+  function getTradeEntryDateTimeText(trade, compact = false){
+    const direct = normalizeDateTimeString(trade?.entry_date_time);
+    const directMs = parseDateTimeToMs(direct);
+    if(direct && directMs !== null){
+      if(!compact) return direct;
+      const m = direct.match(/^(\d{4})-(\d{2})-(\d{2})\s(\d{2}):(\d{2})$/);
+      if(m) return `${m[2]}-${m[3]} ${m[4]}:${m[5]}`;
+      return direct;
+    }
+
+    const d = normalizeDateString(trade?.entry_date);
+    const tm = normalizeTimeString(trade?.entry_time) || '00:00';
+    if(d){
+      const merged = `${d} ${tm}`;
+      const mergedMs = parseDateTimeToMs(merged);
+      if(mergedMs !== null){
+        if(!compact) return merged;
+        const m = merged.match(/^(\d{4})-(\d{2})-(\d{2})\s(\d{2}):(\d{2})$/);
+        if(m) return `${m[2]}-${m[3]} ${m[4]}:${m[5]}`;
+        return merged;
+      }
+    }
+
+    return '';
+  }
+
+  function getTradeEntryDateTimeMs(trade){
+    const full = getTradeEntryDateTimeText(trade, false);
+    if(!full) return null;
+    return parseDateTimeToMs(full);
+  }
+
+  function sortTradesByEntryDateTime(trades){
+    return (trades || [])
+      .map((t, idx) => ({ t, idx, ms: getTradeEntryDateTimeMs(t) }))
+      .sort((a, b) => {
+        const av = Number.isFinite(a.ms) ? a.ms : Number.POSITIVE_INFINITY;
+        const bv = Number.isFinite(b.ms) ? b.ms : Number.POSITIVE_INFINITY;
+        if(av !== bv) return av - bv;
+        return a.idx - b.idx;
+      })
+      .map(x => x.t);
+  }
+
   function seriesWithX(trades, base, fee){
     const y = getSeriesSafe(trades, base, fee);
-    const x = y.map((_, i) => String(i + 1));
+    const x = trades.map(t => getTradeEntryDateTimeText(t, true) || '(no entry_date_time)');
     return { x, y };
   }
 
@@ -2844,7 +3177,8 @@ function normalizeTradeDates(trade){
     const prod = String(trade.product || '');
     const tf = String(trade.timeframe || '');
     const side = String(trade.side || '');
-    const dt = (trade.entry_date && trade.entry_time) ? (String(trade.entry_date) + ' ' + String(trade.entry_time)) : String(trade.entry_date || '');
+    const dt = getTradeEntryDateTimeText(trade, false)
+      || ((trade.entry_date && trade.entry_time) ? (String(trade.entry_date) + ' ' + String(trade.entry_time)) : String(trade.entry_date || ''));
     const val = Number(yVal);
 
     const main = metricName(base) + ': ' + (Number.isFinite(val) ? val.toFixed(3) : '');
@@ -2855,7 +3189,7 @@ function normalizeTradeDates(trade){
     return [main, line1, line2, line3].filter(Boolean).join('<br/>');
   }
 
-  function buildBaseOption(title, x, yName){
+  function buildBaseOption(title, x, yName, xName = 'Trade #'){
     return {
       animation: false,
       grid: { left: 52, right: 16, top: 30, bottom: 44, containLabel: true },
@@ -2868,10 +3202,13 @@ function normalizeTradeDates(trade){
       },
       xAxis: {
         type: 'category',
-        name: 'Trade #',
+        name: xName,
         nameLocation: 'middle',
         nameGap: 28,
-        axisLabel: { color: '#6b7280' },
+        axisLabel: {
+          color: '#6b7280',
+          formatter: (v) => ellipsisLabel(v, 12)
+        },
         axisLine: { lineStyle: { color: '#d1d5db' } },
         axisTick: { alignWithLabel: true },
         data: x
@@ -2893,7 +3230,7 @@ function normalizeTradeDates(trade){
     const domId = 'chart_' + tile.id;
     const el = document.getElementById(domId);
     if(!el) return;
-    renderChartToDiv(el, tile.type, cfg, isBig);
+    renderChartToDiv(el, tile.type, getTileChartCfg(tile, cfg), isBig);
   }
 
   function renderChartToDiv(el, type, cfg, isBig){
@@ -2914,9 +3251,10 @@ function normalizeTradeDates(trade){
     const base = cfg.base;
     const fee = cfg.fee;
     const trades = filteredTrades;
+    const tradesByTime = sortTradesByEntryDateTime(trades);
     const yName = metricName(base) + ' (' + feeName(fee) + ')';
 
-    const { x, y } = seriesWithX(trades, base, fee);
+    const { x: xByTime, y: yByTime } = seriesWithX(tradesByTime, base, fee);
 
     const axisTooltip = {
       trigger: 'axis',
@@ -2925,7 +3263,7 @@ function normalizeTradeDates(trade){
         const p = params?.[0];
         if(!p) return '';
         const idx = Number(p.dataIndex);
-        const tr = trades[idx];
+        const tr = tradesByTime[idx];
         return formatTooltipTrade(tr, p.data, base);
       }
     };
@@ -2933,8 +3271,8 @@ function normalizeTradeDates(trade){
     let option;
 
     if(type === 'equity'){
-      const cum = cumSum(y);
-      option = buildBaseOption('Equity Curve', x, yName);
+      const cum = cumSum(yByTime);
+      option = buildBaseOption('Equity Curve', xByTime, yName, 'Entry time');
       option.tooltip = axisTooltip;
       option.series = [{
         type: 'line',
@@ -2945,8 +3283,8 @@ function normalizeTradeDates(trade){
         areaStyle: { opacity: 0.08, color: '#2563eb' }
       }];
     } else if(type === 'underwater'){
-      const dd = underwater(cumSum(y));
-      option = buildBaseOption('Underwater (Drawdown)', x, yName);
+      const dd = underwater(cumSum(yByTime));
+      option = buildBaseOption('Underwater (Drawdown)', xByTime, yName, 'Entry time');
       option.tooltip = axisTooltip;
       option.series = [{
         type: 'line',
@@ -2959,19 +3297,19 @@ function normalizeTradeDates(trade){
       option.yAxis.min = (v) => Math.min(v.min, 0);
       option.yAxis.max = (v) => Math.max(v.max, 0);
     } else if(type === 'trade_series'){
-      option = buildBaseOption('Trade-by-Trade', x, yName);
+      option = buildBaseOption('Trade-by-Trade', xByTime, yName, 'Entry time');
       option.tooltip = axisTooltip;
       option.series = [{
         type: 'bar',
         name: 'Trade',
-        data: y,
+        data: yByTime,
         itemStyle: {
           color: (p) => (Number(p.value) >= 0 ? '#16a34a' : '#dc2626'),
           opacity: 0.85
         }
       }];
     } else if(type === 'hist'){
-      const { labels, counts } = histogram(y, 24);
+      const { labels, counts } = histogram(yByTime, 24);
       option = {
         animation: false,
         grid: { left: 52, right: 16, top: 30, bottom: 44, containLabel: true },
@@ -2999,7 +3337,7 @@ function normalizeTradeDates(trade){
         series: [{ type:'bar', data: counts, itemStyle:{ color:'#111827', opacity:0.25 } }]
       };
     } else if(type === 'ecdf'){
-      const { xs, ys } = ecdf(y);
+      const { xs, ys } = ecdf(yByTime);
       option = {
         animation: false,
         grid: { left: 52, right: 16, top: 30, bottom: 44, containLabel: true },
@@ -3030,20 +3368,20 @@ function normalizeTradeDates(trade){
         series: [{ type:'line', showSymbol:false, data: xs.map((v,i)=>[v,ys[i]]), lineStyle:{ width:2, color:'#2563eb' } }]
       };
     } else if(type === 'roll_avg'){
-      const r = rollingMean(y, cfg.roll);
-      option = buildBaseOption('Rolling Avg (' + cfg.roll + ')', x, yName);
+      const r = rollingMean(yByTime, cfg.roll);
+      option = buildBaseOption('Rolling Avg (' + cfg.roll + ')', xByTime, yName, 'Entry time');
       option.tooltip = axisTooltip;
       option.series = [{ type:'line', data:r, showSymbol:false, lineStyle:{width:2,color:'#2563eb'}, areaStyle:{opacity:0.06,color:'#2563eb'} }];
     } else if(type === 'roll_win'){
-      const r = rollingWinRate(y, cfg.roll).map(v => v * 100);
-      option = buildBaseOption('Rolling Win Rate (' + cfg.roll + ')', x, 'Win %');
+      const r = rollingWinRate(yByTime, cfg.roll).map(v => v * 100);
+      option = buildBaseOption('Rolling Win Rate (' + cfg.roll + ')', xByTime, 'Win %', 'Entry time');
       option.tooltip = { trigger:'axis', axisPointer:{type:'cross'}, formatter:(ps)=>{ const p=ps?.[0]; return p ? ('Win%: ' + Number(p.data).toFixed(1) + '%') : ''; } };
       option.yAxis.min = 0;
       option.yAxis.max = 100;
       option.series = [{ type:'line', data:r, showSymbol:false, lineStyle:{width:2,color:'#16a34a'} }];
     } else if(type === 'roll_pf'){
-      const r = rollingPF(y, cfg.roll).map(v => Math.min(10, v));
-      option = buildBaseOption('Rolling Profit Factor (' + cfg.roll + ')', x, 'PF (cap 10)');
+      const r = rollingPF(yByTime, cfg.roll).map(v => Math.min(10, v));
+      option = buildBaseOption('Rolling Profit Factor (' + cfg.roll + ')', xByTime, 'PF (cap 10)', 'Entry time');
       option.tooltip = { trigger:'axis', axisPointer:{type:'cross'}, formatter:(ps)=>{ const p=ps?.[0]; return p ? ('PF: ' + Number(p.data).toFixed(2)) : ''; } };
       option.yAxis.min = 0;
       option.yAxis.max = 10;
@@ -3052,15 +3390,20 @@ function normalizeTradeDates(trade){
 
     else if(type === 'tod_avg' || type === 'tod_count' || type === 'tod_sum'){
       const metric = (type === 'tod_count') ? 'count' : (type === 'tod_sum' ? 'sum' : 'avg');
-      const items = bucketTimeOfDay(trades, cfg.bucket, base, fee, metric);
+      const dim = String(cfg.timeDim || 'day');
+      const items = bucketByTimeDimension(tradesByTime, dim, cfg.bucket, base, fee, metric);
       const labels = items.map(o => o.label);
       const vals = items.map(o => Number(o.value) || 0);
+
+      const dimTitle = dim === 'month' ? 'Month' : (dim === 'year' ? 'Year' : 'Day');
+      const xAxisName = dim === 'month' ? 'Day (dd)' : (dim === 'year' ? 'Month (MM)' : 'Entry time (HH:mm)');
+      const suffix = dim === 'day' ? (' (' + cfg.bucket + 'm)') : '';
 
       option = {
         animation: false,
         grid: { left: 52, right: 16, top: 30, bottom: 54, containLabel: true },
         title: {
-          text: 'Time-of-Day ' + (metric === 'avg' ? 'Avg' : (metric === 'sum' ? 'Total' : 'Count')) + ' (' + cfg.bucket + 'm)',
+          text: 'Time-of-' + dimTitle + ' ' + (metric === 'avg' ? 'Avg' : (metric === 'sum' ? 'Total' : 'Count')) + suffix,
           left: 10,
           top: 6,
           textStyle: { fontSize: 12, fontWeight: 600 }
@@ -3069,7 +3412,7 @@ function normalizeTradeDates(trade){
         toolbox: { right: 10, top: 4, feature: { restore: {}, saveAsImage: {} } },
         xAxis: {
           type: 'category',
-          name: 'Entry time',
+          name: xAxisName,
           nameLocation: 'middle',
           nameGap: 34,
           axisLabel: {
@@ -3101,41 +3444,59 @@ function normalizeTradeDates(trade){
           type: 'text',
           left: 'center',
           top: 'middle',
-          style: { text: 'No data (check entry_time format HH:MM)', fill: '#6b7280', font: '12px sans-serif' }
+          style: { text: 'No data (check entry_date_time)', fill: '#6b7280', font: '12px sans-serif' }
         };
       }
     }
 
-    else if(type.startsWith('by_')){
-      const map = {
-        by_strategy_avg: { field:'strategy', metric:'avg', title:'策略 × Avg' },
-        by_structure_avg: { field:'structure', metric:'avg', title:'結構 × Avg' },
-        by_context_avg: { field:'context_rating', metric:'avg', title:'Context Rating × Avg' },
-        by_strategy_wr: { field:'strategy', metric:'winrate', title:'策略 × 勝率' },
-        by_strategy_pf: { field:'strategy', metric:'pf', title:'策略 × Profit Factor' }
+    else if(type === 'by_group_metric' || type.startsWith('by_')){
+      const legacy = {
+        by_strategy_avg: { field:'strategy', metric:'avg' },
+        by_structure_avg: { field:'structure', metric:'avg' },
+        by_context_avg: { field:'context_rating', metric:'avg' },
+        by_strategy_wr: { field:'strategy', metric:'winrate' },
+        by_strategy_pf: { field:'strategy', metric:'pf' }
       };
 
-      const spec = map[type];
-      const itemsAll = spec ? groupMetric(trades, spec.field, base, fee, spec.metric) : [];
-      const items = itemsAll.slice(0, 12);
+      const field = (type === 'by_group_metric') ? cfg.compareField : (legacy[type]?.field || cfg.compareField);
+      const metric = (type === 'by_group_metric') ? cfg.compareMetric : (legacy[type]?.metric || cfg.compareMetric);
+      const title = chartGroupLabel(field) + ' × ' + chartCompareMetricName(metric);
+
+      const itemsAll = groupMetric(trades, field, base, fee, metric);
+      const items = itemsAll;
+      const visibleCount = Math.max(5, Number(cfg.compareVisible) || 12);
 
       const labels = items.map(o => o.label).reverse();
       let vals = items.map(o => Number(o.value) || 0).reverse();
 
       let xName = yName;
-      if(spec?.metric === 'winrate'){
+      if(metric === 'winrate'){
         xName = 'Win %';
         vals = vals.map(v => v * 100);
-      } else if(spec?.metric === 'pf'){
+      } else if(metric === 'pf'){
         xName = 'PF';
         vals = vals.map(v => Math.min(10, v));
+      } else if(metric === 'count'){
+        xName = 'Count';
+      } else if(metric === 'sum'){
+        xName = yName + ' Sum';
       }
 
       option = {
         animation: false,
-        grid: { left: 120, right: 16, top: 30, bottom: 30, containLabel: true },
-        title: { text: spec ? spec.title : ('Not implemented: ' + type), left: 10, top: 6, textStyle: { fontSize: 12, fontWeight: 600 } },
-        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+        grid: { left: 120, right: (labels.length > visibleCount ? 34 : 16), top: 30, bottom: 30, containLabel: true },
+        title: { text: title, left: 10, top: 6, textStyle: { fontSize: 12, fontWeight: 600 } },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: { type: 'shadow' },
+          formatter: (params) => {
+            const p = params?.[0];
+            if(!p) return '';
+            const v = Number(p.value);
+            const shown = Number.isFinite(v) ? v.toFixed(metric === 'count' ? 0 : 3) : String(p.value ?? '');
+            return String(p.name || '') + '<br/>' + xName + ': ' + shown;
+          }
+        },
         toolbox: { right: 10, top: 4, feature: { restore: {}, saveAsImage: {} } },
         xAxis: {
           type: 'value',
@@ -3148,7 +3509,10 @@ function normalizeTradeDates(trade){
         },
         yAxis: {
           type: 'category',
-          axisLabel: { color: '#6b7280' },
+          axisLabel: {
+            color: '#6b7280',
+            formatter: (v) => ellipsisLabel(v, 18)
+          },
           axisLine: { lineStyle: { color: '#d1d5db' } },
           data: labels
         },
@@ -3159,13 +3523,31 @@ function normalizeTradeDates(trade){
         }]
       };
 
-      if(spec?.metric === 'winrate'){
+      if(labels.length > visibleCount){
+        option.dataZoom = [
+          { type: 'inside', yAxisIndex: 0, zoomOnMouseWheel: true, moveOnMouseMove: true },
+          {
+            type: 'slider',
+            yAxisIndex: 0,
+            right: 4,
+            width: 10,
+            startValue: Math.max(0, labels.length - visibleCount),
+            endValue: labels.length - 1,
+            brushSelect: false
+          }
+        ];
+      }
+
+      if(metric === 'winrate'){
         option.xAxis.min = 0;
         option.xAxis.max = 100;
       }
-      if(spec?.metric === 'pf'){
+      if(metric === 'pf'){
         option.xAxis.min = 0;
         option.xAxis.max = 10;
+      }
+      if(metric === 'count'){
+        option.xAxis.min = 0;
       }
 
       if(labels.length === 0){
@@ -3365,39 +3747,57 @@ function normalizeTradeDates(trade){
     return h*60 + m;
   }
 
-  function bucketTimeOfDay(trades, bucketMins, base, fee, metric){
+  function bucketByTimeDimension(trades, timeDim, bucketMins, base, fee, metric){
+    const dim = String(timeDim || 'day');
     const buckets = new Map();
+    const dayBucketSize = Number.isFinite(Number(bucketMins)) ? Math.max(1, Number(bucketMins)) : 30;
 
-    function bLabel(start){
-      const h = Math.floor(start/60);
+    function dayBucketLabel(start){
+      const h = Math.floor(start / 60);
       const m = start % 60;
-      const hh = String(h).padStart(2,'0');
-      const mm = String(m).padStart(2,'0');
-      return hh + ':' + mm;
+      return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
     }
 
-    trades.forEach(t => {
-      const mins = parseTimeToMinutes(t.entry_time);
-      if(mins === null) return;
-      const b = Math.floor(mins / bucketMins) * bucketMins;
-      const key = bLabel(b);
+    sortTradesByEntryDateTime(trades).forEach(t => {
+      const ms = getTradeEntryDateTimeMs(t);
+      if(ms === null) return;
+      const dt = new Date(ms);
+
+      let key = '';
+      let order = 0;
+      if(dim === 'month'){
+        const d = dt.getDate();
+        key = String(d).padStart(2, '0');
+        order = d;
+      } else if(dim === 'year'){
+        const mo = dt.getMonth() + 1;
+        key = String(mo).padStart(2, '0');
+        order = mo;
+      } else {
+        const mins = dt.getHours() * 60 + dt.getMinutes();
+        const b = Math.floor(mins / dayBucketSize) * dayBucketSize;
+        key = dayBucketLabel(b);
+        order = b;
+      }
+
+      if(!buckets.has(key)) buckets.set(key, { arr: [], order });
       const v = getSeriesSafe([t], base, fee)[0];
-      if(!buckets.has(key)) buckets.set(key, []);
-      buckets.get(key).push(v);
+      buckets.get(key).arr.push(v);
     });
 
     const out = [];
-    buckets.forEach((arr, label) => {
+    buckets.forEach((bucket, label) => {
+      const arr = bucket.arr;
       const n = arr.length;
-      const sum = arr.reduce((a,b)=>a+(Number(b)||0),0);
+      const sum = arr.reduce((a, b) => a + (Number(b) || 0), 0);
       let v = 0;
       if(metric === 'count') v = n;
       else if(metric === 'sum') v = sum;
       else v = n ? (sum / n) : 0;
-      out.push({ label, value:v, n });
+      out.push({ label, value: v, n, order: bucket.order });
     });
 
-    out.sort((a,b) => String(a.label).localeCompare(String(b.label)));
+    out.sort((a, b) => a.order - b.order);
     return out;
   }
 
@@ -4346,84 +4746,6 @@ function normalizeTradeDates(trade){
     if(f) f.innerText = String(filteredTrades.length);
   }
 
-  // =====================
-  // Self-tests (no external libs)
-  // =====================
-  function runSelfTests(){
-    const ok = (name) => console.log('[OK]', name);
-    const fail = (name, err) => console.error('[FAIL]', name, err);
-
-    function assert(cond, msg){
-      if(!cond) throw new Error(msg);
-    }
-
-    const raw0 = rawTrades.map(x => ({...x}));
-    const filters0 = filters.map(f => ({...f, values:[...(f.values||[])]}));
-    const tfOpts0 = [...(FIELD_META.timeframe.options || [])];
-
-    try{
-      assert(normalizeDateString('2025/12/14') === '2025-12-14', 'normalizeDateString slash');
-      assert(normalizeDateString('2025.12.03') === '2025-12-03', 'normalizeDateString dot');
-      ok('normalizeDateString');
-
-      const n0 = rawTrades.length;
-      const first0 = rawTrades[0] ? String(rawTrades[0].trade_id || '') : '';
-      addRow();
-      assert(rawTrades.length === n0 + 1, 'addRow should add one trade');
-      assert(String(rawTrades[0].trade_id || '') === '', 'new top trade should be empty by default');
-      assert(String(rawTrades[1].trade_id || '') === first0, 'previous first trade should shift to row 2');
-      ok('addRow');
-
-      filters = [{ field:'timeframe', op:'eq', values:['5m'] }];
-      applyAdvancedFilter();
-      assert(filteredTrades.every(t => String(t.timeframe) === '5m'), 'filter timeframe eq should keep only 5m');
-      ok('filter select eq');
-
-      FIELD_META.timeframe.options = ['1m','3m'];
-      sanitizeFiltersForField('timeframe');
-      assert(filters[0].values.length === 0, 'sanitize should remove invalid select value');
-      ok('sanitizeFiltersForField');
-
-      // Date filter tests
-      filters = [{ field:'entry_date', op:'after', values:['2025-12-13'] }];
-      applyAdvancedFilter();
-      assert(filteredTrades.length === 2, 'date after should keep 2 (14th)');
-
-      filters = [{ field:'entry_date', op:'before', values:['2025-12-14'] }];
-      applyAdvancedFilter();
-      assert(filteredTrades.length === 1 && filteredTrades[0].entry_date === '2025-12-13', 'date before should keep only 13th');
-
-      filters = [{ field:'entry_date', op:'between', values:['2025-12-13','2025-12-14'] }];
-      applyAdvancedFilter();
-      assert(filteredTrades.length === 3, 'date between inclusive should keep 3');
-      ok('filter date ops');
-
-      // Time filter tests
-      filters = [{ field:'entry_time', op:'gt', values:['11:00'] }];
-      applyAdvancedFilter();
-      assert(filteredTrades.length === 2, 'time gt 11:00 should keep 11:10 and 21:35');
-
-      filters = [{ field:'entry_time', op:'lt', values:['11:00'] }];
-      applyAdvancedFilter();
-      assert(filteredTrades.length === 1 && filteredTrades[0].entry_time === '10:05', 'time lt 11:00 should keep only 10:05');
-
-      filters = [{ field:'entry_time', op:'between', values:['10:00','12:00'] }];
-      applyAdvancedFilter();
-      assert(filteredTrades.length === 2, 'time between 10:00-12:00 should keep 10:05 and 11:10');
-      ok('filter time ops');
-
-      console.log('All self-tests passed.');
-      alert('Self-tests passed. (See console)');
-    } catch(err){
-      fail('self-tests', err);
-      alert('Self-tests failed: ' + (err?.message || err));
-    } finally {
-      rawTrades = raw0.map(t => normalizeTradeDates(t));
-      filters = filters0.map(f => ({...f, values:[...(f.values||[])]}));
-      FIELD_META.timeframe.options = tfOpts0;
-      applyAdvancedFilter();
-    }
-  }
   function renderTradesFromRows(rows){
     // rows: Array<Object> or Array<Array>
     if(!rows) return;
@@ -4663,6 +4985,29 @@ function normalizeTradeDates(trade){
     });
 
     groupSel.value = keys.includes(prev) ? prev : keys[0];
+    syncChartCompareGroupOptions();
+  }
+
+  function getRowsForSave(){
+    const keys = COLS.filter(k => k !== '_delete');
+    if(keys.length === 0) return [];
+
+    return rawTrades.map((trade) => {
+      const t = normalizeTradeDates(trade || {});
+      const row = {};
+      keys.forEach((k) => {
+        const meta = FIELD_META[k];
+        let v = t[k];
+
+        if(meta?.type === 'multi') v = normalizeMultiCellValue(v);
+        else if(meta?.type === 'date') v = normalizeDateString(v);
+        else if(meta?.type === 'datetime') v = normalizeDateTimeString(v);
+        else if(meta?.type === 'number') v = coerceNumberValue(v);
+
+        row[k] = (v === null || v === undefined) ? '' : v;
+      });
+      return row;
+    });
   }
 
   async function loadExcel(res) {
@@ -4814,12 +5159,18 @@ function normalizeTradeDates(trade){
   const cFee = document.getElementById('c_fee');
   const cRoll = document.getElementById('c_roll');
   const cBucket = document.getElementById('c_bucket');
+  const cTimeDim = document.getElementById('c_time_dim');
+  const cCompareVisible = document.getElementById('c_compare_visible');
 
   if (cLayout) cLayout.addEventListener('change', () => setChartLayout(cLayout.value));
   if (cBase) cBase.addEventListener('change', () => renderCharts());
   if (cFee) cFee.addEventListener('change', () => renderCharts());
   if (cRoll) cRoll.addEventListener('change', () => renderCharts());
   if (cBucket) cBucket.addEventListener('change', () => renderCharts());
+  if (cTimeDim) cTimeDim.addEventListener('change', () => renderCharts());
+  if (cCompareVisible) cCompareVisible.addEventListener('change', () => renderCharts());
+
+  syncChartCompareGroupOptions();
 
   // Calendar controls
   const calPrev = document.getElementById('calPrev');
@@ -4853,27 +5204,34 @@ function normalizeTradeDates(trade){
     });
   }
 
-  // Save Excel：存回同檔（使用 __excelPath / __sheetName）
+  // Save Excel：MVP 改為可選路徑存檔（Save As）
   if (saveBtn) {
     saveBtn.addEventListener("click", async () => {
       try {
-        if (!window.desktopExcel?.save) {
+        if (!window.desktopExcel?.saveAs && !window.desktopExcel?.save) {
           setStatus("desktopExcel API not found (check preload / contextBridge).");
           return;
         }
-        setStatus("Saving…");
+        setStatus("Saving (choose path)…");
 
-        // 這裡假設你已有把目前表格狀態整理成 rows 的方法：
-        // 如果你原本 save 就是從某個全域 rows 來存，改成帶那個 rows 即可
-        const rows = getRowsForSave?.() ?? []; // <= 用你既有的方式替換（很重要）
-
-        const res = await window.desktopExcel.save({
+        const rows = getRowsForSave();
+        const payload = {
           path: __excelPath,
-          sheetName: __sheetName,
+          sheetName: __sheetName || 'Sheet1',
           rows
-        });
+        };
 
-        setStatus(res?.ok ? `Saved: ${res.path}` : "Saved.");
+        const res = window.desktopExcel.saveAs
+          ? await window.desktopExcel.saveAs(payload)
+          : await window.desktopExcel.save(payload);
+
+        if(res?.canceled){
+          setStatus('Save canceled.');
+          return;
+        }
+
+        if(res?.path) __excelPath = res.path;
+        setStatus(res?.ok ? `Saved: ${res.path}` : "Save failed.");
       } catch (e) {
         console.error(e);
         setStatus(`Save failed: ${e?.message || e}`);
@@ -4959,16 +5317,1166 @@ window.addEventListener('DOMContentLoaded', bootstrap);
 window.CUSTOM_CHART_RENDERERS = window.CUSTOM_CHART_RENDERERS || {};
 // Equity Curve
 
+function buildCustomizeAnalyticsCtx(opts = {}) {
+  const base = opts.base || document.getElementById('cusMetricBase')?.value || 'pnl';
+  const feeMode = opts.feeMode || opts.fee || document.getElementById('cusMetricFee')?.value || 'net';
+
+  const series = getSeries(filteredTrades, base, feeMode);
+  const m = computeMetricsFromSeries(series);
+
+  const day = aggregateByPeriod(filteredTrades, series, 'day');
+  const month = aggregateByPeriod(filteredTrades, series, 'month');
+  const year = aggregateByPeriod(filteredTrades, series, 'year');
+
+  const toFinite = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const startCap = toFinite(document.getElementById('ana_start_cap')?.value);
+  const unreal = toFinite(document.getElementById('ana_unrealized')?.value);
+  const curVal = toFinite(document.getElementById('ana_account_value')?.value);
+
+  const realizedMoneySeries = getSeries(filteredTrades, 'pnl', feeMode);
+  const realizedMoney = realizedMoneySeries.reduce((a,b)=>a+(Number(b)||0),0);
+
+  let computedValue = null;
+  if(curVal !== null) computedValue = curVal;
+  else if(startCap !== null || unreal !== null) computedValue = (startCap || 0) + realizedMoney + (unreal || 0);
+
+  const account = {
+    starting: startCap,
+    unrealized: unreal,
+    realized: realizedMoney,
+    value: computedValue
+  };
+
+  return { m, base, feeMode, day, month, year, account };
+}
+
+window.CUSTOMIZE_ANALYTICS_GET = (id, opts = {}) => {
+  const ctx = buildCustomizeAnalyticsCtx(opts);
+  const out = calcAnaMetric(id, ctx);
+  return out?.v ?? null;
+};
+
 function getCustomizeChartCfg() {
   return {
-    base: document.getElementById('c_base')?.value,
-    fee:  document.getElementById('c_fee')?.value
+    base: document.getElementById('cusChartBase')?.value || 'rr',
+    fee:  document.getElementById('cusChartFee')?.value || 'net',
+    roll: Number(document.getElementById('cusChartRoll')?.value || '50'),
+    bucket: Number(document.getElementById('cusChartBucket')?.value || '30'),
+    timeDim: document.getElementById('cusChartTimeDim')?.value || 'day',
+    compareField: document.getElementById('ana_group')?.value || 'strategy',
+    compareMetric: 'avg',
+    compareVisible: Number(document.getElementById('cusChartCompareVisible')?.value || '12')
   };
 }
 // 通用：chartId === renderChartToDiv 的 type
-window.CUSTOM_CHART_RENDERERS.__default = (el, chartId) => {
-  renderChartToDiv(el, chartId, getCustomizeChartCfg(), false);
+window.CUSTOM_CHART_RENDERERS.__default = (el, chartId, cfgOverride) => {
+  const cfg = { ...getCustomizeChartCfg(), ...(cfgOverride || {}) };
+  renderChartToDiv(el, chartId, cfg, false);
 };
+
+// Fallback customize binder:
+// Keep customize add actions working even if module init timing fails.
+(function initCustomizeFallbackBinder(){
+  if (window.__cusFallbackBound) return;
+  window.__cusFallbackBound = true;
+
+  const CUSTOM_GRID_COLS = 6;
+
+  function setCusStatus(msg){
+    const el = document.getElementById('cusStatus');
+    if (el) el.textContent = msg || '';
+  }
+
+  function initCustomizeDragSort(){
+    if (window.__cusDragSortBound) return;
+    const grid = document.getElementById('customGrid');
+    if (!grid) return;
+
+    window.__cusDragSortBound = true;
+    let draggingTile = null;
+
+    let dropHint = null;
+
+    function getGridMetrics(){
+      const st = window.getComputedStyle(grid);
+      const cols = CUSTOM_GRID_COLS;
+      const colGap = parseFloat(st.columnGap || '0') || 0;
+      const rowGap = parseFloat(st.rowGap || '0') || 0;
+      const rowH = parseFloat(st.gridAutoRows || '110') || 110;
+      const cellW = (grid.clientWidth - (cols - 1) * colGap) / cols;
+      return { cols, colGap, rowGap, rowH, cellW: Math.max(1, cellW) };
+    }
+
+    function rectOverlap(a, b){
+      return a.col < b.col + b.c &&
+             a.col + a.c > b.col &&
+             a.row < b.row + b.r &&
+             a.row + a.r > b.row;
+    }
+
+    function clampCol(col, span, cols){
+      return Math.max(1, Math.min(cols - span + 1, col));
+    }
+
+    function resizeChartsInCustomGrid(){
+      if (typeof echarts === 'undefined') return;
+      grid.querySelectorAll('.chartHost').forEach((host) => {
+        try {
+          const inst = echarts.getInstanceByDom(host);
+          if (inst) inst.resize();
+        } catch(_e) {}
+      });
+    }
+
+    function syncTileKinds(){
+      grid.querySelectorAll('.tile').forEach((tile) => {
+        if (tile.parentElement !== grid) return;
+        const isChart = !!tile.querySelector('.chartHost');
+        const isMetric = !!tile.querySelector('.metricValue');
+        if (isChart) {
+          tile.classList.add('cusChartTile');
+          tile.classList.remove('cusMetricTile');
+
+          if (!Number.isFinite(parseInt(tile.dataset.spanC || '', 10))) tile.dataset.spanC = '2';
+          if (!Number.isFinite(parseInt(tile.dataset.spanR || '', 10))) tile.dataset.spanR = '2';
+
+          const spanC = Math.max(1, Math.min(CUSTOM_GRID_COLS, parseInt(tile.dataset.spanC || '2', 10)));
+          const spanR = Math.max(1, parseInt(tile.dataset.spanR || '2', 10));
+          tile.dataset.spanC = String(spanC);
+          tile.dataset.spanR = String(spanR);
+          tile.style.gridColumnEnd = 'span ' + String(spanC);
+          tile.style.gridRowEnd = 'span ' + String(spanR);
+          tile.style.display = 'flex';
+          tile.style.flexDirection = 'column';
+
+          const body = tile.querySelector('.tileBody');
+          if (body) {
+            body.style.flex = '1 1 auto';
+            body.style.minHeight = '0';
+            body.style.display = 'flex';
+          }
+
+          const host = tile.querySelector('.chartHost');
+          if (host) {
+            host.style.height = '100%';
+            host.style.width = '100%';
+            host.style.flex = '1 1 auto';
+            host.style.minHeight = '0';
+          }
+        } else if (isMetric) {
+          tile.classList.add('cusMetricTile');
+          tile.classList.remove('cusChartTile');
+
+          if (!Number.isFinite(parseInt(tile.dataset.spanC || '', 10))) tile.dataset.spanC = '1';
+          if (!Number.isFinite(parseInt(tile.dataset.spanR || '', 10))) tile.dataset.spanR = '1';
+
+          const spanC = Math.max(1, Math.min(CUSTOM_GRID_COLS, parseInt(tile.dataset.spanC || '1', 10)));
+          const spanR = Math.max(1, parseInt(tile.dataset.spanR || '1', 10));
+          tile.dataset.spanC = String(spanC);
+          tile.dataset.spanR = String(spanR);
+          tile.style.gridColumnEnd = 'span ' + String(spanC);
+          tile.style.gridRowEnd = 'span ' + String(spanR);
+          tile.style.display = '';
+          tile.style.flexDirection = '';
+
+          const body = tile.querySelector('.tileBody');
+          if (body) {
+            body.style.flex = '';
+            body.style.minHeight = '';
+            body.style.display = '';
+          }
+        }
+      });
+    }
+
+    function tileSpan(tile){
+      if (!(tile instanceof Element)) return { c: 1, r: 1 };
+      const dc = parseInt(tile.dataset.spanC || '', 10);
+      const dr = parseInt(tile.dataset.spanR || '', 10);
+      if (Number.isFinite(dc) && Number.isFinite(dr) && dc >= 1 && dr >= 1) {
+        return { c: Math.min(CUSTOM_GRID_COLS, dc), r: dr };
+      }
+      if (tile.classList.contains('cusChartTile')) return { c: 2, r: 2 };
+      return { c: 1, r: 1 };
+    }
+
+    function ensureDropHint(){
+      if (dropHint) return dropHint;
+      dropHint = document.createElement('div');
+      dropHint.className = 'cusDropHint';
+      dropHint.style.display = 'none';
+      grid.appendChild(dropHint);
+      return dropHint;
+    }
+
+    function hideDropHint(){
+      if (!dropHint) return;
+      dropHint.style.display = 'none';
+    }
+
+    function showDropHint(col, row, span){
+      const hint = ensureDropHint();
+      hint.style.display = 'block';
+      hint.style.gridColumn = String(col) + ' / span ' + String(span.c);
+      hint.style.gridRow = String(row) + ' / span ' + String(span.r);
+    }
+
+    function makeKey(c, r){
+      return String(c) + ':' + String(r);
+    }
+
+    function buildOccupied(excludeTile){
+      const occ = new Set();
+      grid.querySelectorAll('.tile').forEach((tile) => {
+        if (tile.parentElement !== grid || tile === excludeTile) return;
+        const c0 = parseInt(tile.style.gridColumnStart || '', 10);
+        const r0 = parseInt(tile.style.gridRowStart || '', 10);
+        if (!Number.isFinite(c0) || !Number.isFinite(r0)) return;
+        const sp = tileSpan(tile);
+        for (let rr = r0; rr < r0 + sp.r; rr += 1) {
+          for (let cc = c0; cc < c0 + sp.c; cc += 1) {
+            occ.add(makeKey(cc, rr));
+          }
+        }
+      });
+      return occ;
+    }
+
+    function areaFree(occ, col, row, colSpan, rowSpan, cols){
+      if (col < 1 || row < 1) return false;
+      if (col + colSpan - 1 > cols) return false;
+      for (let rr = row; rr < row + rowSpan; rr += 1) {
+        for (let cc = col; cc < col + colSpan; cc += 1) {
+          if (occ.has(makeKey(cc, rr))) return false;
+        }
+      }
+      return true;
+    }
+
+    function firstFreeCell(occ, colSpan, rowSpan, cols){
+      let row = 1;
+      const maxSearchRow = 800;
+      while (row <= maxSearchRow) {
+        for (let col = 1; col <= cols - colSpan + 1; col += 1) {
+          if (areaFree(occ, col, row, colSpan, rowSpan, cols)) {
+            return { col, row };
+          }
+        }
+        row += 1;
+      }
+      return null;
+    }
+
+    function canFitSpan(colSpan, rowSpan, excludeTile){
+      const { cols } = getGridMetrics();
+      if (colSpan < 1 || rowSpan < 1) return false;
+      if (colSpan > cols) return false;
+      const occ = buildOccupied(excludeTile || null);
+      return !!firstFreeCell(occ, colSpan, rowSpan, cols);
+    }
+
+    window.__cusGridCanFitSpan = canFitSpan;
+
+    function setTilePos(tile, col, row){
+      tile.style.gridColumnStart = String(col);
+      tile.style.gridRowStart = String(row);
+    }
+
+    function setTileSpan(tile, colSpan, rowSpan){
+      const { cols } = getGridMetrics();
+      const c = Math.max(1, Math.min(cols, Number(colSpan) || 1));
+      const r = Math.max(1, Number(rowSpan) || 1);
+      tile.dataset.spanC = String(c);
+      tile.dataset.spanR = String(r);
+      tile.style.gridColumnEnd = 'span ' + String(c);
+      tile.style.gridRowEnd = 'span ' + String(r);
+    }
+
+    function ensureTilesPositioned(){
+      const { cols } = getGridMetrics();
+      const occ = new Set();
+      grid.querySelectorAll('.tile').forEach((tile) => {
+        if (tile.parentElement !== grid) return;
+        const sp = tileSpan(tile);
+        let c0 = parseInt(tile.style.gridColumnStart || '', 10);
+        let r0 = parseInt(tile.style.gridRowStart || '', 10);
+
+        if (!Number.isFinite(c0) || !Number.isFinite(r0) || !areaFree(occ, c0, r0, sp.c, sp.r, cols)) {
+          const free = firstFreeCell(occ, sp.c, sp.r, cols);
+          if (!free) {
+            tile.remove();
+            setCusStatus('Customize grid auto placement failed.');
+            return;
+          }
+          c0 = free.col;
+          r0 = free.row;
+          setTilePos(tile, c0, r0);
+        }
+
+        for (let rr = r0; rr < r0 + sp.r; rr += 1) {
+          for (let cc = c0; cc < c0 + sp.c; cc += 1) {
+            occ.add(makeKey(cc, rr));
+          }
+        }
+      });
+    }
+
+    function pointToCell(clientX, clientY, colSpan, rowSpan){
+      const { cols, colGap, rowGap, rowH, cellW } = getGridMetrics();
+      const rect = grid.getBoundingClientRect();
+      const x = Math.max(0, Math.min(rect.width - 1, clientX - rect.left));
+      const y = Math.max(0, clientY - rect.top);
+      const col = Math.floor(x / (cellW + colGap)) + 1;
+      const row = Math.floor(y / (rowH + rowGap)) + 1;
+      return {
+        col: clampCol(col, colSpan, cols),
+        row: Math.max(1, row),
+        cols
+      };
+    }
+
+    function buildTileRecords(){
+      const records = [];
+      grid.querySelectorAll('.tile').forEach((tile) => {
+        if (tile.parentElement !== grid) return;
+        const sp = tileSpan(tile);
+        const c0 = parseInt(tile.style.gridColumnStart || '', 10);
+        const r0 = parseInt(tile.style.gridRowStart || '', 10);
+        records.push({
+          tile,
+          col: Number.isFinite(c0) ? c0 : 1,
+          row: Number.isFinite(r0) ? r0 : 1,
+          c: sp.c,
+          r: sp.r
+        });
+      });
+      return records;
+    }
+
+    function stepRecord(record, dir, cols){
+      if (dir === 'right') {
+        record.col += 1;
+        if (record.col + record.c - 1 > cols) {
+          record.col = 1;
+          record.row += 1;
+        }
+        return;
+      }
+      record.row += 1;
+    }
+
+    function resolveWithPush(records, fixedTile, dir){
+      const { cols } = getGridMetrics();
+      const maxLoops = 6000;
+      let loops = 0;
+
+      while (loops < maxLoops) {
+        loops += 1;
+        let pair = null;
+
+        for (let i = 0; i < records.length; i += 1) {
+          for (let j = i + 1; j < records.length; j += 1) {
+            if (rectOverlap(records[i], records[j])) {
+              pair = [records[i], records[j]];
+              break;
+            }
+          }
+          if (pair) break;
+        }
+
+        if (!pair) return true;
+
+        let victim = pair[1];
+        if (pair[0].tile === fixedTile && pair[1].tile !== fixedTile) victim = pair[1];
+        else if (pair[1].tile === fixedTile && pair[0].tile !== fixedTile) victim = pair[0];
+        else if (pair[0].row > pair[1].row) victim = pair[0];
+
+        stepRecord(victim, dir, cols);
+      }
+
+      return false;
+    }
+
+    function inferPushDirection(targetCol, targetRow, originCol, originRow){
+      if (targetRow < originRow) return 'down';
+      if (targetCol < originCol) return 'right';
+      return 'down';
+    }
+
+    function placeTileWithPush(tile, targetCol, targetRow, span, dir){
+      const { cols } = getGridMetrics();
+      const nextSpan = {
+        c: Math.max(1, Math.min(cols, span.c || 1)),
+        r: Math.max(1, span.r || 1)
+      };
+
+      const records = buildTileRecords();
+      const moving = records.find((r) => r.tile === tile);
+      if (!moving) return false;
+
+      moving.col = clampCol(targetCol, nextSpan.c, cols);
+      moving.row = Math.max(1, targetRow);
+      moving.c = nextSpan.c;
+      moving.r = nextSpan.r;
+
+      const ok = resolveWithPush(records, tile, dir || 'down');
+      if (!ok) return false;
+
+      records.forEach((rec) => {
+        setTilePos(rec.tile, rec.col, rec.row);
+        setTileSpan(rec.tile, rec.c, rec.r);
+      });
+
+      return true;
+    }
+
+    function ensureResizeHandle(tile){
+      if (!(tile instanceof Element)) return;
+      if (tile.querySelector('.cusResizeHandle')) return;
+
+      const handle = document.createElement('div');
+      handle.className = 'cusResizeHandle';
+      handle.title = 'Resize by grid cells';
+      tile.appendChild(handle);
+
+      handle.addEventListener('pointerdown', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+
+        const { cols, colGap, rowGap, rowH, cellW } = getGridMetrics();
+        const startSpan = tileSpan(tile);
+        const startCol = parseInt(tile.style.gridColumnStart || '1', 10) || 1;
+        const startRow = parseInt(tile.style.gridRowStart || '1', 10) || 1;
+        const startX = ev.clientX;
+        const startY = ev.clientY;
+
+        let nextC = startSpan.c;
+        let nextR = startSpan.r;
+
+        tile.classList.add('isResizing');
+
+        const onMove = (moveEv) => {
+          const dx = moveEv.clientX - startX;
+          const dy = moveEv.clientY - startY;
+          const dCols = Math.round(dx / Math.max(1, cellW + colGap));
+          const dRows = Math.round(dy / Math.max(1, rowH + rowGap));
+          nextC = Math.max(1, Math.min(cols - startCol + 1, startSpan.c + dCols));
+          nextR = Math.max(1, startSpan.r + dRows);
+          showDropHint(startCol, startRow, { c: nextC, r: nextR });
+        };
+
+        const onUp = () => {
+          window.removeEventListener('pointermove', onMove);
+          tile.classList.remove('isResizing');
+          hideDropHint();
+
+          const dir = (nextC > startSpan.c) ? 'right' : 'down';
+          placeTileWithPush(tile, startCol, startRow, { c: nextC, r: nextR }, dir);
+          requestAnimationFrame(() => resizeChartsInCustomGrid());
+        };
+
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp, { once: true });
+      });
+    }
+
+    const syncDraggableTiles = () => {
+      syncTileKinds();
+      grid.querySelectorAll('.tile').forEach((tile) => {
+        if (tile.parentElement !== grid) return;
+        tile.setAttribute('draggable', 'true');
+        ensureResizeHandle(tile);
+      });
+      ensureTilesPositioned();
+      requestAnimationFrame(() => resizeChartsInCustomGrid());
+    };
+
+    const observer = new MutationObserver(() => syncDraggableTiles());
+    observer.observe(grid, { childList: true });
+    syncDraggableTiles();
+
+    grid.addEventListener('dragstart', (e) => {
+      const t = e.target;
+      if (!(t instanceof Element)) return;
+      const tile = t.closest('.tile');
+      if (!tile || tile.parentElement !== grid) return;
+
+      if (t.closest('button, select, input, textarea, option, .cusResizeHandle')) {
+        e.preventDefault();
+        return;
+      }
+
+      draggingTile = tile;
+      tile.classList.add('isDragging');
+
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setData('text/plain', 'tile'); } catch(_e) {}
+      }
+    });
+
+    grid.addEventListener('dragover', (e) => {
+      if (!draggingTile) return;
+      e.preventDefault();
+
+      const sp = tileSpan(draggingTile);
+      const pos = pointToCell(e.clientX, e.clientY, sp.c, sp.r);
+      showDropHint(pos.col, pos.row, sp);
+    });
+
+    grid.addEventListener('drop', (e) => {
+      if (!draggingTile) return;
+      e.preventDefault();
+
+      const sp = tileSpan(draggingTile);
+      const pos = pointToCell(e.clientX, e.clientY, sp.c, sp.r);
+
+      const originCol = parseInt(draggingTile.style.gridColumnStart || '1', 10) || 1;
+      const originRow = parseInt(draggingTile.style.gridRowStart || '1', 10) || 1;
+      const dir = inferPushDirection(pos.col, pos.row, originCol, originRow);
+
+      placeTileWithPush(draggingTile, pos.col, pos.row, sp, dir);
+      hideDropHint();
+      requestAnimationFrame(() => resizeChartsInCustomGrid());
+    });
+
+    grid.addEventListener('dragend', () => {
+      if (!draggingTile) return;
+      draggingTile.classList.remove('isDragging');
+      draggingTile = null;
+      hideDropHint();
+      requestAnimationFrame(() => resizeChartsInCustomGrid());
+    });
+  }
+
+  initCustomizeDragSort();
+
+  function fmtMetric(v){
+    if (v == null || Number.isNaN(v)) return '—';
+    return (typeof v === 'number') ? v.toFixed(2) : String(v);
+  }
+
+  function getMetricFromTable(metricId){
+    if (typeof window.CUSTOMIZE_ANALYTICS_GET === 'function') {
+      return window.CUSTOMIZE_ANALYTICS_GET(metricId, {
+        base: document.getElementById('cusMetricBase')?.value || 'pnl',
+        feeMode: document.getElementById('cusMetricFee')?.value || 'net'
+      });
+    }
+    return null;
+  }
+
+  function createFallbackMetricTile(metricId, metricLabel){
+    const tile = document.createElement('div');
+    tile.className = 'tile cusFallbackTile cusMetricTile';
+    tile.dataset.kind = 'metric';
+    tile.dataset.metricId = metricId || 'winrate';
+
+    const head = document.createElement('div');
+    head.className = 'tileHeader';
+    const left = document.createElement('div');
+    left.className = 'left';
+    const right = document.createElement('div');
+    right.className = 'right';
+
+    const title = document.createElement('strong');
+    title.textContent = metricLabel || metricId || 'metric';
+    left.appendChild(title);
+
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'miniBtn';
+    delBtn.textContent = 'Delete';
+    delBtn.addEventListener('click', () => tile.remove());
+    right.appendChild(delBtn);
+
+    head.appendChild(left);
+    head.appendChild(right);
+
+    const body = document.createElement('div');
+    body.className = 'tileBody';
+    const value = document.createElement('div');
+    value.className = 'metricValue';
+    value.style.fontSize = '28px';
+    value.style.fontWeight = '800';
+    value.textContent = fmtMetric(getMetricFromTable(metricId));
+
+    const sub = document.createElement('div');
+    sub.className = 'muted';
+    sub.style.marginTop = '6px';
+    sub.textContent = 'source: filtered table data';
+
+    body.appendChild(value);
+    body.appendChild(sub);
+    tile.appendChild(head);
+    tile.appendChild(body);
+    return tile;
+  }
+
+  function getFallbackGroupOptions(){
+    const sel = document.getElementById('ana_group');
+    if (!sel) return [];
+    return Array.from(sel.options || []).map((o) => ({
+      value: o.value,
+      label: o.textContent || o.value
+    }));
+  }
+
+  function buildFallbackCompareFieldSelect(selectedField){
+    const sel = document.createElement('select');
+    sel.className = 'miniSel';
+    sel.dataset.role = 'compareField';
+    const opts = getFallbackGroupOptions();
+    opts.forEach((x) => {
+      const o = document.createElement('option');
+      o.value = x.value;
+      o.textContent = x.label;
+      sel.appendChild(o);
+    });
+    if (opts.length > 0) {
+      const fallback = opts[0].value;
+      sel.value = opts.some((x) => x.value === selectedField) ? selectedField : fallback;
+    }
+    return sel;
+  }
+
+  function buildFallbackCompareMetricSelect(selectedMetric){
+    const sel = document.createElement('select');
+    sel.className = 'miniSel';
+    sel.dataset.role = 'compareMetric';
+    const metrics = ['avg', 'winrate', 'pf', 'sum', 'count'];
+    metrics.forEach((m) => {
+      const o = document.createElement('option');
+      o.value = m;
+      o.textContent = m;
+      sel.appendChild(o);
+    });
+    sel.value = metrics.includes(selectedMetric) ? selectedMetric : 'avg';
+    return sel;
+  }
+
+  function getCustomizeChartIdSet(){
+    const sel = document.getElementById('cusChartTest');
+    const ids = new Set();
+    Array.from(sel?.options || []).forEach((o) => ids.add(String(o.value || '').trim()));
+    if (!ids.size) {
+      ids.add('equity_curve');
+      ids.add('by_group_metric');
+    }
+    return ids;
+  }
+
+  function getCustomizeChartLabel(chartId, fallback){
+    const sel = document.getElementById('cusChartTest');
+    const opt = Array.from(sel?.options || []).find((o) => o.value === chartId);
+    return opt?.textContent || fallback || chartId || 'chart';
+  }
+
+  function normalizeCustomizeChartId(chartId, compareField, compareMetric){
+    const id = String(chartId || '').trim();
+    const known = getCustomizeChartIdSet();
+    if (known.has(id)) return id;
+    if (compareField != null || compareMetric != null) return 'by_group_metric';
+    if (known.has('equity_curve')) return 'equity_curve';
+    return known.values().next().value || 'equity_curve';
+  }
+
+  function createFallbackChartTile(chartId, chartLabel, compareFieldInit, compareMetricInit){
+    const normalizedChartId = normalizeCustomizeChartId(chartId, compareFieldInit, compareMetricInit);
+    const tile = document.createElement('div');
+    tile.className = 'tile cusFallbackTile cusChartTile';
+    tile.dataset.kind = 'chart';
+    tile.dataset.chartId = normalizedChartId;
+
+    const head = document.createElement('div');
+    head.className = 'tileHeader';
+    const left = document.createElement('div');
+    left.className = 'left';
+    const right = document.createElement('div');
+    right.className = 'right';
+
+    const title = document.createElement('strong');
+    title.textContent = getCustomizeChartLabel(normalizedChartId, chartLabel || normalizedChartId || 'chart');
+    left.appendChild(title);
+
+    let compareFieldSel = null;
+    let compareMetricSel = null;
+    if (normalizedChartId === 'by_group_metric') {
+      const aTag = document.createElement('span');
+      aTag.className = 'muted';
+      aTag.textContent = 'A';
+      compareFieldSel = buildFallbackCompareFieldSelect(compareFieldInit || 'strategy');
+
+      const bTag = document.createElement('span');
+      bTag.className = 'muted';
+      bTag.textContent = 'B';
+      compareMetricSel = buildFallbackCompareMetricSelect(compareMetricInit || 'avg');
+
+      left.appendChild(aTag);
+      left.appendChild(compareFieldSel);
+      left.appendChild(bTag);
+      left.appendChild(compareMetricSel);
+    }
+
+    const refreshBtn = document.createElement('button');
+    refreshBtn.type = 'button';
+    refreshBtn.className = 'miniBtn';
+    refreshBtn.textContent = 'Refresh';
+
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'miniBtn';
+    delBtn.textContent = 'Delete';
+    delBtn.addEventListener('click', () => tile.remove());
+
+    right.appendChild(refreshBtn);
+    right.appendChild(delBtn);
+    head.appendChild(left);
+    head.appendChild(right);
+
+    const body = document.createElement('div');
+    body.className = 'tileBody';
+    const host = document.createElement('div');
+    host.className = 'chartHost';
+    host.id = 'cus_fb_chart_' + Math.random().toString(36).slice(2);
+    host.style.height = '100%';
+    body.appendChild(host);
+
+    const draw = () => {
+      const activeChartId = normalizeCustomizeChartId(tile.dataset.chartId || normalizedChartId, compareFieldSel?.value, compareMetricSel?.value);
+      tile.dataset.chartId = activeChartId;
+      const map = window.CUSTOM_CHART_RENDERERS || {};
+      const fn = map[activeChartId] || map.__default;
+      try {
+        if (typeof fn !== 'function') {
+          host.innerHTML = '<div class="muted">No renderer for this chart.</div>';
+          return;
+        }
+
+        const compareField = compareFieldSel?.value || document.getElementById('ana_group')?.value || 'strategy';
+        const compareMetric = compareMetricSel?.value || 'avg';
+        const cfg = {
+          ...getCustomizeChartCfg(),
+          ...(activeChartId === 'by_group_metric' ? { compareField, compareMetric } : {})
+        };
+
+        // Keep the same function contract as dashboard_builder.js
+        if (fn === map.__default) fn(host, activeChartId, cfg);
+        else fn(host);
+      } catch (err) {
+        const msg = (err && err.message) ? err.message : String(err || 'unknown error');
+        host.innerHTML = '<div class="muted">Chart refresh failed: ' + msg + '</div>';
+      }
+    };
+
+    tile.__draw = draw;
+
+    refreshBtn.addEventListener('click', draw);
+    compareFieldSel?.addEventListener('change', draw);
+    compareMetricSel?.addEventListener('change', draw);
+    tile.appendChild(head);
+    tile.appendChild(body);
+    return tile;
+  }
+
+  function addFallbackMetricTile(){
+    const grid = document.getElementById('customGrid');
+    const sel = document.getElementById('cusMetricTest');
+    if (!grid || !sel) return;
+    const metricId = sel.value || 'winrate';
+    const metricLabel = sel.options?.[sel.selectedIndex]?.textContent || metricId;
+    setCusStatus('');
+    grid.appendChild(createFallbackMetricTile(metricId, metricLabel));
+  }
+
+  function addFallbackChartTile(){
+    const grid = document.getElementById('customGrid');
+    const sel = document.getElementById('cusChartTest');
+    if (!grid || !sel) return;
+    const chartId = sel.value || 'equity';
+    const chartLabel = sel.options?.[sel.selectedIndex]?.textContent || chartId;
+    const tile = createFallbackChartTile(chartId, chartLabel, document.getElementById('ana_group')?.value || 'strategy', 'avg');
+    setCusStatus('');
+    grid.appendChild(tile);
+    requestAnimationFrame(() => {
+      if (typeof tile.__draw === 'function') tile.__draw();
+      requestAnimationFrame(() => {
+        try {
+          const host = tile.querySelector('.chartHost');
+          if (host && typeof echarts !== 'undefined') {
+            const inst = echarts.getInstanceByDom(host);
+            if (inst) inst.resize();
+          }
+        } catch(_e) {}
+      });
+    });
+  }
+
+  function refreshFallbackTiles(){
+    document.querySelectorAll('#customGrid .tile').forEach((tile) => {
+      const metricValue = tile.querySelector('.metricValue');
+      const chartHost = tile.querySelector('.chartHost');
+      const selects = tile.querySelectorAll('select.miniSel');
+
+      if (metricValue) {
+        const metricId = selects[0]?.value || tile.dataset.metricId || 'winrate';
+        tile.dataset.metricId = metricId;
+        metricValue.textContent = fmtMetric(getMetricFromTable(metricId));
+        return;
+      }
+
+      if (!chartHost) return;
+      const compareFieldSel = tile.querySelector('select.miniSel[data-role="compareField"]');
+      const compareMetricSel = tile.querySelector('select.miniSel[data-role="compareMetric"]');
+      const chartId = normalizeCustomizeChartId(
+        tile.dataset.chartId || 'equity_curve',
+        compareFieldSel?.value,
+        compareMetricSel?.value
+      );
+      tile.dataset.chartId = chartId;
+
+      const compareField = compareFieldSel?.value || 'strategy';
+      const compareMetric = compareMetricSel?.value || 'avg';
+
+      const map = window.CUSTOM_CHART_RENDERERS || {};
+      const fn = map[chartId] || map.__default;
+      if (typeof fn !== 'function') {
+        chartHost.innerHTML = '<div class="muted">No renderer for this chart.</div>';
+        return;
+      }
+
+      const cfg = {
+        ...getCustomizeChartCfg(),
+        ...(chartId === 'by_group_metric' ? { compareField, compareMetric } : {})
+      };
+
+      if (fn === map.__default) fn(chartHost, chartId, cfg);
+      else fn(chartHost);
+    });
+  }
+
+  function getCustomizeSelectSnapshot(){
+    const ids = [
+      'cusMetricBase', 'cusMetricFee',
+      'cusChartBase', 'cusChartFee', 'cusChartRoll',
+      'cusChartBucket', 'cusChartTimeDim', 'cusChartCompareVisible'
+    ];
+    const out = {};
+    ids.forEach((id) => {
+      const el = document.getElementById(id);
+      if (el && 'value' in el) out[id] = el.value;
+    });
+    return out;
+  }
+
+  function applyCustomizeSelectSnapshot(snapshot){
+    const src = snapshot || {};
+    Object.entries(src).forEach(([id, value]) => {
+      const el = document.getElementById(id);
+      if (!el || !(el instanceof HTMLSelectElement)) return;
+      el.value = String(value ?? '');
+    });
+  }
+
+  function inferTileKind(tile){
+    if (tile.querySelector('.chartHost')) return 'chart';
+    return 'metric';
+  }
+
+  function collectCustomizeWidgets(){
+    const grid = document.getElementById('customGrid');
+    if (!grid) return [];
+
+    const widgets = [];
+    grid.querySelectorAll('.tile').forEach((tile) => {
+      if (tile.parentElement !== grid) return;
+
+      const kind = inferTileKind(tile);
+      const col = parseInt(tile.style.gridColumnStart || '1', 10) || 1;
+      const row = parseInt(tile.style.gridRowStart || '1', 10) || 1;
+      const spanC = Math.max(1, parseInt(tile.dataset.spanC || '1', 10) || 1);
+      const spanR = Math.max(1, parseInt(tile.dataset.spanR || '1', 10) || 1);
+      const selects = tile.querySelectorAll('select.miniSel');
+
+      if (kind === 'metric') {
+        const metricId = selects[0]?.value || tile.dataset.metricId || 'winrate';
+        widgets.push({ kind, metricId, col, row, spanC, spanR });
+        return;
+      }
+
+      const compareFieldSel = tile.querySelector('select.miniSel[data-role="compareField"]');
+      const compareMetricSel = tile.querySelector('select.miniSel[data-role="compareMetric"]');
+      const chartId = normalizeCustomizeChartId(tile.dataset.chartId || 'equity_curve', compareFieldSel?.value, compareMetricSel?.value);
+      widgets.push({
+        kind,
+        chartId,
+        compareField: compareFieldSel?.value || null,
+        compareMetric: compareMetricSel?.value || null,
+        col,
+        row,
+        spanC,
+        spanR
+      });
+    });
+
+    widgets.sort((a, b) => (a.row - b.row) || (a.col - b.col));
+    return widgets;
+  }
+
+  function applyTileGridState(tile, widget){
+    const col = Math.max(1, Number(widget?.col) || 1);
+    const row = Math.max(1, Number(widget?.row) || 1);
+    const spanC = Math.max(1, Number(widget?.spanC) || 1);
+    const spanR = Math.max(1, Number(widget?.spanR) || 1);
+
+    tile.style.gridColumnStart = String(col);
+    tile.style.gridRowStart = String(row);
+    tile.dataset.spanC = String(spanC);
+    tile.dataset.spanR = String(spanR);
+    tile.style.gridColumnEnd = 'span ' + String(spanC);
+    tile.style.gridRowEnd = 'span ' + String(spanR);
+  }
+
+  function buildPlatformSnapshot(){
+    return {
+      version: 1,
+      controls: getCustomizeSelectSnapshot(),
+      widgets: collectCustomizeWidgets()
+    };
+  }
+
+  function createWidgetFromSnapshot(widget){
+    if (!widget || !widget.kind) return null;
+    if (widget.kind === 'metric') {
+      const tile = createFallbackMetricTile(widget.metricId || 'winrate', widget.metricId || 'metric');
+      applyTileGridState(tile, widget);
+      return tile;
+    }
+
+    if (widget.kind === 'chart') {
+      const tile = createFallbackChartTile(
+        widget.chartId || 'equity_curve',
+        widget.chartId || 'chart',
+        widget.compareField || 'strategy',
+        widget.compareMetric || 'avg'
+      );
+      applyTileGridState(tile, widget);
+      return tile;
+    }
+
+    return null;
+  }
+
+  function timestampName(){
+    const d = new Date();
+    const yyyy = String(d.getFullYear());
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    return `platform_${yyyy}${mm}${dd}_${hh}${mi}${ss}`;
+  }
+
+  function limitPlatformName(name){
+    return Array.from(String(name || '').trim()).slice(0, 8).join('').trim();
+  }
+
+  async function reloadPlatformOptions(preferredName){
+    const sel = document.getElementById('cusModuleSel');
+    if (!sel) return;
+
+    const api = window.desktopCustomize;
+    if (!api || typeof api.listPlatforms !== 'function') {
+      sel.innerHTML = '';
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '(desktopCustomize API missing)';
+      sel.appendChild(opt);
+      return;
+    }
+
+    const oldValue = preferredName || sel.value || '';
+    let res;
+    try {
+      res = await api.listPlatforms();
+    } catch (err) {
+      setCusStatus('Read platform list failed: ' + (err?.message || err));
+      return;
+    }
+    if (!res?.ok) {
+      setCusStatus('Read platform list failed.');
+      return;
+    }
+
+    sel.innerHTML = '';
+    const files = Array.isArray(res.files) ? res.files : [];
+    if (!files.length) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '(no saved platform)';
+      sel.appendChild(opt);
+      return;
+    }
+
+    files.forEach((f) => {
+      const opt = document.createElement('option');
+      opt.value = f.name;
+      opt.textContent = f.name;
+      sel.appendChild(opt);
+    });
+
+    const canKeep = files.some((f) => f.name === oldValue);
+    sel.value = canKeep ? oldValue : files[0].name;
+  }
+
+  async function saveCurrentPlatform(){
+    const api = window.desktopCustomize;
+    if (!api || typeof api.savePlatformAs !== 'function') {
+      setCusStatus('desktopCustomize.savePlatformAs not found.');
+      return;
+    }
+
+    const sel = document.getElementById('cusModuleSel');
+    const defaultName = limitPlatformName(String(sel?.value || '').trim() || timestampName());
+    const data = buildPlatformSnapshot();
+    let res;
+    try {
+      res = await api.savePlatformAs({ defaultName, data });
+    } catch (err) {
+      setCusStatus('Save platform failed: ' + (err?.message || err));
+      return;
+    }
+    if (res?.canceled) {
+      setCusStatus('Save canceled.');
+      return;
+    }
+    if (!res?.ok) {
+      setCusStatus('Save platform failed.');
+      return;
+    }
+
+    await reloadPlatformOptions(res.name);
+    setCusStatus('Saved platform: ' + res.name);
+  }
+
+  async function loadSelectedPlatform(){
+    const api = window.desktopCustomize;
+    if (!api || typeof api.loadPlatform !== 'function') {
+      setCusStatus('desktopCustomize.loadPlatform not found.');
+      return;
+    }
+
+    const sel = document.getElementById('cusModuleSel');
+    const name = String(sel?.value || '').trim();
+    if (!name) {
+      setCusStatus('Please select a platform to load.');
+      return;
+    }
+
+    let res;
+    try {
+      res = await api.loadPlatform({ name });
+    } catch (err) {
+      setCusStatus('Load platform failed: ' + (err?.message || err));
+      return;
+    }
+    if (!res?.ok) {
+      setCusStatus(res?.message || 'Load platform failed.');
+      return;
+    }
+
+    const data = res.data || {};
+    applyCustomizeSelectSnapshot(data.controls || {});
+
+    const grid = document.getElementById('customGrid');
+    if (!grid) return;
+    Array.from(grid.querySelectorAll('.tile')).forEach((tile) => tile.remove());
+
+    const widgets = Array.isArray(data.widgets) ? data.widgets : [];
+    widgets.forEach((widget) => {
+      const tile = createWidgetFromSnapshot(widget);
+      if (!tile) return;
+      grid.appendChild(tile);
+    });
+
+    refreshFallbackTiles();
+    setCusStatus('Loaded platform: ' + name);
+  }
+
+  window.__cusFallbackAddMetric = addFallbackMetricTile;
+  window.__cusFallbackAddChart = addFallbackChartTile;
+
+  document.addEventListener('change', (e) => {
+    const t = e.target;
+    if (!(t instanceof HTMLSelectElement)) return;
+    const tile = t.closest('#customGrid .tile');
+    if (!tile) return;
+    const selects = tile.querySelectorAll('select.miniSel');
+    if (selects[0] !== t) return;
+    if (tile.querySelector('.metricValue')) tile.dataset.metricId = t.value;
+    if (tile.querySelector('.chartHost')) {
+      const role = String(t.dataset.role || '');
+      if (role === 'compareField' || role === 'compareMetric') return;
+      tile.dataset.chartId = t.value;
+    }
+  }, true);
+
+  document.addEventListener('click', async (e) => {
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+
+    try {
+      if (t.closest('#btnCusAdd')) {
+        e.preventDefault();
+        e.stopPropagation();
+        addFallbackMetricTile();
+        return;
+      }
+
+      if (t.closest('#btnCusAddChart')) {
+        e.preventDefault();
+        e.stopPropagation();
+        addFallbackChartTile();
+        return;
+      }
+
+      if (t.closest('#btnCusRefresh')) {
+        e.preventDefault();
+        e.stopPropagation();
+        refreshFallbackTiles();
+        await reloadPlatformOptions();
+        setCusStatus('Refreshed tiles and platform list.');
+        return;
+      }
+
+      if (t.closest('#btnCusSave')) {
+        e.preventDefault();
+        e.stopPropagation();
+        setCusStatus('Saving platform...');
+        await saveCurrentPlatform();
+        return;
+      }
+
+      if (t.closest('#btnCusLoad')) {
+        e.preventDefault();
+        e.stopPropagation();
+        setCusStatus('Loading platform...');
+        await loadSelectedPlatform();
+      }
+    } catch (err) {
+      setCusStatus('Customize action failed: ' + (err?.message || err));
+    }
+  }, true);
+
+  reloadPlatformOptions().catch(() => {
+    setCusStatus('Init platform list failed.');
+  });
+})();
 
 </script>
 <script type="module">

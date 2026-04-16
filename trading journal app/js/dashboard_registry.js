@@ -76,11 +76,7 @@ export const CHART_REGISTRY = [
   { id:'tod_avg',          category:'時間維度',     label:'Time-of-Day Avg (by entry time)' },
   { id:'tod_count',        category:'時間維度',     label:'Time-of-Day Trade Count' },
   { id:'tod_sum',          category:'時間維度',     label:'Time-of-Day Total' },
-  { id:'by_strategy_avg',  category:'分類比較',     label:'策略 × Avg' },
-  { id:'by_structure_avg', category:'分類比較',     label:'結構 × Avg' },
-  { id:'by_context_avg',   category:'分類比較',     label:'Context Rating × Avg' },
-  { id:'by_strategy_wr',   category:'分類比較',     label:'策略 × 勝率' },
-  { id:'by_strategy_pf',   category:'分類比較',     label:'策略 × Profit Factor' }
+  { id:'by_group_metric',  category:'分類比較',     label:'分類 A × 指標 B' }
 ];
 
 /* =========================
