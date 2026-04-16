@@ -29,8 +29,11 @@ const DEFAULT_EXCEL_PATH = path.join(__dirname, 'data', 'trading_journal.xlsx');
 const AUTH_USERS = Object.freeze({
   admin: "admin123",
   demo: "demo123",
+  jack: "jack77123",
   jack77: "jack77123",
 });
+
+const LICENSE_REQUIRED_USERS = new Set(["jack", "jack77"]);
 
 function stableStringify(v) {
   if (v === null || typeof v !== "object") return JSON.stringify(v);
@@ -156,14 +159,17 @@ function saveState(statePath, stateObj, machineId, stateSecret) {
   });
 }
 
-function verifyJack77License() {
+function verifyUserLicense(username) {
+  const user = String(username || "").trim();
+  ensure(user, "Invalid username for license verification");
+
   const licensePath = firstExistingPath([
-    path.join(process.cwd(), "license", "jack77.lic.json"),
-    path.join(APP_DATA_DIR, "license", "jack77.lic.json"),
-    path.join(__dirname, "license", "jack77.lic.json"),
-    path.join(__dirname, "license_system", "licenses", "jack77-sample.lic.json"),
+    path.join(process.cwd(), "license", `${user}.lic.json`),
+    path.join(APP_DATA_DIR, "license", `${user}.lic.json`),
+    path.join(__dirname, "license", `${user}.lic.json`),
+    path.join(__dirname, "license_system", "licenses", `${user}.lic.json`),
   ]);
-  ensure(licensePath, "找不到 jack77 授權檔，請放在 license/jack77.lic.json");
+  ensure(licensePath, `找不到 ${user} 授權檔，請放在 license/${user}.lic.json`);
 
   const publicKeyPath = firstExistingPath([
     path.join(process.cwd(), "license", "public_key.pem"),
@@ -177,6 +183,7 @@ function verifyJack77License() {
   const publicPem = fs.readFileSync(publicKeyPath, "utf8");
   verifyLicenseEnvelope(licenseObj, publicPem);
   validateLicensePayload(licenseObj.payload);
+  ensure(String(licenseObj.payload.customer_id || "").trim() === user, `License customer_id must be ${user}`);
 
   const now = new Date();
   const today = parseDateStrict(utcTodayDate());
@@ -191,7 +198,7 @@ function verifyJack77License() {
   ensure(machineMatch, `Machine mismatch: license=${licenseMachine}, local=${machineId}`);
 
   const stateSecret = String(process.env.LICENSE_STATE_SECRET || "dev-license-state-secret-change-me");
-  const statePath = path.join(APP_DATA_DIR, "license", "jack77_license_state.json");
+  const statePath = path.join(APP_DATA_DIR, "license", `${user}_license_state.json`);
   const state = loadState(statePath, machineId, stateSecret);
 
   const issuedAt = parseIsoStrict(licenseObj.payload.issued_at);
@@ -263,7 +270,7 @@ ipcMain.handle("auth:login", async (_evt, payload) => {
     return { ok: false, message: "密碼錯誤" };
   }
 
-  if (username !== "jack77") {
+  if (!LICENSE_REQUIRED_USERS.has(username)) {
     return {
       ok: true,
       user: username,
@@ -274,7 +281,7 @@ ipcMain.handle("auth:login", async (_evt, payload) => {
   }
 
   try {
-    const verified = verifyJack77License();
+    const verified = verifyUserLicense(username);
     return {
       ok: true,
       user: username,

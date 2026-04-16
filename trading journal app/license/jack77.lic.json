@@ -1,0 +1,28 @@
+{
+  "meta": {
+    "format_version": 1,
+    "alg": "Ed25519",
+    "kid": "2026-04",
+    "typ": "TRADING_JOURNAL_LICENSE"
+  },
+  "payload": {
+    "license_id": "LIC-jack77-2026-04",
+    "customer_id": "jack77",
+    "machine_id": "*",
+    "plan": "pro",
+    "permissions": {
+      "can_open_excel": true,
+      "can_save_excel": true,
+      "can_use_analytics": true,
+      "can_use_charts": true,
+      "max_rows": 50000
+    },
+    "issue_seq": 202604,
+    "issued_at": "2026-04-16T00:00:00.000Z",
+    "valid_from": "2026-04-16",
+    "valid_to": "2026-12-31",
+    "not_before": "2026-04-16T00:00:00.000Z",
+    "not_after": "2027-01-03T00:00:00.000Z"
+  },
+  "signature": "HpIaKSrT0oFKFCzqovRgOwniQXVPBLLK9y6fSQBk3du1m20KfgnCGWKhSWQolg67W1nBUhbspNhtm_rqXVDiBQ"
+}
