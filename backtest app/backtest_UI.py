@@ -789,6 +789,24 @@ def main():
     indicator_axis_value_label.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
     indicator_axis_value_label.raise_()
 
+    # Y軸價格方形左側的 [S] 和 [L] 按鈕
+    button_style_s = "background-color:#c41e3a; border:1px solid #8b0000; border-radius:2px; color:#ffffff; padding:2px 4px; font-weight:bold;"
+    button_style_l = "background-color:#1e5a96; border:1px solid #0d3d73; border-radius:2px; color:#ffffff; padding:2px 4px; font-weight:bold;"
+
+    btn_short = QtWidgets.QPushButton("S", win)
+    btn_short.setFixedSize(24, 24)
+    btn_short.setStyleSheet(button_style_s)
+    btn_short.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, False)
+    btn_short.raise_()
+    btn_short.setToolTip("Short (賣出信號)")
+
+    btn_long = QtWidgets.QPushButton("L", win)
+    btn_long.setFixedSize(24, 24)
+    btn_long.setStyleSheet(button_style_l)
+    btn_long.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, False)
+    btn_long.raise_()
+    btn_long.setToolTip("Long (買入信號)")
+
     # ================================================================
     # 按鈕功能連接
     # ================================================================
@@ -805,9 +823,10 @@ def main():
             temp_line = None
 
     def on_fibo_clicked():
-        nonlocal line_mode, fibo_mode
+        nonlocal line_mode, fibo_mode, fibo_base_price
         fibo_mode = True
         fibo_base_price = None
+        fibo_manager.start_mode()
 
     def on_text_clicked():
         nonlocal text_mode
@@ -982,6 +1001,7 @@ def main():
         fibo_groups.clear()
         line_custom_pens.clear()
         price_ranges.clear()
+        line_tool_manager.clear_all()
         order_id_seq = 1
         line_mode = False
         line_start = None
@@ -989,6 +1009,7 @@ def main():
         selected_item = None
         fibo_mode = False
         fibo_base_price = None
+        fibo_manager.cancel_mode()
         text_mode = False
         range_mode = False
         range_start_price = None
@@ -1055,10 +1076,24 @@ def main():
     lbl_qty = QtWidgets.QLabel("Quantity")
     qty_spin = QtWidgets.QDoubleSpinBox()
     qty_spin.setDecimals(4)
-    qty_spin.setMinimum(0.0001)
+    qty_spin.setMinimum(0.0)
     qty_spin.setMaximum(1_000_000)
     qty_spin.setSingleStep(1.0)
     qty_spin.setValue(1.0)
+
+    btn_pos_1_3 = QtWidgets.QPushButton("1/3 P")
+    btn_pos_1_2 = QtWidgets.QPushButton("1/2 P")
+    btn_pos_full = QtWidgets.QPushButton("full P")
+    for _btn in (btn_pos_1_3, btn_pos_1_2, btn_pos_full):
+        _btn.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+
+    pos_fill_row = QtWidgets.QWidget()
+    pos_fill_layout = QtWidgets.QHBoxLayout(pos_fill_row)
+    pos_fill_layout.setContentsMargins(0, 0, 0, 0)
+    pos_fill_layout.setSpacing(6)
+    pos_fill_layout.addWidget(btn_pos_1_3, 1)
+    pos_fill_layout.addWidget(btn_pos_1_2, 1)
+    pos_fill_layout.addWidget(btn_pos_full, 1)
 
     btn_place = QtWidgets.QPushButton("Place Order")
     btn_close = QtWidgets.QPushButton("Close Position")
@@ -1094,15 +1129,16 @@ def main():
     order_panel.addWidget(price_edit, row=2, col=1)
     order_panel.addWidget(lbl_qty, row=3, col=0)
     order_panel.addWidget(qty_spin, row=3, col=1)
-    order_panel.addWidget(btn_place, row=4, col=0, colspan=2)
-    order_panel.addWidget(btn_close, row=5, col=0, colspan=2)
-    order_panel.addWidget(lbl_unreal, row=6, col=0, colspan=2)
-    order_panel.addWidget(lbl_real, row=7, col=0, colspan=2)
-    order_panel.addWidget(lbl_pos, row=8, col=0, colspan=2)
-    order_panel.addWidget(orders_table, row=9, col=0, colspan=2)
-    order_panel.addWidget(btn_cancel_selected, row=10, col=0, colspan=2)
-    order_panel.addWidget(lbl_trades, row=11, col=0, colspan=2)
-    order_panel.addWidget(trades_table, row=12, col=0, colspan=2)
+    order_panel.addWidget(pos_fill_row, row=4, col=0, colspan=2)
+    order_panel.addWidget(btn_place, row=5, col=0, colspan=2)
+    order_panel.addWidget(btn_close, row=6, col=0, colspan=2)
+    order_panel.addWidget(lbl_unreal, row=7, col=0, colspan=2)
+    order_panel.addWidget(lbl_real, row=8, col=0, colspan=2)
+    order_panel.addWidget(lbl_pos, row=9, col=0, colspan=2)
+    order_panel.addWidget(orders_table, row=10, col=0, colspan=2)
+    order_panel.addWidget(btn_cancel_selected, row=11, col=0, colspan=2)
+    order_panel.addWidget(lbl_trades, row=12, col=0, colspan=2)
+    order_panel.addWidget(trades_table, row=13, col=0, colspan=2)
     
     btn_export_trades = QtWidgets.QPushButton("Export Trade History")
     btn_clean_trades = QtWidgets.QPushButton("Clean Trade History")
@@ -1114,7 +1150,7 @@ def main():
     history_btn_layout.setSpacing(6)
     history_btn_layout.addWidget(btn_export_trades, 1)
     history_btn_layout.addWidget(btn_clean_trades, 1)
-    order_panel.addWidget(history_btn_row, row=13, col=0, colspan=2)
+    order_panel.addWidget(history_btn_row, row=14, col=0, colspan=2)
 
     # 狀態：部位 / 未成交委託 / 已實現 PnL / 成交紀錄
     position = None  # {"side": "long"|"short", "entry": float, "qty": float}
@@ -1132,6 +1168,32 @@ def main():
             i = max(0, idx - 1)
             return float(df.iloc[i]["close"])
         return None
+
+    def prefill_order_by_axis_buttons(target_side: str):
+        """Fill the order panel values only (no submit) using last close vs axis box price."""
+        cp = current_price()
+        if cp is None:
+            QtWidgets.QMessageBox.warning(None, "Order", "尚無K線，無法設定訂單")
+            return
+
+        # 方形價格以主圖右軸價格方形（hline）為準
+        box_price = float(hline.value())
+
+        if cp > box_price:
+            # 收盤價高於方形價格
+            order_type = "stop market" if target_side == "short" else "limit"
+        else:
+            # 收盤價低於（或等於）方形價格
+            order_type = "limit" if target_side == "short" else "stop market"
+
+        side_combo.setCurrentText(target_side)
+        type_combo.setCurrentText(order_type)
+        price_prec = int(df.iloc[max(0, idx - 1)].get("price_precision", price_precision_default))
+        price_edit.setText(f"{box_price:.{price_prec}f}")
+
+    def fill_qty_by_position_ratio(ratio: float):
+        base_qty = float(position["qty"]) if position is not None else 0.0
+        qty_spin.setValue(base_qty * ratio)
 
     def side_mult(side: str) -> int:
         return 1 if side == "long" else -1
@@ -1414,6 +1476,11 @@ def main():
     btn_cancel_selected.clicked.connect(cancel_selected_orders)
     btn_export_trades.clicked.connect(export_trade_history)
     btn_clean_trades.clicked.connect(clean_trade_history)
+    btn_short.clicked.connect(lambda: prefill_order_by_axis_buttons("short"))
+    btn_long.clicked.connect(lambda: prefill_order_by_axis_buttons("long"))
+    btn_pos_1_3.clicked.connect(lambda: fill_qty_by_position_ratio(1.0 / 3.0))
+    btn_pos_1_2.clicked.connect(lambda: fill_qty_by_position_ratio(1.0 / 2.0))
+    btn_pos_full.clicked.connect(lambda: fill_qty_by_position_ratio(1.0))
 
     def on_market_selection_changed(_text: str):
         nonlocal coin_name, timeframe
@@ -1489,16 +1556,18 @@ def main():
             trade_markers.clear()
             trade_marker_events.clear()
             order_id_seq = 1
-        saved_lines.clear()
-        fibo_groups.clear()
-        line_custom_pens.clear()
-        price_ranges.clear()
+            saved_lines.clear()
+            fibo_groups.clear()
+            line_custom_pens.clear()
+            price_ranges.clear()
+            line_tool_manager.clear_all()
         line_mode = False
         line_start = None
         temp_line = None
         selected_item = None
         fibo_mode = False
         fibo_base_price = None
+        fibo_manager.cancel_mode()
         text_mode = False
         range_mode = False
         range_start_price = None
@@ -2129,6 +2198,17 @@ def main():
         p_y = max(0, min(p_y, win.height() - p_h))
         price_axis_value_label.move(p_x, p_y)
 
+        # Update [S] and [L] buttons: place them side-by-side and vertically centered with price label
+        btn_size = 24
+        btn_spacing = 2
+        total_btn_w = btn_size * 2 + btn_spacing
+        btn_start_x = max(0, p_x - total_btn_w - 2)
+        btn_y = int(p_y + (p_h - btn_size) * 0.5)
+        btn_y = max(0, min(btn_y, win.height() - btn_size))
+
+        btn_short.move(btn_start_x, btn_y)
+        btn_long.move(btn_start_x + btn_size + btn_spacing, btn_y)
+
         # Indicator Y label on right axis band (overlay the axis area)
         ind_axis_rect = indicator_plot.getAxis("right").sceneBoundingRect()
         ind_vr = indicator_plot.vb.viewRange()
@@ -2330,6 +2410,701 @@ def main():
             return dialog.currentColor()
         return None
 
+    class LineSettingsDialog(QtWidgets.QDialog):
+        STYLE_OPTIONS = [
+            ("實線", "solid"),
+            ("虛線", "dashed"),
+            ("點線", "dotted"),
+        ]
+
+        def __init__(self, color_rgb, style_name, width_value, parent=None):
+            super().__init__(parent)
+            self.setWindowTitle("線條設定")
+            self.resize(360, 210)
+
+            layout = QtWidgets.QVBoxLayout(self)
+
+            color_row = QtWidgets.QHBoxLayout()
+            color_row.addWidget(QtWidgets.QLabel("顏色:"))
+            self.color_btn = QtWidgets.QPushButton()
+            self.color_btn.setFixedWidth(120)
+            color_row.addWidget(self.color_btn)
+            color_row.addStretch()
+            layout.addLayout(color_row)
+
+            style_row = QtWidgets.QHBoxLayout()
+            style_row.addWidget(QtWidgets.QLabel("線型:"))
+            self.style_combo = QtWidgets.QComboBox()
+            for label, key in self.STYLE_OPTIONS:
+                self.style_combo.addItem(label, key)
+            style_row.addWidget(self.style_combo)
+            style_row.addStretch()
+            layout.addLayout(style_row)
+
+            width_row = QtWidgets.QHBoxLayout()
+            width_row.addWidget(QtWidgets.QLabel("粗度:"))
+            self.width_spin = QtWidgets.QSpinBox()
+            self.width_spin.setRange(1, 12)
+            self.width_spin.setValue(int(width_value))
+            width_row.addWidget(self.width_spin)
+            width_row.addStretch()
+            layout.addLayout(width_row)
+
+            button_row = QtWidgets.QHBoxLayout()
+            ok_btn = QtWidgets.QPushButton("套用")
+            cancel_btn = QtWidgets.QPushButton("取消")
+            button_row.addStretch()
+            button_row.addWidget(ok_btn)
+            button_row.addWidget(cancel_btn)
+            layout.addLayout(button_row)
+
+            ok_btn.clicked.connect(self.accept)
+            cancel_btn.clicked.connect(self.reject)
+            self.color_btn.clicked.connect(self.pick_color)
+
+            self._color_rgb = tuple(int(v) for v in color_rgb)
+            self._update_color_button()
+            idx = self.style_combo.findData(style_name)
+            self.style_combo.setCurrentIndex(idx if idx >= 0 else 0)
+
+        def _update_color_button(self):
+            r, g, b = self._color_rgb
+            self.color_btn.setText(f"({r},{g},{b})")
+            self.color_btn.setStyleSheet(f"background-color: rgb({r}, {g}, {b}); border: 1px solid #666;")
+
+        def pick_color(self):
+            color = get_tradingview_color()
+            if color is not None and color.isValid():
+                self._color_rgb = (color.red(), color.green(), color.blue())
+                self._update_color_button()
+
+        def get_values(self):
+            style_name = str(self.style_combo.currentData())
+            return self._color_rgb, style_name, int(self.width_spin.value())
+
+    class LineToolManager:
+        STYLE_TO_QT = {
+            "solid": QtCore.Qt.SolidLine,
+            "dashed": QtCore.Qt.DashLine,
+            "dotted": QtCore.Qt.DotLine,
+        }
+
+        def __init__(self, target_plot, all_saved_lines, custom_pens):
+            self.plot = target_plot
+            self.saved_lines = all_saved_lines
+            self.custom_pens = custom_pens
+            self.line_configs = {}
+            self.default_color = (0, 255, 255)
+            self.default_style = "solid"
+            self.default_width = 2
+
+        def _make_pen(self, color_rgb, style_name, width_value):
+            style = self.STYLE_TO_QT.get(style_name, QtCore.Qt.SolidLine)
+            return pg.mkPen(color_rgb, width=max(int(width_value), 1), style=style)
+
+        def _cfg_for_line(self, line_obj):
+            return self.line_configs.get(
+                line_obj,
+                {
+                    "color": tuple(self.default_color),
+                    "style": self.default_style,
+                    "width": int(self.default_width),
+                },
+            )
+
+        def is_user_line(self, item_obj):
+            return bool(getattr(item_obj, "_line_tool_tag", False))
+
+        def register_line(self, line_obj, color_rgb=None, style_name=None, width_value=None):
+            cfg = {
+                "color": tuple(color_rgb if color_rgb is not None else self.default_color),
+                "style": str(style_name if style_name is not None else self.default_style),
+                "width": int(width_value if width_value is not None else self.default_width),
+            }
+            pen = self._make_pen(cfg["color"], cfg["style"], cfg["width"])
+            line_obj.setPen(pen)
+            try:
+                line_obj._line_tool_tag = True
+            except Exception:
+                pass
+            self.line_configs[line_obj] = cfg
+            self.custom_pens[line_obj] = pen
+            return pen
+
+        def create_horizontal_line(self, y_val: float):
+            x_range = self.plot.viewRange()[0]
+            x_width = x_range[1] - x_range[0]
+            x1 = x_range[0] + x_width * 0.2
+            x2 = x_range[0] + x_width * 0.8
+            line_obj = pg.LineSegmentROI([(x1, y_val), (x2, y_val)])
+            line_obj.setAcceptedMouseButtons(QtCore.Qt.AllButtons)
+            self.plot.addItem(line_obj)
+            self.saved_lines.append(line_obj)
+            self.register_line(line_obj)
+            return line_obj
+
+        def create_segment_line(self, x1: float, y1: float, x2: float, y2: float):
+            line_obj = pg.LineSegmentROI([(x1, y1), (x2, y2)])
+            line_obj.setAcceptedMouseButtons(QtCore.Qt.AllButtons)
+            self.plot.addItem(line_obj)
+            self.saved_lines.append(line_obj)
+            self.register_line(line_obj)
+            return line_obj
+
+        def set_line_color(self, line_obj, color_rgb):
+            if not self.is_user_line(line_obj):
+                return
+            cfg = self._cfg_for_line(line_obj)
+            cfg["color"] = tuple(int(v) for v in color_rgb)
+            self.register_line(line_obj, cfg["color"], cfg["style"], cfg["width"])
+
+        def open_settings(self, target_line=None, parent=None):
+            if target_line is None:
+                base_color = self.default_color
+                base_style = self.default_style
+                base_width = self.default_width
+            else:
+                cfg = self._cfg_for_line(target_line)
+                base_color = cfg["color"]
+                base_style = cfg["style"]
+                base_width = cfg["width"]
+
+            dialog = LineSettingsDialog(base_color, base_style, base_width, parent)
+            if dialog.exec() != QtWidgets.QDialog.Accepted:
+                return False
+
+            color_rgb, style_name, width_value = dialog.get_values()
+            if target_line is None:
+                self.default_color = tuple(color_rgb)
+                self.default_style = style_name
+                self.default_width = int(width_value)
+                return True
+
+            self.register_line(target_line, color_rgb, style_name, width_value)
+            return True
+
+        def unregister_line(self, line_obj):
+            if line_obj in self.line_configs:
+                del self.line_configs[line_obj]
+            if line_obj in self.custom_pens:
+                del self.custom_pens[line_obj]
+
+        def clear_all(self):
+            self.line_configs.clear()
+
+    line_tool_manager = LineToolManager(plot, saved_lines, line_custom_pens)
+
+    class FiboSettingsDialog(QtWidgets.QDialog):
+        def __init__(self, multipliers, colors, parent=None):
+            super().__init__(parent)
+            self.setWindowTitle("Fibo 設定")
+            self.resize(420, 320)
+
+            layout = QtWidgets.QVBoxLayout(self)
+            tip = QtWidgets.QLabel("每列可設定一個倍數與對應顏色")
+            layout.addWidget(tip)
+
+            self.table = QtWidgets.QTableWidget(0, 2)
+            self.table.setHorizontalHeaderLabels(["倍數", "顏色"])
+            self.table.horizontalHeader().setStretchLastSection(True)
+            self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+            self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+            layout.addWidget(self.table)
+
+            control_row = QtWidgets.QHBoxLayout()
+            add_btn = QtWidgets.QPushButton("新增列")
+            remove_btn = QtWidgets.QPushButton("刪除列")
+            control_row.addWidget(add_btn)
+            control_row.addWidget(remove_btn)
+            control_row.addStretch()
+            layout.addLayout(control_row)
+
+            button_row = QtWidgets.QHBoxLayout()
+            ok_btn = QtWidgets.QPushButton("套用")
+            cancel_btn = QtWidgets.QPushButton("取消")
+            button_row.addStretch()
+            button_row.addWidget(ok_btn)
+            button_row.addWidget(cancel_btn)
+            layout.addLayout(button_row)
+
+            add_btn.clicked.connect(lambda: self.add_row(1.0, (255, 255, 255)))
+            remove_btn.clicked.connect(self.remove_selected_row)
+            ok_btn.clicked.connect(self.accept)
+            cancel_btn.clicked.connect(self.reject)
+
+            if not multipliers:
+                multipliers = [0, 0.5, 1, 2, 3]
+            if not colors:
+                colors = [(255, 255, 255)] * len(multipliers)
+
+            color_count = len(colors)
+            for idx, mult in enumerate(multipliers):
+                color = colors[idx % color_count] if color_count > 0 else (255, 255, 255)
+                self.add_row(mult, color)
+
+        @staticmethod
+        def _normalize_rgb(color):
+            return tuple(max(0, min(255, int(v))) for v in color)
+
+        def _apply_color_button_style(self, button, color):
+            r, g, b = self._normalize_rgb(color)
+            button.setProperty("rgb", (r, g, b))
+            button.setText(f"({r},{g},{b})")
+            button.setStyleSheet(f"background-color: rgb({r}, {g}, {b}); border: 1px solid #666;")
+
+        def _pick_color_for_button(self, button):
+            new_color = get_tradingview_color()
+            if new_color is not None and new_color.isValid():
+                self._apply_color_button_style(button, (new_color.red(), new_color.green(), new_color.blue()))
+
+        def add_row(self, multiplier=1.0, color=(255, 255, 255)):
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+
+            mult_item = QtWidgets.QTableWidgetItem(f"{float(multiplier):g}")
+            mult_item.setTextAlignment(QtCore.Qt.AlignCenter)
+            self.table.setItem(row, 0, mult_item)
+
+            color_btn = QtWidgets.QPushButton()
+            self._apply_color_button_style(color_btn, color)
+            color_btn.clicked.connect(lambda _checked=False, b=color_btn: self._pick_color_for_button(b))
+            self.table.setCellWidget(row, 1, color_btn)
+
+        def remove_selected_row(self):
+            row = self.table.currentRow()
+            if row >= 0:
+                self.table.removeRow(row)
+
+        def get_values(self):
+            multipliers = []
+            colors = []
+            for row in range(self.table.rowCount()):
+                mult_item = self.table.item(row, 0)
+                if mult_item is None:
+                    continue
+                text = mult_item.text().strip()
+                if not text:
+                    continue
+                try:
+                    mult = float(text)
+                except Exception:
+                    raise ValueError(f"第 {row + 1} 列倍數格式錯誤")
+
+                color_btn = self.table.cellWidget(row, 1)
+                rgb = color_btn.property("rgb") if color_btn is not None else (255, 255, 255)
+                multipliers.append(mult)
+                colors.append(self._normalize_rgb(rgb))
+
+            if not multipliers:
+                raise ValueError("請至少保留一列 Fibo 設定")
+
+            return multipliers, colors
+
+    class FiboManager:
+        def __init__(self, target_plot, all_saved_lines, all_fibo_groups, custom_pens):
+            self.plot = target_plot
+            self.saved_lines = all_saved_lines
+            self.fibo_groups = all_fibo_groups
+            self.line_custom_pens = custom_pens
+            self.default_multipliers = [0, 0.5, 1, 2, 3]
+            self.default_colors = [
+                (255, 255, 255),
+                (255, 255, 255),
+                (255, 255, 255),
+                (255, 255, 255),
+                (255, 255, 255),
+            ]
+            self.mode = False
+            self.base_price = None
+
+        def start_mode(self):
+            self.mode = True
+            self.base_price = None
+
+        def cancel_mode(self):
+            self.mode = False
+            self.base_price = None
+
+        def _normalize_config(self, multipliers, colors):
+            m_list = [float(v) for v in multipliers] if multipliers else [0.0]
+            c_list = [tuple(int(v) for v in color) for color in colors] if colors else [(255, 255, 255)]
+            return m_list, c_list
+
+        def _calc_line_ys(self, start_y: float, end_y: float, multipliers):
+            delta = float(end_y - start_y)
+            return [float(start_y + delta * mult) for mult in multipliers]
+
+        def _calc_box_bounds(self, start_x: float, end_x: float, ys):
+            x_left = float(min(start_x, end_x))
+            x_right = float(max(start_x, end_x))
+            if x_right <= x_left:
+                x_right = x_left + 1e-6
+
+            y_min = float(min(ys)) if ys else 0.0
+            y_max = float(max(ys)) if ys else (y_min + 1e-6)
+            if y_max <= y_min:
+                y_max = y_min + 1e-6
+
+            return x_left, x_right, y_min, y_max
+
+        def _set_handle_line(self, group, handle_obj, x1: float, x2: float, y_val: float):
+            handle_obj.blockSignals(True)
+            try:
+                left = float(min(x1, x2))
+                width = max(float(abs(x2 - x1)), 1e-6)
+                half_h = 0.5 * float(group.get("handle_height", 1e-6))
+                handle_obj.setPos([left, float(y_val) - half_h])
+                handle_obj.setSize([width, 2.0 * half_h])
+            except Exception:
+                pass
+            handle_obj.blockSignals(False)
+
+        def _get_tick_span(self) -> float:
+            try:
+                span = float(timeframe_to_seconds(timeframe))
+                return span if span > 0 else 1.0
+            except Exception:
+                return 1.0
+
+        def _get_handle_x_bounds(self, group):
+            sx = float(group["start_point"][0])
+            ex = float(group["end_point"][0])
+            left = min(sx, ex)
+            right = max(sx, ex)
+            pad = 0.5 * self._get_tick_span()
+            return left - pad, right + pad
+
+        def get_group_by_item(self, item_obj):
+            for group in self.fibo_groups:
+                if item_obj in group.get("lines", []):
+                    return group
+                if item_obj is group.get("box"):
+                    return group
+                if item_obj is group.get("start_handle"):
+                    return group
+                if item_obj is group.get("end_handle"):
+                    return group
+            return None
+
+        def get_group_by_line(self, line_obj):
+            return self.get_group_by_item(line_obj)
+
+        def handle_click(self, x_pos: float, y_pos: float):
+            if not self.mode:
+                return False
+
+            if self.base_price is None:
+                self.base_price = (float(x_pos), float(y_pos))
+                return True
+
+            self.create_group(
+                start_point=self.base_price,
+                end_point=(float(x_pos), float(y_pos)),
+                multipliers=self.default_multipliers,
+                colors=self.default_colors,
+            )
+            self.cancel_mode()
+            return True
+
+        def create_group(self, start_point, end_point, multipliers, colors):
+            m_list, c_list = self._normalize_config(multipliers, colors)
+            start_x, start_y = float(start_point[0]), float(start_point[1])
+            end_x, end_y = float(end_point[0]), float(end_point[1])
+            line_ys = self._calc_line_ys(start_y, end_y, m_list)
+            x_left, x_right, y_min, y_max = self._calc_box_bounds(start_x, end_x, line_ys)
+
+            # 群組控制框：可左右拉伸調整整組線長，也可整體平移
+            box = pg.RectROI(
+                [x_left, y_min],
+                [x_right - x_left, y_max - y_min],
+                pen=pg.mkPen((0, 0, 0, 0), width=1),
+                movable=True,
+            )
+            box.setAcceptedMouseButtons(QtCore.Qt.AllButtons)
+            try:
+                box.setPen(pg.mkPen((0, 0, 0, 0), width=1))
+                box.setHoverPen(pg.mkPen((0, 0, 0, 0), width=1))
+            except Exception:
+                pass
+            self.plot.addItem(box)
+
+            # 0x 與 1x 控制線：薄矩形，可上下拖曳；每次同步時強制水平
+            handle_x1 = x_left - 0.5 * self._get_tick_span()
+            handle_x2 = x_right + 0.5 * self._get_tick_span()
+            handle_h = max((y_max - y_min) * 0.003, 1e-6)
+            start_handle = pg.RectROI(
+                [handle_x1, start_y - 0.5 * handle_h],
+                [max(handle_x2 - handle_x1, 1e-6), handle_h],
+                pen=pg.mkPen((255, 80, 80), width=2),
+                movable=True,
+                rotatable=False,
+                resizable=False,
+            )
+            end_handle = pg.RectROI(
+                [handle_x1, end_y - 0.5 * handle_h],
+                [max(handle_x2 - handle_x1, 1e-6), handle_h],
+                pen=pg.mkPen((255, 80, 80), width=2),
+                movable=True,
+                rotatable=False,
+                resizable=False,
+            )
+            start_handle.setZValue(9)
+            end_handle.setZValue(9)
+            start_handle.setAcceptedMouseButtons(QtCore.Qt.AllButtons)
+            end_handle.setAcceptedMouseButtons(QtCore.Qt.AllButtons)
+            self.plot.addItem(start_handle)
+            self.plot.addItem(end_handle)
+
+            group = {
+                "lines": [],
+                "box": box,
+                "start_handle": start_handle,
+                "end_handle": end_handle,
+                "start_point": [start_x, start_y],
+                "end_point": [end_x, end_y],
+                "handle_height": handle_h,
+                "multipliers": list(m_list),
+                "colors": list(c_list),
+                "last_box_rect": [x_left, x_right, y_min, y_max],
+                "syncing": False,
+            }
+            self.fibo_groups.append(group)
+            self.saved_lines.append(box)
+            self.saved_lines.append(start_handle)
+            self.saved_lines.append(end_handle)
+            self._rebuild_lines(group)
+
+            def _sync_box():
+                self.sync_group(group)
+
+            def _sync_handles():
+                self.sync_group_by_handles(group)
+
+            box.sigRegionChanged.connect(_sync_box)
+            start_handle.sigRegionChanged.connect(_sync_handles)
+            end_handle.sigRegionChanged.connect(_sync_handles)
+            group["sync_callback_box"] = _sync_box
+            group["sync_callback_handles"] = _sync_handles
+            return group
+
+        def _rebuild_lines(self, group):
+            for ln in list(group.get("lines", [])):
+                try:
+                    self.plot.removeItem(ln)
+                except Exception:
+                    pass
+                if ln in self.saved_lines:
+                    self.saved_lines.remove(ln)
+                if ln in self.line_custom_pens:
+                    del self.line_custom_pens[ln]
+
+            start_x, start_y = group["start_point"]
+            end_x, end_y = group["end_point"]
+            m_list = group["multipliers"]
+            c_list = group["colors"]
+            line_ys = self._calc_line_ys(start_y, end_y, m_list)
+
+            lines = []
+            for idx_mult, y_val in enumerate(line_ys):
+                color = c_list[idx_mult % len(c_list)]
+                line_pen = pg.mkPen(color, width=2)
+                line_obj = pg.PlotDataItem(x=[start_x, end_x], y=[y_val, y_val], pen=line_pen)
+                line_obj.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+                self.plot.addItem(line_obj)
+                lines.append(line_obj)
+                self.saved_lines.append(line_obj)
+                self.line_custom_pens[line_obj] = line_pen
+
+            group["lines"] = lines
+            self._update_box_geometry(group)
+
+        def _update_box_geometry(self, group):
+            start_x, start_y = group["start_point"]
+            end_x, end_y = group["end_point"]
+            ys = self._calc_line_ys(start_y, end_y, group["multipliers"])
+            x_left, x_right, y_min, y_max = self._calc_box_bounds(start_x, end_x, ys)
+
+            box = group.get("box")
+            if box is not None:
+                box.blockSignals(True)
+                try:
+                    box.setPos([x_left, y_min])
+                    box.setSize([x_right - x_left, y_max - y_min])
+                except Exception:
+                    pass
+                box.blockSignals(False)
+
+            group["last_box_rect"] = [x_left, x_right, y_min, y_max]
+
+        def sync_group(self, group):
+            box = group.get("box")
+            if box is None:
+                return
+            if group.get("syncing"):
+                return
+
+            group["syncing"] = True
+            try:
+                curr_pos = box.pos()
+                curr_size = box.size()
+                curr_left = float(curr_pos.x())
+                curr_right = float(curr_pos.x() + curr_size.x())
+                curr_ymin = float(curr_pos.y())
+                curr_ymax = float(curr_pos.y() + curr_size.y())
+
+                last_left, last_right, last_ymin, last_ymax = group.get(
+                    "last_box_rect", [curr_left, curr_right, curr_ymin, curr_ymax]
+                )
+
+                if abs(curr_left - last_left) < 1e-12 and abs(curr_right - last_right) < 1e-12 and abs(curr_ymin - last_ymin) < 1e-12:
+                    return
+
+                start_is_left = group["start_point"][0] <= group["end_point"][0]
+                if start_is_left:
+                    group["start_point"][0] = curr_left
+                    group["end_point"][0] = curr_right
+                else:
+                    group["start_point"][0] = curr_right
+                    group["end_point"][0] = curr_left
+
+                dy = curr_ymin - float(last_ymin)
+                if abs(dy) > 1e-12:
+                    group["start_point"][1] += dy
+                    group["end_point"][1] += dy
+
+                start_x, start_y = group["start_point"]
+                end_x, end_y = group["end_point"]
+                handle_x1, handle_x2 = self._get_handle_x_bounds(group)
+                self._set_handle_line(group, group["start_handle"], handle_x1, handle_x2, start_y)
+                self._set_handle_line(group, group["end_handle"], handle_x1, handle_x2, end_y)
+
+                ys = self._calc_line_ys(start_y, end_y, group["multipliers"])
+                for line_obj, y_val in zip(group.get("lines", []), ys):
+                    try:
+                        line_obj.setData([start_x, end_x], [y_val, y_val])
+                    except Exception:
+                        pass
+
+                self._update_box_geometry(group)
+            finally:
+                group["syncing"] = False
+
+        def sync_group_by_handles(self, group):
+            if group.get("syncing"):
+                return
+
+            start_handle = group.get("start_handle")
+            end_handle = group.get("end_handle")
+            if start_handle is None or end_handle is None:
+                return
+
+            group["syncing"] = True
+            try:
+                s_pos = start_handle.pos()
+                s_size = start_handle.size()
+                e_pos = end_handle.pos()
+                e_size = end_handle.size()
+                start_y = float(s_pos.y() + 0.5 * s_size.y())
+                end_y = float(e_pos.y() + 0.5 * e_size.y())
+
+                start_x = float(group["start_point"][0])
+                end_x = float(group["end_point"][0])
+                group["start_point"][1] = start_y
+                group["end_point"][1] = end_y
+
+                handle_x1, handle_x2 = self._get_handle_x_bounds(group)
+                self._set_handle_line(group, start_handle, handle_x1, handle_x2, start_y)
+                self._set_handle_line(group, end_handle, handle_x1, handle_x2, end_y)
+
+                ys = self._calc_line_ys(start_y, end_y, group["multipliers"])
+                for line_obj, y_val in zip(group.get("lines", []), ys):
+                    try:
+                        line_obj.setData([start_x, end_x], [y_val, y_val])
+                    except Exception:
+                        pass
+
+                self._update_box_geometry(group)
+            finally:
+                group["syncing"] = False
+
+        def delete_group(self, group):
+            box = group.get("box")
+            if box is not None:
+                try:
+                    self.plot.removeItem(box)
+                except Exception:
+                    pass
+                if box in self.saved_lines:
+                    self.saved_lines.remove(box)
+            start_handle = group.get("start_handle")
+            if start_handle is not None:
+                try:
+                    self.plot.removeItem(start_handle)
+                except Exception:
+                    pass
+                if start_handle in self.saved_lines:
+                    self.saved_lines.remove(start_handle)
+            end_handle = group.get("end_handle")
+            if end_handle is not None:
+                try:
+                    self.plot.removeItem(end_handle)
+                except Exception:
+                    pass
+                if end_handle in self.saved_lines:
+                    self.saved_lines.remove(end_handle)
+            for ln in list(group.get("lines", [])):
+                try:
+                    self.plot.removeItem(ln)
+                except Exception:
+                    pass
+                if ln in self.saved_lines:
+                    self.saved_lines.remove(ln)
+                if ln in self.line_custom_pens:
+                    del self.line_custom_pens[ln]
+            if group in self.fibo_groups:
+                self.fibo_groups.remove(group)
+
+        def apply_group_settings(self, group, multipliers, colors):
+            if not group:
+                return False
+
+            m_list, c_list = self._normalize_config(multipliers, colors)
+            group["multipliers"] = list(m_list)
+            group["colors"] = list(c_list)
+            self._rebuild_lines(group)
+            return True
+
+        def open_group_settings(self, group, parent=None):
+            if not group:
+                return False
+
+            dialog = FiboSettingsDialog(
+                multipliers=group.get("multipliers", self.default_multipliers),
+                colors=group.get("colors", self.default_colors),
+                parent=parent,
+            )
+            if dialog.exec() != QtWidgets.QDialog.Accepted:
+                return False
+
+            try:
+                multipliers, colors = dialog.get_values()
+            except ValueError as e:
+                QtWidgets.QMessageBox.warning(parent, "Fibo 設定", str(e))
+                return False
+
+            ok = self.apply_group_settings(group, multipliers, colors)
+            if ok:
+                self.default_multipliers = list(multipliers)
+                self.default_colors = list(colors)
+            return ok
+
+        def get_tooltip_text(self):
+            mult_text = ", ".join(f"{v:g}" for v in self.default_multipliers)
+            return f"斐波那契水平線 (倍數: {mult_text})"
+
+    fibo_manager = FiboManager(plot, saved_lines, fibo_groups, line_custom_pens)
+    btn_fibo.setToolTip(fibo_manager.get_tooltip_text())
+
     # ================================================================
     def mouseClicked(evt):
         nonlocal line_mode, line_start, temp_line, selected_item, fibo_mode, fibo_base_price, text_mode, fibo_groups, line_custom_pens, range_mode, range_start_price, price_ranges
@@ -2364,6 +3139,54 @@ def main():
             for item in saved_lines:
                 if not item.isVisible() or isinstance(item, pg.TextItem):
                     continue
+                if isinstance(item, (pg.RectROI, pg.CircleROI)):
+                    try:
+                        local_pos = item.mapFromScene(pos)
+                        if item.boundingRect().contains(local_pos):
+                            clicked_item = item
+                            clicked_type = "line"
+                            break
+                    except Exception:
+                        continue
+                if isinstance(item, pg.PlotDataItem):
+                    try:
+                        x_data, y_data = item.getData()
+                        if x_data is None or y_data is None or len(x_data) < 2:
+                            continue
+                        x1, y1 = float(x_data[0]), float(y_data[0])
+                        x2, y2 = float(x_data[-1]), float(y_data[-1])
+
+                        if abs(x2 - x1) < 0.1:
+                            dist = abs(x - x1)
+                        elif abs(y2 - y1) < 0.1:
+                            dist = abs(y - y1)
+                        else:
+                            num = abs((y2 - y1) * x - (x2 - x1) * y + x2 * y1 - y2 * x1)
+                            den = ((y2 - y1)**2 + (x2 - x1)**2)**0.5
+                            dist = num / den if den != 0 else float('inf')
+
+                        x_min, x_max = min(x1, x2), max(x1, x2)
+                        y_min, y_max = min(y1, y2), max(y1, y2)
+                        if x_min - 10 <= x <= x_max + 10 and y_min - 10 <= y <= y_max + 10 and dist <= 10:
+                            clicked_item = item
+                            clicked_type = "line"
+                            break
+                    except Exception:
+                        continue
+                if isinstance(item, pg.InfiniteLine):
+                    try:
+                        if int(getattr(item, "angle", 0)) == 0:
+                            y_line = float(item.value())
+                            x_min = float(plot.viewRange()[0][0])
+                            x_max = float(plot.viewRange()[0][1])
+                            if x_min > x_max:
+                                x_min, x_max = x_max, x_min
+                            if x_min <= x <= x_max and abs(y - y_line) <= 10:
+                                clicked_item = item
+                                clicked_type = "line"
+                                break
+                    except Exception:
+                        continue
                 try:
                     line_start_pos = item.getState()['points'][0]
                     line_end_pos = item.getState()['points'][1]
@@ -2435,15 +3258,23 @@ def main():
                 else:
                     target_line = clicked_item
 
-                    target_group = None
-                    for g in fibo_groups:
-                        if target_line in g.get("lines", []):
-                            target_group = g
-                            break
+                    target_group = fibo_manager.get_group_by_item(target_line)
+                    is_user_line = line_tool_manager.is_user_line(target_line)
 
                     context_menu = QtWidgets.QMenu()
+                    settings_action = context_menu.addAction("Fibo 設定") if target_group else None
+                    line_settings_action = context_menu.addAction("線條設定") if (not target_group and is_user_line) else None
                     delete_action = context_menu.addAction("刪除")
                     color_action = context_menu.addAction("改顏色")
+
+                    def open_fibo_settings():
+                        nonlocal selected_item
+                        if not target_group:
+                            return
+                        if selected_item == target_group.get("box") or selected_item == target_group.get("start_handle") or selected_item == target_group.get("end_handle") or selected_item in target_group.get("lines", []):
+                            selected_item = None
+                        if fibo_manager.open_group_settings(target_group, None):
+                            btn_fibo.setToolTip(fibo_manager.get_tooltip_text())
 
                     def delete_line():
                         nonlocal selected_item
@@ -2476,17 +3307,8 @@ def main():
                             if selected_item == target_range['line']:
                                 selected_item = None
                         elif target_group:
-                            for ln in list(target_group["lines"]):
-                                if ln in saved_lines:
-                                    try:
-                                        plot.removeItem(ln)
-                                    except Exception:
-                                        pass
-                                    saved_lines.remove(ln)
-                                    if ln in line_custom_pens:
-                                        del line_custom_pens[ln]
-                            fibo_groups.remove(target_group)
-                            if selected_item in target_group["lines"]:
+                            fibo_manager.delete_group(target_group)
+                            if selected_item == target_group.get("box") or selected_item == target_group.get("start_handle") or selected_item == target_group.get("end_handle") or selected_item in target_group["lines"]:
                                 selected_item = None
                         else:
                             try:
@@ -2495,10 +3317,13 @@ def main():
                                 pass
                             if target_line in saved_lines:
                                 saved_lines.remove(target_line)
-                            if target_line in line_custom_pens:
-                                del line_custom_pens[target_line]
+                            line_tool_manager.unregister_line(target_line)
                             if selected_item == target_line:
                                 selected_item = None
+
+                    def open_line_settings():
+                        if line_tool_manager.open_settings(target_line, None):
+                            pass
 
                     def change_color():
                         nonlocal line_custom_pens
@@ -2507,16 +3332,34 @@ def main():
                             r, g, b = color.red(), color.green(), color.blue()
                             pen = pg.mkPen((r, g, b), width=2)
                             if target_group:
-                                for ln in target_group["lines"]:
-                                    ln.setPen(pen)
-                                    line_custom_pens[ln] = pen
+                                applied_colors = [(r, g, b)] * len(target_group.get("multipliers", []))
+                                fibo_manager.apply_group_settings(
+                                    target_group,
+                                    target_group.get("multipliers", [0.0]),
+                                    applied_colors,
+                                )
+                            elif is_user_line:
+                                line_tool_manager.set_line_color(target_line, (r, g, b))
                             else:
                                 target_line.setPen(pen)
                                 line_custom_pens[target_line] = pen
 
+                    if settings_action:
+                        settings_action.triggered.connect(open_fibo_settings)
+                    if line_settings_action:
+                        line_settings_action.triggered.connect(open_line_settings)
                     delete_action.triggered.connect(delete_line)
                     color_action.triggered.connect(change_color)
                     context_menu.exec(QtGui.QCursor.pos())
+            else:
+                blank_menu = QtWidgets.QMenu()
+                line_default_settings_action = blank_menu.addAction("劃線設定")
+
+                def open_default_line_settings():
+                    line_tool_manager.open_settings(None, None)
+
+                line_default_settings_action.triggered.connect(open_default_line_settings)
+                blank_menu.exec(QtGui.QCursor.pos())
             return
 
         # 左鍵點擊邏輯
@@ -2629,79 +3472,9 @@ def main():
         
         # 處理 Fibo 模式（群組，同步調整）
         if fibo_mode:
-            if fibo_base_price is None:
-                # 第一次點擊：記錄基準價格
-                fibo_base_price = y
-                return
-            else:
-                # 第二次點擊：繪製斐波那契水平線
-                fibo_multipliers = [0, 0.5, 1, 2, 3]
-                colors = [(255, 255, 255), (255, 165, 0), (255, 255, 100), (100, 180, 255), (255, 150, 200)]  # 白、橘、黃、淺藍、粉
-                
-                # 只向右延伸：起點在點擊位置，終點為目前視圖右緣
-                x_range = plot.viewRange()[0]
-                x1 = x  # 點擊位置
-                x2 = x_range[1]  # 視圖右邊界
-                
-                lines = []
-                fibo_ys = []
-                for idx_mult, (mult, color) in enumerate(zip(fibo_multipliers, colors)):
-                    fibo_y = fibo_base_price + (y - fibo_base_price) * mult
-                    line_pen = pg.mkPen(color, width=2)
-                    line_roi = pg.LineSegmentROI([(x1, fibo_y), (x2, fibo_y)], pen=line_pen)
-                    plot.addItem(line_roi)
-                    # 第一條作為主線，其他線禁止滑鼠交互，避免單獨移動
-                    if idx_mult == 0:
-                        line_roi.setAcceptedMouseButtons(QtCore.Qt.AllButtons)
-                    else:
-                        line_roi.setAcceptedMouseButtons(QtCore.Qt.NoButton)
-                    lines.append(line_roi)
-                    fibo_ys.append(fibo_y)
-                    saved_lines.append(line_roi)
-                    line_custom_pens[line_roi] = line_pen  # 記錄初始顏色
-
-                master_line = lines[0]
-
-                group = {
-                    "lines": lines,
-                    "ys": fibo_ys,
-                    "master": master_line,
-                    "x_anchor": x1,
-                    "last_points": master_line.getState()["points"],
-                }
-                fibo_groups.append(group)
-
-                def sync_fibo_group():
-                    anchor_x = group["x_anchor"]
-                    p1, p2 = master_line.getState()["points"]
-                    last_p1, last_p2 = group.get("last_points", [p1, p2])
-
-                    dx = p1[0] - last_p1[0]
-                    dy = p1[1] - last_p1[1]
-                    # 更新錨點與 Y 座標（整組一起平移）
-                    anchor_x += dx
-                    group["x_anchor"] = anchor_x
-                    group["ys"] = [yy + dy for yy in group["ys"]]
-
-                    # 保持長度，僅向右延伸
-                    new_len = max(p2[0] - p1[0], 1e-6)
-                    new_x1 = anchor_x
-                    new_x2 = anchor_x + new_len
-
-                    for line_obj, base_y in zip(group["lines"], group["ys"]):
-                        line_obj.blockSignals(True)
-                        try:
-                            line_obj.setPoints([new_x1, base_y], [new_x2, base_y])
-                        except Exception:
-                            pass
-                        line_obj.blockSignals(False)
-
-                    group["last_points"] = [p1, p2]
-
-                master_line.sigRegionChanged.connect(sync_fibo_group)
-
-                fibo_mode = False
-                fibo_base_price = None
+            if fibo_manager.handle_click(float(x), float(y)):
+                fibo_mode = fibo_manager.mode
+                fibo_base_price = fibo_manager.base_price
                 return
         
         # 處理 Text 模式
@@ -2736,16 +3509,7 @@ def main():
         
         # 處理劃線模式
         if line_mode == "horizontal":
-            # 水平線：使用當前視圖寬度的中間部分
-            x_range = plot.viewRange()[0]
-            x_width = x_range[1] - x_range[0]
-            x1 = x_range[0] + x_width * 0.2  # 從左邊 20% 開始
-            x2 = x_range[0] + x_width * 0.8  # 到右邊 80% 結束
-            line_roi = pg.LineSegmentROI([(x1, y), (x2, y)], pen=pg.mkPen("cyan", width=2))
-            line_roi.setAcceptedMouseButtons(QtCore.Qt.AllButtons)
-            plot.addItem(line_roi)
-            saved_lines.append(line_roi)
-            line_custom_pens[line_roi] = pg.mkPen("cyan", width=2)  # 記錄初始顏色
+            line_tool_manager.create_horizontal_line(float(y))
             line_mode = False
             return
         
@@ -2755,12 +3519,7 @@ def main():
             return
 
         x1, y1 = line_start
-        # 使用 LineSegmentROI 支持拖動端點和整條線移動
-        line_roi = pg.LineSegmentROI([(x1, y1), (x, y)], pen=pg.mkPen("cyan", width=2))
-        line_roi.setAcceptedMouseButtons(QtCore.Qt.AllButtons)
-        plot.addItem(line_roi)
-        saved_lines.append(line_roi)  # 保存劃線
-        line_custom_pens[line_roi] = pg.mkPen("cyan", width=2)  # 記錄初始顏色
+        line_tool_manager.create_segment_line(float(x1), float(y1), float(x), float(y))
 
         if temp_line:
             plot.removeItem(temp_line)
@@ -2872,8 +3631,7 @@ def main():
                         pass
                     if selected_item in saved_lines:
                         saved_lines.remove(selected_item)
-                    if selected_item in line_custom_pens:
-                        del line_custom_pens[selected_item]
+                    line_tool_manager.unregister_line(selected_item)
                 selected_item = None
             return
 
