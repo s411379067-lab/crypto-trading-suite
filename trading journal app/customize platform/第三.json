@@ -1,0 +1,78 @@
+{
+  "savedAt": "2026-04-16T16:56:51.229Z",
+  "data": {
+    "version": 1,
+    "controls": {
+      "cusMetricBase": "pnl",
+      "cusMetricFee": "net",
+      "cusChartBase": "rr",
+      "cusChartFee": "net",
+      "cusChartRoll": "50",
+      "cusChartBucket": "30",
+      "cusChartTimeDim": "day",
+      "cusChartCompareVisible": "12"
+    },
+    "widgets": [
+      {
+        "kind": "metric",
+        "metricId": "total_fully_closed",
+        "col": 1,
+        "row": 1,
+        "spanC": 1,
+        "spanR": 1
+      },
+      {
+        "kind": "metric",
+        "metricId": "avg_trade",
+        "col": 2,
+        "row": 1,
+        "spanC": 1,
+        "spanR": 1
+      },
+      {
+        "kind": "metric",
+        "metricId": "avg_trade",
+        "col": 3,
+        "row": 1,
+        "spanC": 1,
+        "spanR": 1
+      },
+      {
+        "kind": "chart",
+        "chartId": "hist",
+        "compareField": null,
+        "compareMetric": null,
+        "col": 4,
+        "row": 1,
+        "spanC": 2,
+        "spanR": 4
+      },
+      {
+        "kind": "metric",
+        "metricId": "avg_trade",
+        "col": 6,
+        "row": 1,
+        "spanC": 1,
+        "spanR": 1
+      },
+      {
+        "kind": "chart",
+        "chartId": "equity",
+        "compareField": null,
+        "compareMetric": null,
+        "col": 1,
+        "row": 2,
+        "spanC": 2,
+        "spanR": 1
+      },
+      {
+        "kind": "metric",
+        "metricId": "avg_trade",
+        "col": 3,
+        "row": 2,
+        "spanC": 1,
+        "spanR": 1
+      }
+    ]
+  }
+}
