@@ -204,6 +204,7 @@
   <div>Trading Journal v0.6</div>
   <div class="topbarRight">
     <div class="muted">Full Columns • Filter: column | 判斷 | option(s)</div>
+    <div class="muted" id="global_data_note"></div>
     <span id="loginUserLabel" class="muted"></span>
     <button id="btnLogout" type="button">Logout</button>
   </div>
@@ -273,7 +274,7 @@
         <div class="row">
           <label class="muted">Base
             <select id="ana_base">
-              <option value="total_pos_pnl_pct">總倉損益% (net)</option>
+              <option value="pnl_pct">總倉損益% (net)</option>
               <option value="pnl">損益金額 (net)</option>
               <option value="rr">R (盈虧比, net)</option>
             </select>
@@ -311,6 +312,7 @@
           </label>
 
           <span class="muted">Filtered: <strong id="a_count">0</strong></span>
+          <span class="muted" id="ana_data_note"></span>
         </div>
 
         <div class="row" style="margin-top:10px;">
@@ -332,7 +334,7 @@
         <div class="anaCardsLeft" id="ana_cards"></div>
         <div class="anaRadarSection">
           <div class="anaRadarTitle">Performance Radar</div>
-          <div class="anaRadarSub">6 固定基準指標 (R / PnL$ / Pct%) — 不受 Base 設定影響</div>
+          <div class="anaRadarSub" id="anaRadarSub">6 固定基準指標 (R / PnL$ / Pct%) — 不受 Base 設定影響</div>
           <svg id="ana_radar_svg" viewBox="0 0 360 320"></svg>
         </div>
       </div>
@@ -373,6 +375,7 @@
             <strong>Uses global filters</strong>
             <span class="muted">Filtered <strong id="c_count">0</strong> / Raw <strong id="c_raw">0</strong></span>
             <span class="muted" id="c_filter_summary"></span>
+            <span class="muted" id="c_data_note"></span>
             <button onclick="jumpToFilters()">Go to Trades Filters</button>
           </div>
 
@@ -392,7 +395,7 @@
           <label class="muted">Base
             <select id="c_base">
               <option value="rr">R (盈虧比)</option>
-              <option value="total_pos_pnl_pct">總倉損益%</option>
+              <option value="pnl_pct">總倉損益%</option>
               <option value="pnl">損益金額</option>
             </select>
           </label>
@@ -443,7 +446,7 @@
               <label class="muted">顯示
                 <select id="cal_base">
                   <option value="rr">R (盈虧比)</option>
-                  <option value="total_pos_pnl_pct">總倉損益%</option>
+                  <option value="pnl_pct">總倉損益%</option>
                   <option value="pnl" selected>損益金額</option>
                 </select>
               </label>
@@ -576,12 +579,19 @@
   // =====================
   // Required columns that MUST exist in Excel
   const REQUIRED_COLS = [
-    'product',      // 商品
-    'strategy',     // 策略
-    'pnl',          // 損益 (absolute value)
-    'total_pos_pnl_pct',      // 損益% (percentage)
-    'rr',           // 盈虧比 (risk/reward ratio)
+    'entry_date_time',
+    'exit_date_time',
+    'pnl_with_fee',
     'fee'           // 手續費
+  ];
+
+  // These columns can be auto-derived if missing or blank.
+  const DERIVED_METRIC_COLS = [
+    'rr_with_fee',
+    'rr_without_fee',
+    'pnl_without_fee',
+    'pnl_pct_with_fee',
+    'pnl_pct_without_fee'
   ];
 
   // COLS will be defined dynamically after Excel is loaded
@@ -606,7 +616,10 @@
     strategy: { label:'策略', type:'multi', options:['D2','D3','D4','D5','D6'] },
 
     
-    pnl_pct: { label:'損益%', type:'number' },
+    pnl_pct_with_fee: { label:'總倉損益%含手續費', type:'number' },
+    pnl_pct_without_fee: { label:'總倉損益%不含手續費', type:'number' },
+    entry_date_time: { label:'進場日期時間', type:'datetime' },
+    exit_date_time: { label:'出場日期時間', type:'datetime' },
     entry_date: { label:'進場日期', type:'date' },
     entry_time: { label:'進場時間', type:'time' },
     exit_date: { label:'出場日期', type:'date' },
@@ -619,9 +632,10 @@
     invest_cost: { label:'投資成本', type:'number' },
     pos_used_ratio: { label:'實際倉位/最大倉位', type:'number' },
 
-    pnl: { label:'損益', type:'number' },
-    rr: { label:'盈虧比', type:'number' },
-    total_pos_pnl_pct: { label:'總倉損益%', type:'number' },
+    pnl_with_fee: { label:'損益金額含手續費', type:'number' },
+    pnl_without_fee: { label:'損益金額不含手續費', type:'number' },
+    rr_with_fee: { label:'RR含手續費', type:'number' },
+    rr_without_fee: { label:'RR不含手續費', type:'number' },
     actual_sl_pct: { label:'實際停損%', type:'number' },
     sl_pct: { label:'停損%', type:'number' },
 
@@ -635,10 +649,7 @@
     max_pos_1_10: { label:'1/10最大允許倉位', type:'number' },
 
     fee: { label:'手續費', type:'number' },
-    pnl_ex_fee: { label:'不含手續費損益', type:'number' },
-    pnl_pct_ex_fee: { label:'不含手續費損益%', type:'number' },
-    fee_share: { label:'手續費佔損益', type:'number' },
-    rr_ex_fee: { label:'不含手續費盈虧比', type:'number' }
+    fee_share: { label:'手續費佔損益', type:'number' }
   };
 
   // =====================
@@ -662,6 +673,58 @@
   let sortDir = '';
   let calendarMonth = new Date();
   let calendarBase = 'pnl';
+  let missingMetricLock = {
+    rr: false,
+    pct: false,
+    message: ''
+  };
+
+  function hasAnyRawMetric(rows, keys){
+    for(const r of (rows || [])){
+      for(const k of keys){
+        const n = parseNum(r?.[k]);
+        if(Number.isFinite(n)) return true;
+      }
+    }
+    return false;
+  }
+
+  function setMissingMetricLockFromRows(rows){
+    const hasRR = hasAnyRawMetric(rows, ['rr_with_fee', 'rr_without_fee']);
+    const hasPct = hasAnyRawMetric(rows, ['pnl_pct_with_fee', 'pnl_pct_without_fee']);
+
+    missingMetricLock.rr = !hasRR;
+    missingMetricLock.pct = !hasPct;
+
+    const miss = [];
+    if(missingMetricLock.pct) miss.push('pct');
+    if(missingMetricLock.rr) miss.push('rr');
+    missingMetricLock.message = miss.length
+      ? `缺少${miss.join('、')}數據，使用pnl代替計算`
+      : '';
+  }
+
+  function applyMissingMetricLockToSelectors(){
+    const selectors = ['ana_base', 'c_base', 'cal_base'];
+    selectors.forEach((id) => {
+      const sel = document.getElementById(id);
+      if(!sel) return;
+
+      const rrOpt = sel.querySelector('option[value="rr"]');
+      const pctOpt = sel.querySelector('option[value="pnl_pct"]');
+
+      if(rrOpt) rrOpt.disabled = !!missingMetricLock.rr;
+      if(pctOpt) pctOpt.disabled = !!missingMetricLock.pct;
+
+      const selected = sel.value;
+      if((selected === 'rr' && missingMetricLock.rr) || (selected === 'pnl_pct' && missingMetricLock.pct)){
+        sel.value = 'pnl';
+      }
+    });
+
+    const calSel = document.getElementById('cal_base');
+    if(calSel) calendarBase = calSel.value || 'pnl';
+  }
 
   // =====================
   // Filter: column | op | option(s)
@@ -672,6 +735,7 @@
     text:   ['contains','doesnt_contain','eq'],
     number: ['lt','gt','eq'],
     date:   ['on','before','after','between'],
+    datetime: ['eq','lt','gt','between'],
     time:   ['lt','gt','eq','between','contains'],
     select: ['eq'],
     multi:  ['contains','doesnt_contain']
@@ -871,6 +935,39 @@
           d.value = String(r.values[0] || '');
           optWrap.appendChild(d);
         }
+      } else if(meta.type === 'datetime'){
+        if(r.op === 'between'){
+          optWrap.style.display = 'flex';
+          optWrap.style.gap = '8px';
+          optWrap.style.alignItems = 'center';
+
+          const dt1 = document.createElement('input');
+          dt1.type = 'datetime-local';
+          dt1.className = 'dateTimeFrom';
+          dt1.dataset.i = String(i);
+          dt1.value = String(r.values[0] || '').replace(' ', 'T');
+
+          const mid = document.createElement('span');
+          mid.className = 'muted';
+          mid.textContent = 'to';
+
+          const dt2 = document.createElement('input');
+          dt2.type = 'datetime-local';
+          dt2.className = 'dateTimeTo';
+          dt2.dataset.i = String(i);
+          dt2.value = String(r.values[1] || '').replace(' ', 'T');
+
+          optWrap.appendChild(dt1);
+          optWrap.appendChild(mid);
+          optWrap.appendChild(dt2);
+        } else {
+          const dt = document.createElement('input');
+          dt.type = 'datetime-local';
+          dt.className = 'singleDateTime';
+          dt.dataset.i = String(i);
+          dt.value = String(r.values[0] || '').replace(' ', 'T');
+          optWrap.appendChild(dt);
+        }
       } else if(meta.type === 'time'){
         if(r.op === 'between'){
           optWrap.style.display = 'flex';
@@ -980,6 +1077,13 @@
       });
     });
 
+    document.querySelectorAll('.singleDateTime').forEach(el => {
+      el.addEventListener('change', (e) => {
+        const i = Number(e.target.dataset.i);
+        setSingle(i, String(e.target.value || '').replace('T', ' '));
+      });
+    });
+
     document.querySelectorAll('.dateFrom').forEach(el => {
       el.addEventListener('change', (e) => {
         const i = Number(e.target.dataset.i);
@@ -996,6 +1100,26 @@
         const to = e.target.value;
         const fromEl = document.querySelector('.dateFrom[data-i="' + i + '"]');
         const from = fromEl ? fromEl.value : '';
+        setBetween(i, from, to);
+      });
+    });
+
+    document.querySelectorAll('.dateTimeFrom').forEach(el => {
+      el.addEventListener('change', (e) => {
+        const i = Number(e.target.dataset.i);
+        const from = String(e.target.value || '').replace('T', ' ');
+        const toEl = document.querySelector('.dateTimeTo[data-i="' + i + '"]');
+        const to = toEl ? String(toEl.value || '').replace('T', ' ') : '';
+        setBetween(i, from, to);
+      });
+    });
+
+    document.querySelectorAll('.dateTimeTo').forEach(el => {
+      el.addEventListener('change', (e) => {
+        const i = Number(e.target.dataset.i);
+        const to = String(e.target.value || '').replace('T', ' ');
+        const fromEl = document.querySelector('.dateTimeFrom[data-i="' + i + '"]');
+        const from = fromEl ? String(fromEl.value || '').replace('T', ' ') : '';
         setBetween(i, from, to);
       });
     });
@@ -1101,6 +1225,38 @@
           return true;
         }
 
+        if(meta?.type === 'datetime'){
+          const td = parseDateTimeToMs(rawVal);
+          if(td === null) return false;
+
+          if(f.op === 'eq'){
+            const q = parseDateTimeToMs(f.values[0]);
+            return q === null ? true : td === q;
+          }
+          if(f.op === 'lt'){
+            const q = parseDateTimeToMs(f.values[0]);
+            return q === null ? true : td < q;
+          }
+          if(f.op === 'gt'){
+            const q = parseDateTimeToMs(f.values[0]);
+            return q === null ? true : td > q;
+          }
+          if(f.op === 'between'){
+            const q1 = parseDateTimeToMs(f.values[0]);
+            const q2 = parseDateTimeToMs(f.values[1]);
+            if(q1 === null && q2 === null) return true;
+            if(q1 !== null && q2 === null) return td >= q1;
+            if(q1 === null && q2 !== null) return td <= q2;
+            const lo = Math.min(q1, q2);
+            const hi = Math.max(q1, q2);
+            return td >= lo && td <= hi;
+          }
+
+          const v = String(rawVal ?? '');
+          if(f.op === 'contains') return f.values.some(x => v.includes(String(x)));
+          return true;
+        }
+
         const v = String(rawVal ?? '');
         if(f.op === 'contains') return f.values.some(x => v.includes(String(x)));
         if(f.op === 'doesnt_contain') return !f.values.some(x => v.includes(String(x)));
@@ -1132,8 +1288,8 @@
   function applySort(){
     if(!sortDir) return;
     filteredTrades.sort((a, b) => sortDir === 'asc'
-      ? Number(a.pnl_pct) - Number(b.pnl_pct)
-      : Number(b.pnl_pct) - Number(a.pnl_pct)
+      ? Number(a.pnl_pct_with_fee) - Number(b.pnl_pct_with_fee)
+      : Number(b.pnl_pct_with_fee) - Number(a.pnl_pct_with_fee)
     );
   }
 
@@ -1155,8 +1311,11 @@
   function pad2(n){ return String(n).padStart(2, '0'); }
 
   function dateFromTrade(t){
-    const s = normalizeDateString(t?.entry_date);
-    if(!s || s.length < 10) return null;
+    const entryDt = normalizeDateTimeString(t?.entry_date_time);
+    const exitDt = normalizeDateTimeString(t?.exit_date_time);
+    const dtStr = entryDt || exitDt;
+    if(!dtStr || dtStr.length < 10) return null;
+    const s = dtStr.slice(0, 10);
     const [y, m, d] = s.split('-').map(Number);
     const dt = new Date(Number(y), Number(m) - 1, Number(d));
     return Number.isFinite(dt.getTime()) ? dt : null;
@@ -1164,19 +1323,19 @@
 
   function tradeValueForCalendar(t, base){
     if(base === 'rr'){
-      return pickFirstNumeric(t, ['rr_wo_fee','rr_no_fee','rr_gross','rr_ex_fee','rr','盈虧比']);
+      return pickFirstNumeric(t, ['rr_with_fee']);
     }
-    if(base === 'total_pos_pnl_pct'){
-      return pickFirstNumeric(t, ['total_pos_pnl_pct','pnl_wo_fee_pct','pnl_no_fee_pct','pnl_pct_gross','pnl_pct_wo_fee','pnl_pct_ex_fee','pnl_pct','不含手續費損益%','損益%']);
+    if(base === 'pnl_pct'){
+      return pickFirstNumeric(t, ['pnl_pct_with_fee']);
     }
-    return pickFirstNumeric(t, ['pnl','損益','pnl_wo_fee','pnl_no_fee','pnl_gross','pnl_ex_fee']);
+    return pickFirstNumeric(t, ['pnl_with_fee']);
   }
 
   function fmtCalVal(v, base){
-    const suffix = base === 'rr' ? 'R' : (base === 'total_pos_pnl_pct' ? '%' : '');
+    const suffix = base === 'rr' ? 'R' : (base === 'pnl_pct' ? '%' : '');
     if(!Number.isFinite(v) || v === 0) return '0' + suffix;
     const abs = Math.abs(v);
-    const digits = base === 'rr' ? 2 : (base === 'total_pos_pnl_pct' ? 1 : 2);
+    const digits = base === 'rr' ? 2 : (base === 'pnl_pct' ? 1 : 2);
     const num = abs >= 1000 ? abs.toFixed(0) : abs.toFixed(digits);
     const sign = v > 0 ? '+' : '-';
     return sign + num + suffix;
@@ -1330,6 +1489,7 @@
     if(summary) summary.innerHTML = `T ${monthTrades}｜W ${monthWins}｜L ${monthLosses}｜Winrate ${monthWr.toFixed(1)}%`
       + `<br>月損益 ${fmtDayPnl(monthSum)}｜PF ${pfStr}`;
     renderCalendarChart(map);
+    updateGlobalDataNotice();
   }
 
   function renderCalendarChart(map){
@@ -1523,6 +1683,7 @@
         td.contentEditable = 'true';
 
         if(meta?.type === 'date') td.innerText = normalizeDateString(val);
+        else if(meta?.type === 'datetime') td.innerText = normalizeDateTimeString(val);
         else td.innerText = String(val);
 
         r.appendChild(td);
@@ -1555,6 +1716,9 @@
           td.innerText = String(rawTrades[rawIdx][key]);
         } else if(meta?.type === 'date'){
           rawTrades[rawIdx][key] = normalizeDateString(v);
+          td.innerText = rawTrades[rawIdx][key];
+        } else if(meta?.type === 'datetime'){
+          rawTrades[rawIdx][key] = normalizeDateTimeString(v);
           td.innerText = rawTrades[rawIdx][key];
         } else {
           rawTrades[rawIdx][key] = v;
@@ -1617,6 +1781,8 @@
           rawTrades[targetIdx][key] = Number.isNaN(num) ? 0 : num;
         } else if(meta?.type === 'multi'){
           rawTrades[targetIdx][key] = normalizeMultiCellValue(val);
+        } else if(meta?.type === 'datetime'){
+          rawTrades[targetIdx][key] = normalizeDateTimeString(val);
         } else if(meta?.type === 'date'){
           rawTrades[targetIdx][key] = normalizeDateString(val);
         } else {
@@ -2115,6 +2281,70 @@ function normalizeTimeString(s){
 
   return v;
 }
+
+function excelSerialToDateTimeString(n){
+  if(!Number.isFinite(n)) return '';
+  const ms = Math.round((n - 25569) * 86400 * 1000);
+  const dt = new Date(ms);
+  if(!Number.isFinite(dt.getTime())) return '';
+  const y = dt.getUTCFullYear();
+  const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(dt.getUTCDate()).padStart(2, '0');
+  const hh = String(dt.getUTCHours()).padStart(2, '0');
+  const mm = String(dt.getUTCMinutes()).padStart(2, '0');
+  return `${y}-${m}-${d} ${hh}:${mm}`;
+}
+
+function normalizeDateTimeString(s){
+  if(s === null || s === undefined || s === '') return '';
+  if(typeof s === 'number') return excelSerialToDateTimeString(s);
+
+  const v = String(s).trim();
+  if(!v) return '';
+
+  if(/^-?\d+(\.\d+)?$/.test(v)){
+    const n = Number(v);
+    if(Number.isFinite(n)) return excelSerialToDateTimeString(n);
+  }
+
+  const m = v.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[ T](\d{1,2}):(\d{1,2}))?/);
+  if(m){
+    const y = m[1];
+    const mo = String(m[2]).padStart(2, '0');
+    const d = String(m[3]).padStart(2, '0');
+    const hh = String(m[4] ?? '00').padStart(2, '0');
+    const mm = String(m[5] ?? '00').padStart(2, '0');
+    return `${y}-${mo}-${d} ${hh}:${mm}`;
+  }
+
+  const dt = new Date(v);
+  if(!isNaN(dt.getTime())){
+    const y = dt.getFullYear();
+    const mo = String(dt.getMonth() + 1).padStart(2, '0');
+    const d = String(dt.getDate()).padStart(2, '0');
+    const hh = String(dt.getHours()).padStart(2, '0');
+    const mm = String(dt.getMinutes()).padStart(2, '0');
+    return `${y}-${mo}-${d} ${hh}:${mm}`;
+  }
+
+  return v;
+}
+
+function parseDateTimeToMs(s){
+  const norm = normalizeDateTimeString(s);
+  if(!norm) return null;
+  const m = norm.match(/^(\d{4})-(\d{2})-(\d{2})\s(\d{2}):(\d{2})$/);
+  if(!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const hh = Number(m[4]);
+  const mm = Number(m[5]);
+  if(![y, mo, d, hh, mm].every(Number.isFinite)) return null;
+  const dt = new Date(y, mo - 1, d, hh, mm, 0, 0);
+  const ms = dt.getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
 function normalizeInt(v){
   if(v === null || v === undefined || v === '') return '';
   const n = Number(v);
@@ -2123,6 +2353,8 @@ function normalizeInt(v){
 }
 function normalizeTradeDates(trade){
   const t = { ...trade };
+  if('entry_date_time' in t) t.entry_date_time = normalizeDateTimeString(t.entry_date_time);
+  if('exit_date_time'  in t) t.exit_date_time  = normalizeDateTimeString(t.exit_date_time);
   if('entry_date' in t) t.entry_date = normalizeDateString(t.entry_date);
   if('exit_date'  in t) t.exit_date  = normalizeDateString(t.exit_date);
   if('entry_time' in t) t.entry_time = normalizeTimeString(t.entry_time);
@@ -2238,8 +2470,52 @@ function normalizeTradeDates(trade){
     sumEl.innerText = text.length > 160 ? text.slice(0, 160) + '…' : text;
   }
 
+  function getMissingRadarRawFields(trades){
+    const miss = [];
+    if(missingMetricLock.pct) miss.push('pct');
+    if(missingMetricLock.rr) miss.push('rr');
+    return miss;
+  }
+
+  function updateGlobalDataNotice(){
+    const el = document.getElementById('global_data_note');
+    if(!el) return;
+
+    if(missingMetricLock.message){
+      el.innerText = '• ' + missingMetricLock.message;
+      return;
+    }
+
+    const notes = [];
+
+    const anaBase = document.getElementById('ana_base')?.value || 'pnl';
+    const anaFee = document.getElementById('ana_fee')?.value || 'net';
+    const anaNote = resolveBaseSource(anaBase, anaFee, filteredTrades).note;
+    if(anaNote) notes.push('Analytics: ' + anaNote);
+
+    const chartBase = document.getElementById('c_base')?.value || 'rr';
+    const chartFee = document.getElementById('c_fee')?.value || 'net';
+    const chartNote = resolveBaseSource(chartBase, chartFee, filteredTrades).note;
+    if(chartNote) notes.push('Charts: ' + chartNote);
+
+    const calBase = document.getElementById('cal_base')?.value || calendarBase || 'pnl';
+    const calNote = resolveBaseSource(calBase, 'net', filteredTrades).note;
+    if(calNote) notes.push('Calendar: ' + calNote);
+
+    const uniq = Array.from(new Set(notes));
+    el.innerText = uniq.length ? ('• ' + uniq.join(' ｜ ')) : '';
+  }
+
   function renderCharts(){
     renderFilterSummary();
+
+    const cfg = getChartsConfig();
+    const chartNoteEl = document.getElementById('c_data_note');
+    if(chartNoteEl){
+      const note = missingMetricLock.message || resolveBaseSource(cfg.base, cfg.fee, filteredTrades).note;
+      chartNoteEl.innerText = note ? ('• ' + note) : '';
+    }
+    updateGlobalDataNotice();
 
     const grid = document.getElementById('chartGrid');
     if(!grid) return;
@@ -2247,8 +2523,6 @@ function normalizeTradeDates(trade){
     const tilesToShow = (chartLayout === '6') ? chartTiles.slice(0, 6) : chartTiles.slice(0, 4);
 
     grid.className = 'chartGrid ' + (chartLayout === '6' ? 'cols6' : 'cols4');
-
-    const cfg = getChartsConfig();
 
     grid.innerHTML = '';
     tilesToShow.forEach((tile, idx) => {
@@ -2462,7 +2736,7 @@ function normalizeTradeDates(trade){
 
   function metricName(base){
     if(base === 'rr') return 'R';
-    if(base === 'total_pos_pnl_pct') return 'PnL %';
+    if(base === 'pnl_pct') return 'PnL %';
     if(base === 'pnl') return 'PnL';
     return base;
   }
@@ -2497,27 +2771,63 @@ function normalizeTradeDates(trade){
     return NaN;
   }
 
+  function hasAnyNumericInTrades(trades, key, rawOnly = false){
+    for(const t of (trades || [])){
+      if(rawOnly){
+        if(t?.__raw_metric_available && Object.prototype.hasOwnProperty.call(t.__raw_metric_available, key)){
+          if(t.__raw_metric_available[key] === true) return true;
+          continue;
+        }
+      }
+      const n = parseNum(t?.[key]);
+      if(Number.isFinite(n)) return true;
+    }
+    return false;
+  }
+
+  function resolveBaseSource(base, fee, trades){
+    const isGross = fee === 'gross';
+
+    if(base === 'rr'){
+      const primary = isGross ? 'rr_without_fee' : 'rr_with_fee';
+      const fallback = isGross ? 'pnl_without_fee' : 'pnl_with_fee';
+      if(missingMetricLock.rr) return { key: fallback, note: `未提供 ${primary} 資料，改用 ${fallback} 計算` };
+      if(hasAnyNumericInTrades(trades, primary, true)) return { key: primary, note: '' };
+      if(hasAnyNumericInTrades(trades, fallback, true)){
+        return { key: fallback, note: `未提供 ${primary} 資料，改用 ${fallback} 計算` };
+      }
+      return { key: primary, note: '' };
+    }
+
+    if(base === 'pnl_pct'){
+      const primary = isGross ? 'pnl_pct_without_fee' : 'pnl_pct_with_fee';
+      const fallback = isGross ? 'pnl_without_fee' : 'pnl_with_fee';
+      if(missingMetricLock.pct) return { key: fallback, note: `未提供 ${primary} 資料，改用 ${fallback} 計算` };
+      if(hasAnyNumericInTrades(trades, primary, true)) return { key: primary, note: '' };
+      if(hasAnyNumericInTrades(trades, fallback, true)){
+        return { key: fallback, note: `未提供 ${primary} 資料，改用 ${fallback} 計算` };
+      }
+      return { key: primary, note: '' };
+    }
+
+    if(base === 'pnl'){
+      const primary = isGross ? 'pnl_without_fee' : 'pnl_with_fee';
+      const fallback = isGross ? 'pnl_with_fee' : 'pnl_without_fee';
+      if(hasAnyNumericInTrades(trades, primary, true)) return { key: primary, note: '' };
+      if(hasAnyNumericInTrades(trades, fallback, true)){
+        return { key: fallback, note: `未提供 ${primary} 資料，改用 ${fallback} 計算` };
+      }
+      return { key: primary, note: '' };
+    }
+
+    return { key: base, note: '' };
+  }
+
   function getSeriesSafe(trades, base, fee){
+    const src = resolveBaseSource(base, fee, trades);
     const out = [];
     for(const t of trades){
-      let v = NaN;
-
-      if(base === 'rr'){
-        v = (fee === 'gross')
-          ? pickFirstNumeric(t, ['rr_wo_fee','rr_no_fee','rr_gross','rr_ex_fee','rr'])
-          : pickFirstNumeric(t, ['rr','盈虧比']);
-      } else if(base === 'pnl'){
-        v = (fee === 'gross')
-          ? pickFirstNumeric(t, ['pnl_wo_fee','pnl_no_fee','pnl_gross','pnl_ex_fee','pnl'])
-          : pickFirstNumeric(t, ['pnl','損益']);
-      } else if(base === 'total_pos_pnl_pct'){
-        v = (fee === 'gross')
-          ? pickFirstNumeric(t, ['pnl_wo_fee_pct','pnl_no_fee_pct','pnl_pct_gross','pnl_pct_wo_fee','pnl_pct_ex_fee','pnl_pct','不含手續費損益%','損益%'])
-          : pickFirstNumeric(t, ['total_pos_pnl_pct','損益%']);
-      } else {
-        v = pickFirstNumeric(t, [base]);
-      }
-
+      const v = pickFirstNumeric(t, [src.key]);
       out.push(Number.isFinite(v) ? v : 0);
     }
     return out;
@@ -3223,7 +3533,7 @@ function normalizeTradeDates(trade){
 
   function metricDisplayUnit(base){
     if(base === 'rr') return 'R';
-    if(base === 'total_pos_pnl_pct') return '%';
+    if(base === 'pnl_pct') return '%';
     return ''; // pnl money: no suffix
   }
 
@@ -3592,19 +3902,35 @@ function normalizeTradeDates(trade){
   function renderAnalytics(){
     function renderAnaRadar(){
       const el = document.getElementById('ana_radar_svg');
+      const radarSub = document.getElementById('anaRadarSub');
       if(!el) return;
 
       const trades = filteredTrades || [];
       if(!trades.length){
         el.innerHTML = '<text x="180" y="160" text-anchor="middle" dominant-baseline="middle" font-size="13" fill="#aaa">No trades</text>';
+        if(radarSub) radarSub.innerText = '6 固定基準指標 (R / PnL$ / Pct%) — 不受 Base 設定影響';
         return;
       }
+
+      const missingRadarRaw = getMissingRadarRawFields(trades);
+      if(missingRadarRaw.length){
+        el.innerHTML = '<text x="180" y="148" text-anchor="middle" dominant-baseline="middle" font-size="13" fill="#a50e0e">Radar skipped</text>'
+          + '<text x="180" y="170" text-anchor="middle" dominant-baseline="middle" font-size="11" fill="#6b7280">缺少欄位: '
+          + missingRadarRaw.join(', ')
+          + '</text>';
+        if(radarSub) radarSub.innerText = '6 固定基準指標 (R / PnL$ / Pct%) — 資料不完整，雷達圖不計算';
+        return;
+      }
+
+      const rrNetSrc = resolveBaseSource('rr', 'net', trades);
+      const rrGrossSrc = resolveBaseSource('rr', 'gross', trades);
+      const pctNetSrc = resolveBaseSource('pnl_pct', 'net', trades);
 
       // Always use fixed bases regardless of analytics Base selector
       const rrNet   = getSeries(trades, 'rr', 'net');
       const rrGross = getSeries(trades, 'rr', 'gross');
       const pnlNet  = getSeries(trades, 'pnl', 'net');
-      const pctNet  = getSeries(trades, 'total_pos_pnl_pct', 'net');
+      const pctNet  = getSeries(trades, 'pnl_pct', 'net');
 
       const mRR  = computeMetricsFromSeries(rrNet);
       const mPnl = computeMetricsFromSeries(pnlNet);
@@ -3656,6 +3982,15 @@ function normalizeTradeDates(trade){
       ];
 
       const axisLabels = ['Avg PnL (R)','Avg Fee (R)','Sharpe','Win Rate','PF (R)','MDD (%)'];
+
+      if(radarSub){
+        const notes = [rrNetSrc.note, rrGrossSrc.note, pctNetSrc.note].filter(Boolean);
+        if(notes.length){
+          radarSub.innerText = '6 固定基準指標 (R / PnL$ / Pct%) — 不受 Base 設定影響；' + Array.from(new Set(notes)).join('；');
+        } else {
+          radarSub.innerText = '6 固定基準指標 (R / PnL$ / Pct%) — 不受 Base 設定影響';
+        }
+      }
 
       // SVG geometry
       const cx=180, cy=162, R=100, LR=128;
@@ -3731,12 +4066,19 @@ function normalizeTradeDates(trade){
     const series = getSeries(filteredTrades, base, feeMode);
     const m = computeMetricsFromSeries(series);
 
+    const anaDataNote = document.getElementById('ana_data_note');
+    if(anaDataNote){
+      const note = missingMetricLock.message || resolveBaseSource(base, feeMode, filteredTrades).note;
+      anaDataNote.innerText = note ? ('• ' + note) : '';
+    }
+    updateGlobalDataNotice();
+
     // period totals (based on entry_date)
     const day = aggregateByPeriod(filteredTrades, series, 'day');
     const month = aggregateByPeriod(filteredTrades, series, 'month');
     const year = aggregateByPeriod(filteredTrades, series, 'year');
 
-    // account inputs (money-only), realized uses pnl/pnl_ex_fee regardless of base
+    // account inputs (money-only), realized uses pnl with fee mode
     const startCap = toFiniteNumber(document.getElementById('ana_start_cap')?.value);
     const unreal = toFiniteNumber(document.getElementById('ana_unrealized')?.value);
     const curVal = toFiniteNumber(document.getElementById('ana_account_value')?.value);
@@ -4165,33 +4507,6 @@ function normalizeTradeDates(trade){
 
   const setStatus = (t) => { if (status) status.textContent = t || ""; };
 
-  // ===== Column mapping: Excel column names → Internal column names =====
-  // 用户需要按照这个映射来命名 Excel 列
-  const EXCEL_TO_INTERNAL_MAP = {
-    // Common English mappings
-    'Name': 'trade_id',
-    'Product': 'product',
-    'Strategy': 'strategy',
-    'PnL': 'pnl',
-    'PnL%': 'pnl_pct',
-    'RR': 'rr',
-    'Timeframe': 'timeframe',
-    'Side': 'side',
-    'Entry Date': 'entry_date',
-    'Entry Time': 'entry_time',
-    'Exit Date': 'exit_date',
-    'Exit Time': 'exit_time',
-    'Fee': 'fee',
-    // Chinese mappings (补充你的实际 Excel 列名)
-    '交易代號': 'trade_id',
-    '產品': 'product',
-    '策略': 'strategy',
-    '損益': 'pnl',
-    '損益%': 'pnl_pct',
-    '盈虧比': 'rr',
-    '手續費': 'fee'
-  };
-
   function isNumberLike(v) {
     if (v === null || v === undefined || v === '') return false;
     if (typeof v === 'number') return Number.isFinite(v);
@@ -4207,6 +4522,52 @@ function normalizeTradeDates(trade){
     const s = String(v).replace(/,/g, '').trim();
     const n = Number(s);
     return Number.isFinite(n) ? n : 0;
+  }
+
+  function normalizeProfitMetricFields(row) {
+    const out = { ...row };
+    const rawMetricAvailable = {};
+    [
+      'rr_with_fee',
+      'rr_without_fee',
+      'pnl_with_fee',
+      'pnl_without_fee',
+      'pnl_pct_with_fee',
+      'pnl_pct_without_fee'
+    ].forEach((k) => {
+      rawMetricAvailable[k] = Number.isFinite(parseNum(row?.[k]));
+    });
+    out.__raw_metric_available = rawMetricAvailable;
+
+    const readNum = (k) => {
+      const n = parseNum(out[k]);
+      return Number.isFinite(n) ? n : NaN;
+    };
+
+    const writeIfMissing = (k, v) => {
+      if (!Number.isFinite(v)) return;
+      if (!Number.isFinite(readNum(k))) out[k] = v;
+    };
+
+    const pnlWith = readNum('pnl_with_fee');
+    const rrWith = readNum('rr_with_fee');
+    const pctWith = readNum('pnl_pct_with_fee');
+
+    // Case 1: If customer only fills with-fee metrics, mirror to without-fee.
+    writeIfMissing('pnl_without_fee', pnlWith);
+    writeIfMissing('rr_without_fee', rrWith);
+    writeIfMissing('pnl_pct_without_fee', pctWith);
+
+    // Case 2: If only pnl_with_fee exists, use pnl_with_fee as rr/pct source.
+    writeIfMissing('rr_with_fee', pnlWith);
+    writeIfMissing('pnl_pct_with_fee', pnlWith);
+
+    // Ensure without-fee mirrors after any case-2 derivation.
+    writeIfMissing('rr_without_fee', readNum('rr_with_fee'));
+    writeIfMissing('pnl_pct_without_fee', readNum('pnl_pct_with_fee'));
+    writeIfMissing('pnl_without_fee', readNum('pnl_with_fee'));
+
+    return out;
   }
 
   function inferColumnType(rows, colKey) {
@@ -4320,17 +4681,11 @@ function normalizeTradeDates(trade){
     console.log('=== Excel Import ===');
     console.log('Excel columns:', excelColumns);
 
-    // Step 2: Convert Excel column names to internal column names
-    const columnMapping = {};
-    const internalColumns = [];
-    
-    excelColumns.forEach(excelCol => {
-      const internalCol = EXCEL_TO_INTERNAL_MAP[excelCol] || excelCol;
-      columnMapping[excelCol] = internalCol;
-      internalColumns.push(internalCol);
+    // Step 2: Enforce exact internal column names from Excel (no mapping)
+    const internalColumns = [...excelColumns];
+    DERIVED_METRIC_COLS.forEach((col) => {
+      if (!internalColumns.includes(col)) internalColumns.push(col);
     });
-    
-    console.log('Column mapping:', columnMapping);
     console.log('Internal columns:', internalColumns);
 
     // Step 3: Check if all REQUIRED_COLS are present
@@ -4343,15 +4698,17 @@ function normalizeTradeDates(trade){
     }
     console.log('✓ All required columns present');
 
-    // Step 4: Convert rows using column mapping
-    const convertedRows = res.rows.map(row => {
-      const converted = {};
-      excelColumns.forEach(excelCol => {
-        const internalCol = columnMapping[excelCol];
-        converted[internalCol] = row[excelCol];
+    // Step 4: Keep rows as-is and add derived metric columns if missing.
+    const convertedRows = res.rows.map((row) => {
+      const out = { ...row };
+      DERIVED_METRIC_COLS.forEach((col) => {
+        if (!Object.prototype.hasOwnProperty.call(out, col)) out[col] = '';
       });
-      return converted;
+      return out;
     });
+
+    // Step 4.1: Lock missing rr/pct state snapshot for this Excel session.
+    setMissingMetricLockFromRows(convertedRows);
 
     // Step 5: Define COLS dynamically based on Excel columns
     COLS = ['_delete', ...internalColumns];
@@ -4396,7 +4753,7 @@ function normalizeTradeDates(trade){
 
     // Step 7: Normalize values using inferred types
     const normalizedRows = convertedRows.map(row => {
-      const out = { ...row };
+      const out = normalizeProfitMetricFields(row);
       internalColumns.forEach(col => {
         const meta = newFieldMeta[col];
         if (meta?.type === 'number') out[col] = coerceNumberValue(out[col]);
@@ -4413,6 +4770,8 @@ function normalizeTradeDates(trade){
     renderHeader();
     renderRules();
     updateAnaGroupOptions();
+    applyMissingMetricLockToSelectors();
+    updateGlobalDataNotice();
     console.log('UI re-rendered');
 
     if (saveBtn) saveBtn.disabled = false;
