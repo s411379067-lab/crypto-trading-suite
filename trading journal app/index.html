@@ -104,6 +104,7 @@
   .breakTable{width:100%;border-collapse:collapse}
   .breakTable th,.breakTable td{border:1px solid #ddd;padding:6px 8px;font-size:13px;white-space:nowrap}
   .breakTable th{background:#f0f0f0}
+  .breakMaskRow td{color:transparent;text-shadow:0 0 7px rgba(55,65,81,.55);background-image:linear-gradient(45deg,rgba(148,163,184,.35) 25%,transparent 25%),linear-gradient(-45deg,rgba(148,163,184,.35) 25%,transparent 25%),linear-gradient(45deg,transparent 75%,rgba(148,163,184,.35) 75%),linear-gradient(-45deg,transparent 75%,rgba(148,163,184,.35) 75%);background-size:10px 10px;background-position:0 0,0 5px,5px -5px,-5px 0;user-select:none}
 
   /* Charts */
   .chartGrid{display:grid;gap:10px;margin-top:12px}
@@ -147,12 +148,12 @@
   }
 
   .cusControlWrap{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}
-  .cusAddGrid{display:grid;grid-template-columns:repeat(2,minmax(320px,1fr));gap:12px;flex:1 1 760px;min-width:320px}
-  .cusBlock{display:grid;grid-template-columns:110px minmax(0,1fr);grid-template-rows:34px 34px;column-gap:8px;row-gap:0;align-items:stretch}
+  .cusAddGrid{display:grid;grid-template-columns:repeat(2,max-content);column-gap:8px;row-gap:12px;justify-content:flex-start;flex:0 0 auto;min-width:0}
+  .cusBlock{display:grid;grid-template-columns:110px 300px;grid-template-rows:32px 32px;column-gap:8px;row-gap:4px;align-items:stretch}
   .cusAddBtn{grid-column:1;grid-row:1 / span 2;width:110px;height:68px;line-height:1.2}
-  .cusMainSel{grid-column:2;grid-row:1;width:100%;height:34px}
+  .cusMainSel{grid-column:2;grid-row:1;width:300px;max-width:100%;height:32px}
   .cusPair{grid-column:2;grid-row:2;display:flex;gap:8px;align-items:stretch}
-  .cusPair select{width:110px;height:34px}
+  .cusPair select{width:140px;height:32px}
   .cusBlock .span2{grid-column:span 2}
   .cusActions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end;flex:0 0 auto}
   @media (max-width:900px){
@@ -223,13 +224,12 @@
 
     <div id="loginError" class="authError"></div>
     <button type="submit" style="width:100%;padding:10px 12px;font-size:13px;">Login</button>
-    <div class="authHint">預設測試帳號：admin / admin123、demo / demo123、jack77 / jack77123（需授權檔）</div>
   </form>
 </div>
 
 <div id="appShell" style="display:none;">
 <div class="topbar">
-  <div>Trading Journal v0.6</div>
+  <div>Trading Journal v1.0.0</div>
   <div class="topbarRight">
     <div class="muted">Full Columns • Filter: column | 判斷 | option(s)</div>
     <div class="muted" id="global_data_note"></div>
@@ -263,7 +263,7 @@
         </div>
         <div id="rules" class="rules"></div>
         <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
-          <button onclick="addRule()">+ Add Filter</button>
+          <button id="btnAddFilter" onclick="addRule()">+ Add Filter</button>
           <span class="muted">條件之間 AND；同一條件多選 option 代表 OR（僅多選欄位）</span>
         </div>
       </div>
@@ -339,6 +339,7 @@
           </label>
 
           <span class="muted">Filtered: <strong id="a_count">0</strong></span>
+          <button onclick="jumpToFilters()">Go to Trades Filters</button>
           <span class="muted" id="ana_data_note"></span>
         </div>
 
@@ -359,14 +360,14 @@
 
       <div class="anaLayout">
         <div class="anaCardsLeft" id="ana_cards"></div>
-        <div class="anaRadarSection">
+        <div class="anaRadarSection" id="anaRadarSection">
           <div class="anaRadarTitle">Performance Radar</div>
           <div class="anaRadarSub" id="anaRadarSub">6 固定基準指標 (R / PnL$ / Pct%) — 不受 Base 設定影響</div>
           <svg id="ana_radar_svg" viewBox="0 0 360 320"></svg>
         </div>
       </div>
 
-      <div class="panel">
+      <div class="panel" id="anaBreakdownPanel">
         <h3>Breakdown</h3>
         <div class="muted">多選欄位（如 策略/結構）預設會用逗號拆分；同一筆交易可同時貢獻到多個群組（會重複計數）。</div>
         <div style="margin-top:10px;overflow:auto;">
@@ -510,20 +511,18 @@
         </div>
       </div>
 
-      <div class="panel" style="margin-top:10px;">
+      <div id="calendarChartPanel" class="panel" style="margin-top:10px;">
         <h3>該月每日損益</h3>
         <div id="calendarChart" class="chartBox calendarChartBox"></div>
       </div>
     </div>
     <div id="customize" class="page">
       <h2>Customize</h2>
-      <div class="muted">空白頁。按「＋」新增 Analytics 或 Chart 格子。</div>
-
       <div class="panel" style="margin-top:10px;">
         <div class="cusControlWrap">
           <div class="cusAddGrid">
             <div class="cusBlock">
-              <button id="btnCusAdd" class="cusAddBtn" type="button">＋ Add<br>Metric</button>
+              <button id="btnCusAdd" class="cusAddBtn" type="button">+ Analytics</button>
               <select id="cusMetricTest" class="cusMainSel"></select>
               <div class="cusPair">
                 <select id="cusMetricBase">
@@ -539,7 +538,7 @@
             </div>
 
             <div class="cusBlock">
-              <button id="btnCusAddChart" class="cusAddBtn" type="button">＋ Add<br>Chart</button>
+              <button id="btnCusAddChart" class="cusAddBtn" type="button">+ Chart</button>
               <select id="cusChartTest" class="cusMainSel"></select>
               <div class="cusPair">
                 <select id="cusChartBase">
@@ -637,6 +636,39 @@
   const CR = String.fromCharCode(13);
 
   const AUTH_SESSION_KEY = 'tj_logged_in_user';
+  const AUTH_SESSION_META_KEY = 'tj_auth_meta';
+
+  const FREE_PLAN_LIMITS = {
+    maxTradeRows: 20,
+    maxAnalyticsCards: 2,
+    maxCharts: 2,
+    maxFilters: 1,
+    disableCustomize: true,
+    disableAxB: true,
+    disableAnalyticsRadar: true,
+    disableAnalyticsBreakdown: true,
+    calendarMonthsBack: 1,
+    disableCalendarChart: true
+  };
+
+  const BASIC_PLAN_LIMITS = {
+    maxTradeRows: 60,
+    maxAnalyticsCards: 4,
+    maxCharts: 4,
+    maxFilters: 3,
+    disableCustomize: false,
+    disableAxB: true,
+    customizeMaxMetrics: 2,
+    customizeMaxCharts: 2,
+    disableAnalyticsRadar: false,
+    disableAnalyticsBreakdown: false,
+    breakdownTopVisible: 5,
+    breakdownMaskAfter: 5,
+    calendarMonthsBack: 5,
+    disableCalendarChart: false
+  };
+
+  let authMeta = { plan: 'basic', permissions: {} };
 
   function getSessionUser(){
     const u = sessionStorage.getItem(AUTH_SESSION_KEY) || '';
@@ -647,13 +679,139 @@
     sessionStorage.setItem(AUTH_SESSION_KEY, username);
   }
 
+  function normalizePlan(plan){
+    return String(plan || '').trim().toLowerCase() || 'basic';
+  }
+
+  function getSessionAuthMeta(){
+    try {
+      const raw = sessionStorage.getItem(AUTH_SESSION_META_KEY);
+      if(!raw) return null;
+      const parsed = JSON.parse(raw);
+      return {
+        plan: normalizePlan(parsed?.plan),
+        permissions: (parsed && typeof parsed.permissions === 'object') ? parsed.permissions : {}
+      };
+    } catch(_e){
+      return null;
+    }
+  }
+
+  function setSessionAuthMeta(meta){
+    authMeta = {
+      plan: normalizePlan(meta?.plan),
+      permissions: (meta && typeof meta.permissions === 'object') ? meta.permissions : {}
+    };
+    sessionStorage.setItem(AUTH_SESSION_META_KEY, JSON.stringify(authMeta));
+  }
+
+  function isFreePlan(){
+    return normalizePlan(authMeta?.plan) === 'free';
+  }
+
+  function isBasicPlan(){
+    return normalizePlan(authMeta?.plan) === 'basic';
+  }
+
+  function isProPlan(){
+    return normalizePlan(authMeta?.plan) === 'pro';
+  }
+
+  function getPlanLimits(){
+    if(isFreePlan()) return FREE_PLAN_LIMITS;
+    if(isBasicPlan()) return BASIC_PLAN_LIMITS;
+    return null;
+  }
+
+  function isAxBEnabled(){
+    return !getPlanLimits()?.disableAxB;
+  }
+
+  function getTradeRowLimit(){
+    const limit = getPlanLimits()?.maxTradeRows;
+    return Number.isFinite(limit) ? limit : null;
+  }
+
+  function monthStart(d){
+    return new Date(d.getFullYear(), d.getMonth(), 1);
+  }
+
+  function monthDiff(later, earlier){
+    return (later.getFullYear() - earlier.getFullYear()) * 12 + (later.getMonth() - earlier.getMonth());
+  }
+
+  function isAllowedCalendarMonth(targetMonth){
+    const limits = getPlanLimits();
+    if(!limits || !Number.isFinite(Number(limits.calendarMonthsBack))) return true;
+    const back = Number(limits.calendarMonthsBack);
+    const diff = monthDiff(monthStart(new Date()), monthStart(targetMonth));
+    return diff >= 0 && diff <= back;
+  }
+
   function clearSessionUser(){
     sessionStorage.removeItem(AUTH_SESSION_KEY);
+    sessionStorage.removeItem(AUTH_SESSION_META_KEY);
+    authMeta = { plan: 'basic', permissions: {} };
   }
 
   function setAuthError(msg){
     const err = document.getElementById('loginError');
     if(err) err.textContent = msg || '';
+  }
+
+  function setExcelStatus(msg){
+    const status = document.getElementById('excelStatus');
+    if(status) status.textContent = msg || '';
+  }
+
+  function applyPlanUiRestrictions(){
+    const limits = getPlanLimits();
+    const hideCustomize = !!getPlanLimits()?.disableCustomize;
+
+    const customizeNav = Array.from(document.querySelectorAll('.sidebar .item')).find((el) => {
+      const click = String(el.getAttribute('onclick') || '');
+      return click.includes("showPage('customize'");
+    });
+    if(customizeNav) customizeNav.style.display = hideCustomize ? 'none' : '';
+
+    const addFilterBtn = document.getElementById('btnAddFilter');
+    if(addFilterBtn){
+      const maxFilters = Number(limits?.maxFilters || 0);
+      if(maxFilters > 0){
+        addFilterBtn.disabled = filters.length >= maxFilters;
+        addFilterBtn.title = `方案限制：最多 ${maxFilters} 條 Filter`;
+      } else {
+        addFilterBtn.disabled = false;
+        addFilterBtn.title = '';
+      }
+    }
+
+    const cLayout = document.getElementById('c_layout');
+    if(cLayout){
+      if(Number(limits?.maxCharts || 0) > 0 && Number(limits?.maxCharts) <= 4){
+        chartLayout = '4';
+        cLayout.value = '4';
+        cLayout.disabled = true;
+      } else {
+        cLayout.disabled = false;
+      }
+    }
+
+    const cusChartSel = document.getElementById('cusChartTest');
+    if(cusChartSel){
+      const allowAxB = isAxBEnabled();
+      Array.from(cusChartSel.options).forEach((opt) => {
+        if(String(opt.value || '').trim() === 'by_group_metric') opt.disabled = !allowAxB;
+      });
+      if(!allowAxB && cusChartSel.value === 'by_group_metric'){
+        const first = cusChartSel.options[0];
+        if(first) cusChartSel.value = first.value;
+      }
+    }
+
+    if(typeof window.__enforceCustomizePlanLimits === 'function'){
+      window.__enforceCustomizePlanLimits();
+    }
   }
 
   function setCurrentUserUI(username){
@@ -846,6 +1004,11 @@
   };
 
   function addRule(){
+    const maxFilters = Number(getPlanLimits()?.maxFilters || 0);
+    if(maxFilters > 0 && filters.length >= maxFilters){
+      setExcelStatus(`方案限制：最多 ${maxFilters} 條 Filter。`);
+      return;
+    }
     const fields = getFilterableFields();
     if (!fields.length) return;
     const field = fields[0];
@@ -871,7 +1034,7 @@
     filters[i].op = op;
     if(op === 'between') filters[i].values = ['', ''];
     else if(filters[i].values.length > 1) filters[i].values = [filters[i].values[0] || ''];
-    applyAdvancedFilter();
+    renderRules();
   }
 
   function toggleOption(i, val){
@@ -916,6 +1079,11 @@
   function renderRules(){
     const container = document.getElementById('rules');
     container.innerHTML = '';
+
+    const maxFilters = Number(getPlanLimits()?.maxFilters || 0);
+    if(maxFilters > 0 && filters.length > maxFilters){
+      filters = filters.slice(0, maxFilters);
+    }
 
     if(filters.length === 0){
       const fields = getFilterableFields();
@@ -1127,6 +1295,7 @@
     });
 
     wireRuleEvents();
+    applyPlanUiRestrictions();
     applyAdvancedFilter();
   }
 
@@ -1419,6 +1588,11 @@
   // Pages
   // =====================
   function showPage(id, el){
+    if(id === 'customize' && !!getPlanLimits()?.disableCustomize){
+      id = 'trades';
+      el = Array.from(document.querySelectorAll('.sidebar .item')).find((x) => String(x.getAttribute('onclick') || '').includes("showPage('trades'")) || null;
+      setExcelStatus('方案限制：Customize 不可使用。');
+    }
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.getElementById(id).classList.add('active');
     document.querySelectorAll('.sidebar .item').forEach(i => i.classList.remove('active'));
@@ -1501,11 +1675,31 @@
     const title = document.getElementById('calTitle');
     const summary = document.getElementById('calSummary');
     const grid = document.getElementById('calendarGrid');
+    const chartPanel = document.getElementById('calendarChartPanel');
+    const calPrev = document.getElementById('calPrev');
+    const calNext = document.getElementById('calNext');
     if(!grid) return;
+
+    if(!isAllowedCalendarMonth(calendarMonth)){
+      calendarMonth = monthStart(new Date());
+    }
+
+    const hideChart = !!getPlanLimits()?.disableCalendarChart;
+    if(chartPanel) chartPanel.style.display = hideChart ? 'none' : '';
 
     const y = calendarMonth.getFullYear();
     const m = calendarMonth.getMonth();
     if(title) title.innerText = `${y}-${pad2(m+1)}`;
+
+    const back = Number(getPlanLimits()?.calendarMonthsBack || 0);
+    if(back > 0){
+      const diff = monthDiff(monthStart(new Date()), new Date(y, m, 1));
+      if(calPrev) calPrev.disabled = diff >= back;
+      if(calNext) calNext.disabled = diff <= 0;
+    } else {
+      if(calPrev) calPrev.disabled = false;
+      if(calNext) calNext.disabled = false;
+    }
 
     const map = collectMonthMap();
     const daysInMonth = new Date(y, m + 1, 0).getDate();
@@ -1611,7 +1805,7 @@
     }
     if(summary) summary.innerHTML = `T ${monthTrades}｜W ${monthWins}｜L ${monthLosses}｜Winrate ${monthWr.toFixed(1)}%`
       + `<br>月損益 ${fmtDayPnl(monthSum)}｜PF ${pfStr}`;
-    renderCalendarChart(map);
+    if(!hideChart) renderCalendarChart(map);
     updateGlobalDataNotice();
   }
 
@@ -1684,6 +1878,7 @@
 
   function shiftCalendarMonth(delta){
     const next = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + delta, 1);
+    if(!isAllowedCalendarMonth(next)) return;
     calendarMonth = next;
     renderCalendarTab();
   }
@@ -1863,6 +2058,11 @@
   }
 
   function addRow(){
+    const rowLimit = getTradeRowLimit();
+    if(rowLimit !== null && rawTrades.length >= rowLimit){
+      setExcelStatus(`方案限制：最多 ${rowLimit} 筆交易，不可新增。`);
+      return;
+    }
     rawTrades.unshift(normalizeTradeDates(emptyTrade()));
     applyAdvancedFilter();
     const wrap = document.querySelector('.tableWrap');
@@ -1892,8 +2092,15 @@
 
     const headerKeys = [...document.querySelectorAll('#theadRow th')].map(th => th.dataset.key);
 
+    const rowLimit = getTradeRowLimit();
+    let clippedByPlan = false;
+
     matrix.forEach((row, rOffset) => {
       const targetIdx = startRawIdx + rOffset;
+      if(rowLimit !== null && targetIdx >= rowLimit){
+        clippedByPlan = true;
+        return;
+      }
       if(!rawTrades[targetIdx]) rawTrades.push(emptyTrade());
 
       row.forEach((val, cOffset) => {
@@ -1919,6 +2126,10 @@
 
       rawTrades[targetIdx] = normalizeTradeDates(rawTrades[targetIdx]);
     });
+
+    if(clippedByPlan && rowLimit !== null){
+      setExcelStatus(`方案限制：最多 ${rowLimit} 筆交易，超出貼上內容已忽略。`);
+    }
 
     applyAdvancedFilter();
   });
@@ -2551,6 +2762,11 @@ function normalizeTradeDates(trade){
   const CHART_COMPARE_METRICS = ['avg', 'winrate', 'pf', 'sum', 'count'];
 
   function setChartLayout(v){
+    if(Number(getPlanLimits()?.maxCharts || 0) > 0 && Number(getPlanLimits()?.maxCharts) <= 4){
+      chartLayout = '4';
+      renderCharts();
+      return;
+    }
     chartLayout = String(v || '4');
     renderCharts();
   }
@@ -2739,6 +2955,9 @@ function normalizeTradeDates(trade){
   }
 
   function renderCharts(){
+    if(!isAxBEnabled()){
+      chartTiles = chartTiles.map((tile) => tile.type === 'by_group_metric' ? { ...tile, type: 'equity' } : tile);
+    }
     renderFilterSummary();
 
     const cfg = getChartsConfig();
@@ -2752,7 +2971,10 @@ function normalizeTradeDates(trade){
     const grid = document.getElementById('chartGrid');
     if(!grid) return;
 
-    const tilesToShow = (chartLayout === '6') ? chartTiles.slice(0, 6) : chartTiles.slice(0, 4);
+    const layoutCount = (chartLayout === '6') ? 6 : 4;
+    const maxCharts = Number(getPlanLimits()?.maxCharts || 0);
+    const visibleCount = maxCharts > 0 ? Math.min(layoutCount, maxCharts) : layoutCount;
+    const tilesToShow = chartTiles.slice(0, visibleCount);
 
     grid.className = 'chartGrid ' + (chartLayout === '6' ? 'cols6' : 'cols4');
 
@@ -2887,12 +3109,13 @@ function normalizeTradeDates(trade){
   }
 
   function setTileType(tileId, type){
+    const nextType = (!isAxBEnabled() && type === 'by_group_metric') ? 'equity' : type;
     chartTiles = chartTiles.map(t => {
       if(t.id !== tileId) return t;
-      if(type !== 'by_group_metric') return { ...t, type };
+      if(nextType !== 'by_group_metric') return { ...t, type: nextType };
       return {
         ...t,
-        type,
+        type: nextType,
         compareField: getTileCompareField(t, getChartsConfig()),
         compareMetric: getTileCompareMetric(t, getChartsConfig())
       };
@@ -2911,20 +3134,26 @@ function normalizeTradeDates(trade){
   }
 
   function chartTypeName(id){
-    const x = CHART_TYPES.find(t => t.id === id);
+    const allowAxB = isAxBEnabled();
+    const x = CHART_TYPES.find(t => t.id === id && (allowAxB || t.id !== 'by_group_metric'));
     return x ? x.name : id;
   }
 
   function buildChartTypeSelect(sel, current){
     sel.innerHTML = '';
-    CHART_GROUPS.forEach(g => {
+    const allowAxB = isAxBEnabled();
+    const types = CHART_TYPES.filter((t) => allowAxB || t.id !== 'by_group_metric');
+    const groups = Array.from(new Set(types.map((x) => x.group)));
+    const selected = (!allowAxB && current === 'by_group_metric') ? 'equity' : current;
+
+    groups.forEach(g => {
       const og = document.createElement('optgroup');
       og.label = g;
-      CHART_TYPES.filter(t => t.group === g).forEach(t => {
+      types.filter(t => t.group === g).forEach(t => {
         const o = document.createElement('option');
         o.value = t.id;
         o.textContent = t.name;
-        if(t.id === current) o.selected = true;
+        if(t.id === selected) o.selected = true;
         og.appendChild(o);
       });
       sel.appendChild(og);
@@ -4092,6 +4321,7 @@ function normalizeTradeDates(trade){
   function renderAnaTiles(ctx){
     const el = document.getElementById('ana_cards');
     if(!el) return;
+    const maxCards = Number(getPlanLimits()?.maxAnalyticsCards || 16);
 
     const unit = metricDisplayUnit(ctx.base);
     const ANA_COLOR = {
@@ -4239,7 +4469,7 @@ function normalizeTradeDates(trade){
     account_value: ANA_CARD_COLOR.overview
     };
     el.innerHTML = '';
-      for(let i=0;i<16;i++){
+      for(let i=0;i<maxCards;i++){
       const metricId = anaTiles[i] || 'total_realized';
 
       const card = document.createElement('div');
@@ -4291,7 +4521,7 @@ function normalizeTradeDates(trade){
       s.addEventListener('change', (e) => {
         const idx = Number(e.target.dataset.idx);
         const v = e.target.value;
-          if(Number.isFinite(idx) && idx >= 0 && idx < 16){
+          if(Number.isFinite(idx) && idx >= 0 && idx < maxCards){
           anaTiles[idx] = v;
           renderAnalytics();
         }
@@ -4450,8 +4680,18 @@ function normalizeTradeDates(trade){
     const feeSel = document.getElementById('ana_fee');
     const groupSel = document.getElementById('ana_group');
     const sortSelEl = document.getElementById('ana_sort');
+    const radarSection = document.getElementById('anaRadarSection');
+    const breakdownPanel = document.getElementById('anaBreakdownPanel');
+    const breakdownDisabled = !!getPlanLimits()?.disableAnalyticsBreakdown;
+    const radarDisabled = !!getPlanLimits()?.disableAnalyticsRadar;
+
+    if(radarSection) radarSection.style.display = radarDisabled ? 'none' : '';
+    if(breakdownPanel) breakdownPanel.style.display = breakdownDisabled ? 'none' : '';
 
     if(!baseSel || !feeSel || !groupSel || !sortSelEl) return;
+
+    groupSel.disabled = breakdownDisabled;
+    sortSelEl.disabled = breakdownDisabled;
 
     if(groupSel.options.length === 0 || !groupSel.value){
       updateAnaGroupOptions();
@@ -4520,8 +4760,8 @@ function normalizeTradeDates(trade){
     window.ANALYTICS_CTX = {m, base, feeMode, day, month, year, account };
     window.ANALYTICS_GET = (id) => calcAnaMetric(id, window.ANALYTICS_CTX);
     renderAnaTiles({ m, base, feeMode, trades: filteredTrades, series, day, month, year, account });
-      renderAnaRadar();
-    renderBreakdown(groupSel.value, base, feeMode, sortSelEl.value);
+    if(!radarDisabled) renderAnaRadar();
+    if(!breakdownDisabled) renderBreakdown(groupSel.value, base, feeMode, sortSelEl.value);
   }
 
   function renderBreakdown(groupKey, base, feeMode, sortKey){
@@ -4596,6 +4836,13 @@ function normalizeTradeDates(trade){
         + '<td class="num">' + fmt(m.calmar) + '</td>'
         + '</tr>';
     }).join('');
+
+    const maskAfter = Number(getPlanLimits()?.breakdownMaskAfter || 0);
+    if(maskAfter > 0){
+      Array.from(body.querySelectorAll('tr')).forEach((tr, idx) => {
+        tr.classList.toggle('breakMaskRow', idx >= maskAfter);
+      });
+    }
   }
 
   function escapeHtml(s){
@@ -4805,6 +5052,11 @@ function normalizeTradeDates(trade){
     }
 
     console.log('rawTrades loaded:', rawTrades.length, 'trades');
+    const rowLimit = getTradeRowLimit();
+    if(rowLimit !== null && rawTrades.length > rowLimit){
+      rawTrades = rawTrades.slice(0, rowLimit);
+      setExcelStatus(`方案限制：僅讀取前 ${rowLimit} 筆交易。`);
+    }
     console.log('rawTrades[0]:', rawTrades[0]);
     applyAdvancedFilter(); // 會同步 renderCounts/renderTable/analytics/charts
     }
@@ -5115,6 +5367,12 @@ function normalizeTradeDates(trade){
     renderHeader();
     renderRules();
     updateAnaGroupOptions();
+    if (typeof window.__cusFallbackSyncCompareSelectors === 'function') {
+      window.__cusFallbackSyncCompareSelectors();
+    }
+    if (typeof window.__cusFallbackRefresh === 'function') {
+      window.__cusFallbackRefresh();
+    }
     applyMissingMetricLockToSelectors();
     updateGlobalDataNotice();
     console.log('UI re-rendered');
@@ -5256,8 +5514,11 @@ function normalizeTradeDates(trade){
 
 }
 
-async function enterApp(username){
+async function enterApp(username, loginMeta = null){
   setSessionUser(username);
+  const sessionMeta = loginMeta || getSessionAuthMeta() || { plan:'basic', permissions:{} };
+  setSessionAuthMeta(sessionMeta);
+  applyPlanUiRestrictions();
   setCurrentUserUI(username);
   setAuthError('');
   toggleAppVisibility(true);
@@ -5272,18 +5533,32 @@ function bindAuthEvents(){
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
 
-      const username = document.getElementById('loginUser')?.value || '';
-      const password = document.getElementById('loginPass')?.value || '';
-      const result = await verifyDesktopLogin(username, password);
-
-      if(!result.ok){
-        setAuthError(result.message);
-        return;
+      const submitBtn = form.querySelector('button[type="submit"]');
+      if(submitBtn instanceof HTMLButtonElement){
+        submitBtn.disabled = true;
       }
+      setAuthError('');
 
-      await enterApp(result.user);
-      const passEl = document.getElementById('loginPass');
-      if(passEl) passEl.value = '';
+      try {
+        const username = String(document.getElementById('loginUser')?.value || '').trim();
+        const password = String(document.getElementById('loginPass')?.value || '');
+        const result = await verifyDesktopLogin(username, password);
+
+        if(!result || !result.ok){
+          setAuthError(result?.message || '登入失敗，請稍後再試。');
+          return;
+        }
+
+        await enterApp(result.user, { plan: result.plan, permissions: result.permissions || {} });
+        const passEl = document.getElementById('loginPass');
+        if(passEl) passEl.value = '';
+      } catch (err) {
+        setAuthError('登入發生錯誤：' + (err?.message || err));
+      } finally {
+        if(submitBtn instanceof HTMLButtonElement){
+          submitBtn.disabled = false;
+        }
+      }
     });
   }
 
@@ -5304,8 +5579,15 @@ async function bootstrap(){
 
   const user = getSessionUser();
   if(user){
-    await enterApp(user);
-    return;
+    try {
+      await enterApp(user, getSessionAuthMeta());
+      return;
+    } catch (err) {
+      clearSessionUser();
+      setCurrentUserUI('');
+      toggleAppVisibility(false);
+      setAuthError('自動登入失敗，請重新登入：' + (err?.message || err));
+    }
   }
 
   toggleAppVisibility(false);
@@ -5944,6 +6226,25 @@ window.CUSTOM_CHART_RENDERERS.__default = (el, chartId, cfgOverride) => {
     return sel;
   }
 
+  function refillFallbackCompareFieldSelect(sel, selectedField){
+    if (!(sel instanceof HTMLSelectElement)) return;
+    const prev = String(selectedField || sel.value || '').trim();
+    sel.innerHTML = '';
+
+    const opts = getFallbackGroupOptions();
+    opts.forEach((x) => {
+      const o = document.createElement('option');
+      o.value = x.value;
+      o.textContent = x.label;
+      sel.appendChild(o);
+    });
+
+    if (opts.length > 0) {
+      const fallback = opts[0].value;
+      sel.value = opts.some((x) => x.value === prev) ? prev : fallback;
+    }
+  }
+
   function buildFallbackCompareMetricSelect(selectedMetric){
     const sel = document.createElement('select');
     sel.className = 'miniSel';
@@ -5962,10 +6263,14 @@ window.CUSTOM_CHART_RENDERERS.__default = (el, chartId, cfgOverride) => {
   function getCustomizeChartIdSet(){
     const sel = document.getElementById('cusChartTest');
     const ids = new Set();
-    Array.from(sel?.options || []).forEach((o) => ids.add(String(o.value || '').trim()));
+    Array.from(sel?.options || []).forEach((o) => {
+      const v = String(o.value || '').trim();
+      if(!isAxBEnabled() && v === 'by_group_metric') return;
+      ids.add(v);
+    });
     if (!ids.size) {
       ids.add('equity_curve');
-      ids.add('by_group_metric');
+      if(isAxBEnabled()) ids.add('by_group_metric');
     }
     return ids;
   }
@@ -5978,9 +6283,10 @@ window.CUSTOM_CHART_RENDERERS.__default = (el, chartId, cfgOverride) => {
 
   function normalizeCustomizeChartId(chartId, compareField, compareMetric){
     const id = String(chartId || '').trim();
+    if(!isAxBEnabled() && id === 'by_group_metric') return 'equity_curve';
     const known = getCustomizeChartIdSet();
     if (known.has(id)) return id;
-    if (compareField != null || compareMetric != null) return 'by_group_metric';
+    if (isAxBEnabled() && (compareField != null || compareMetric != null)) return 'by_group_metric';
     if (known.has('equity_curve')) return 'equity_curve';
     return known.values().next().value || 'equity_curve';
   }
@@ -6083,10 +6389,46 @@ window.CUSTOM_CHART_RENDERERS.__default = (el, chartId, cfgOverride) => {
     return tile;
   }
 
+  function getCustomizeTileCounts(){
+    const grid = document.getElementById('customGrid');
+    if(!grid) return { metric: 0, chart: 0 };
+    const metric = grid.querySelectorAll('.tile.cusMetricTile').length;
+    const chart = grid.querySelectorAll('.tile.cusChartTile').length;
+    return { metric, chart };
+  }
+
+  function enforceCustomizePlanLimits(){
+    const grid = document.getElementById('customGrid');
+    if(!grid) return;
+
+    const maxMetrics = Number(getPlanLimits()?.customizeMaxMetrics || 0);
+    const maxCharts = Number(getPlanLimits()?.customizeMaxCharts || 0);
+    if(maxMetrics <= 0 && maxCharts <= 0) return;
+
+    let metricCount = 0;
+    let chartCount = 0;
+    Array.from(grid.querySelectorAll('.tile')).forEach((tile) => {
+      const isChart = tile.classList.contains('cusChartTile');
+      if(isChart){
+        chartCount += 1;
+        if(maxCharts > 0 && chartCount > maxCharts) tile.remove();
+        return;
+      }
+      metricCount += 1;
+      if(maxMetrics > 0 && metricCount > maxMetrics) tile.remove();
+    });
+  }
+
   function addFallbackMetricTile(){
     const grid = document.getElementById('customGrid');
     const sel = document.getElementById('cusMetricTest');
     if (!grid || !sel) return;
+    const maxMetrics = Number(getPlanLimits()?.customizeMaxMetrics || 0);
+    const counts = getCustomizeTileCounts();
+    if(maxMetrics > 0 && counts.metric >= maxMetrics){
+      setCusStatus(`方案限制：最多 ${maxMetrics} 個 Metrics。`);
+      return;
+    }
     const metricId = sel.value || 'winrate';
     const metricLabel = sel.options?.[sel.selectedIndex]?.textContent || metricId;
     setCusStatus('');
@@ -6097,6 +6439,12 @@ window.CUSTOM_CHART_RENDERERS.__default = (el, chartId, cfgOverride) => {
     const grid = document.getElementById('customGrid');
     const sel = document.getElementById('cusChartTest');
     if (!grid || !sel) return;
+    const maxCharts = Number(getPlanLimits()?.customizeMaxCharts || 0);
+    const counts = getCustomizeTileCounts();
+    if(maxCharts > 0 && counts.chart >= maxCharts){
+      setCusStatus(`方案限制：最多 ${maxCharts} 個 Charts。`);
+      return;
+    }
     const chartId = sel.value || 'equity';
     const chartLabel = sel.options?.[sel.selectedIndex]?.textContent || chartId;
     const tile = createFallbackChartTile(chartId, chartLabel, document.getElementById('ana_group')?.value || 'strategy', 'avg');
@@ -6117,6 +6465,9 @@ window.CUSTOM_CHART_RENDERERS.__default = (el, chartId, cfgOverride) => {
   }
 
   function refreshFallbackTiles(){
+    enforceCustomizePlanLimits();
+    syncCustomizeCompareFieldSelectors();
+
     document.querySelectorAll('#customGrid .tile').forEach((tile) => {
       const metricValue = tile.querySelector('.metricValue');
       const chartHost = tile.querySelector('.chartHost');
@@ -6156,6 +6507,15 @@ window.CUSTOM_CHART_RENDERERS.__default = (el, chartId, cfgOverride) => {
 
       if (fn === map.__default) fn(chartHost, chartId, cfg);
       else fn(chartHost);
+    });
+  }
+
+  function syncCustomizeCompareFieldSelectors(){
+    const grid = document.getElementById('customGrid');
+    if (!grid) return;
+
+    grid.querySelectorAll('select.miniSel[data-role="compareField"]').forEach((sel) => {
+      refillFallbackCompareFieldSelect(sel, sel.value);
     });
   }
 
@@ -6283,7 +6643,156 @@ window.CUSTOM_CHART_RENDERERS.__default = (el, chartId, cfgOverride) => {
   }
 
   function limitPlatformName(name){
-    return Array.from(String(name || '').trim()).slice(0, 8).join('').trim();
+    return Array.from(String(name || '').trim()).slice(0, 10).join('').trim();
+  }
+
+  function askPlatformOverwrite(name){
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.style.position = 'fixed';
+      overlay.style.inset = '0';
+      overlay.style.background = 'rgba(0,0,0,.35)';
+      overlay.style.display = 'flex';
+      overlay.style.alignItems = 'center';
+      overlay.style.justifyContent = 'center';
+      overlay.style.zIndex = '5000';
+
+      const box = document.createElement('div');
+      box.style.width = 'min(420px, 92vw)';
+      box.style.background = '#fff';
+      box.style.border = '1px solid #ddd';
+      box.style.borderRadius = '12px';
+      box.style.boxShadow = '0 12px 30px rgba(0,0,0,.25)';
+      box.style.padding = '14px';
+
+      const title = document.createElement('div');
+      title.textContent = 'Platform already exists';
+      title.style.fontWeight = '700';
+      title.style.marginBottom = '8px';
+
+      const hint = document.createElement('div');
+      hint.textContent = `「${name}」已存在，是否覆蓋？`;
+      hint.className = 'muted';
+      hint.style.marginBottom = '10px';
+
+      const actions = document.createElement('div');
+      actions.style.display = 'flex';
+      actions.style.justifyContent = 'flex-end';
+      actions.style.gap = '8px';
+
+      const btnNo = document.createElement('button');
+      btnNo.type = 'button';
+      btnNo.textContent = 'No';
+
+      const btnYes = document.createElement('button');
+      btnYes.type = 'button';
+      btnYes.textContent = 'Yes';
+
+      const cleanup = (val) => {
+        overlay.remove();
+        resolve(val);
+      };
+
+      btnNo.addEventListener('click', () => cleanup(false));
+      btnYes.addEventListener('click', () => cleanup(true));
+      overlay.addEventListener('click', (ev) => {
+        if (ev.target === overlay) cleanup(false);
+      });
+
+      actions.appendChild(btnNo);
+      actions.appendChild(btnYes);
+      box.appendChild(title);
+      box.appendChild(hint);
+      box.appendChild(actions);
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+    });
+  }
+
+  function askPlatformName(defaultName){
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.style.position = 'fixed';
+      overlay.style.inset = '0';
+      overlay.style.background = 'rgba(0,0,0,.35)';
+      overlay.style.display = 'flex';
+      overlay.style.alignItems = 'center';
+      overlay.style.justifyContent = 'center';
+      overlay.style.zIndex = '5000';
+
+      const box = document.createElement('div');
+      box.style.width = 'min(420px, 92vw)';
+      box.style.background = '#fff';
+      box.style.border = '1px solid #ddd';
+      box.style.borderRadius = '12px';
+      box.style.boxShadow = '0 12px 30px rgba(0,0,0,.25)';
+      box.style.padding = '14px';
+
+      const title = document.createElement('div');
+      title.textContent = 'Save Platform';
+      title.style.fontWeight = '700';
+      title.style.marginBottom = '8px';
+
+      const hint = document.createElement('div');
+      hint.textContent = '請輸入平台名稱（最多 10 字）';
+      hint.className = 'muted';
+      hint.style.marginBottom = '8px';
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.maxLength = 10;
+      input.value = limitPlatformName(defaultName || '');
+      input.style.width = '100%';
+      input.style.marginBottom = '10px';
+
+      const actions = document.createElement('div');
+      actions.style.display = 'flex';
+      actions.style.justifyContent = 'flex-end';
+      actions.style.gap = '8px';
+
+      const btnCancel = document.createElement('button');
+      btnCancel.type = 'button';
+      btnCancel.textContent = 'Cancel';
+
+      const btnOk = document.createElement('button');
+      btnOk.type = 'button';
+      btnOk.textContent = 'Save';
+
+      const cleanup = (val) => {
+        overlay.remove();
+        resolve(val);
+      };
+
+      btnCancel.addEventListener('click', () => cleanup(null));
+      btnOk.addEventListener('click', () => cleanup(limitPlatformName(input.value)));
+      overlay.addEventListener('click', (ev) => {
+        if (ev.target === overlay) cleanup(null);
+      });
+      input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          cleanup(limitPlatformName(input.value));
+        }
+        if (ev.key === 'Escape') {
+          ev.preventDefault();
+          cleanup(null);
+        }
+      });
+
+      actions.appendChild(btnCancel);
+      actions.appendChild(btnOk);
+      box.appendChild(title);
+      box.appendChild(hint);
+      box.appendChild(input);
+      box.appendChild(actions);
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+
+      requestAnimationFrame(() => {
+        input.focus();
+        input.select();
+      });
+    });
   }
 
   async function reloadPlatformOptions(preferredName){
@@ -6336,23 +6845,48 @@ window.CUSTOM_CHART_RENDERERS.__default = (el, chartId, cfgOverride) => {
 
   async function saveCurrentPlatform(){
     const api = window.desktopCustomize;
-    if (!api || typeof api.savePlatformAs !== 'function') {
-      setCusStatus('desktopCustomize.savePlatformAs not found.');
+    if (!api || typeof api.savePlatform !== 'function') {
+      setCusStatus('desktopCustomize.savePlatform not found.');
       return;
     }
 
     const sel = document.getElementById('cusModuleSel');
     const defaultName = limitPlatformName(String(sel?.value || '').trim() || timestampName());
+    const typed = await askPlatformName(defaultName);
+    if (typed == null) {
+      setCusStatus('Save canceled.');
+      return;
+    }
+
+    const finalName = limitPlatformName(typed);
+    if (!finalName) {
+      setCusStatus('Platform name is required (1-10 chars).');
+      return;
+    }
+
+    let listRes;
+    try {
+      listRes = await api.listPlatforms();
+    } catch (err) {
+      setCusStatus('Read platform list failed: ' + (err?.message || err));
+      return;
+    }
+    const exists = !!listRes?.ok && Array.isArray(listRes.files)
+      && listRes.files.some((f) => String(f.name || '').toLowerCase() === finalName.toLowerCase());
+    if (exists) {
+      const allowOverwrite = await askPlatformOverwrite(finalName);
+      if (!allowOverwrite) {
+        setCusStatus('Save canceled.');
+        return;
+      }
+    }
+
     const data = buildPlatformSnapshot();
     let res;
     try {
-      res = await api.savePlatformAs({ defaultName, data });
+      res = await api.savePlatform({ name: finalName, data });
     } catch (err) {
       setCusStatus('Save platform failed: ' + (err?.message || err));
-      return;
-    }
-    if (res?.canceled) {
-      setCusStatus('Save canceled.');
       return;
     }
     if (!res?.ok) {
@@ -6398,7 +6932,20 @@ window.CUSTOM_CHART_RENDERERS.__default = (el, chartId, cfgOverride) => {
     Array.from(grid.querySelectorAll('.tile')).forEach((tile) => tile.remove());
 
     const widgets = Array.isArray(data.widgets) ? data.widgets : [];
+    const maxMetrics = Number(getPlanLimits()?.customizeMaxMetrics || 0);
+    const maxCharts = Number(getPlanLimits()?.customizeMaxCharts || 0);
+    let metricCount = 0;
+    let chartCount = 0;
+
     widgets.forEach((widget) => {
+      if(widget?.kind === 'metric'){
+        if(maxMetrics > 0 && metricCount >= maxMetrics) return;
+        metricCount += 1;
+      }
+      if(widget?.kind === 'chart'){
+        if(maxCharts > 0 && chartCount >= maxCharts) return;
+        chartCount += 1;
+      }
       const tile = createWidgetFromSnapshot(widget);
       if (!tile) return;
       grid.appendChild(tile);
@@ -6410,6 +6957,9 @@ window.CUSTOM_CHART_RENDERERS.__default = (el, chartId, cfgOverride) => {
 
   window.__cusFallbackAddMetric = addFallbackMetricTile;
   window.__cusFallbackAddChart = addFallbackChartTile;
+  window.__cusFallbackSyncCompareSelectors = syncCustomizeCompareFieldSelectors;
+  window.__cusFallbackRefresh = refreshFallbackTiles;
+  window.__enforceCustomizePlanLimits = enforceCustomizePlanLimits;
 
   document.addEventListener('change', (e) => {
     const t = e.target;
