@@ -12,8 +12,13 @@ node_modules/
 
 # License system generated/sensitive files
 trading journal app/license/public_key.pem
+trading journal app/license/*.lic.json
 trading journal app/license_system/keys/private_key.pem
 trading journal app/license_system/keys/public_key.pem
+trading journal app/license_system/keys/*.pem
+trading journal app/license_system/licenses/*.lic.json
+trading journal app/license_system/license_input.*.json
+!trading journal app/license_system/license_input.sample.json
 trading journal app/license_system/license_state*.json
 
 # Data files
