@@ -46,7 +46,7 @@ function sanitizePlatformName(inputName) {
     .replace(/[<>:"/\\|?*]/g, "_")
     .replace(/\s+/g, " ")
     .trim();
-  const capped = Array.from(safe || fallback).slice(0, 8).join("").trim();
+  const capped = Array.from(safe || fallback).slice(0, 10).join("").trim();
   return capped || "platform";
 }
 
@@ -60,9 +60,12 @@ const AUTH_USERS = Object.freeze({
   demo: "demo123",
   jack: "jack77123",
   jack77: "jack77123",
+  free: "free123",
+  basic: "basic123",
+  pro: "pro123",
 });
 
-const LICENSE_REQUIRED_USERS = new Set(["jack", "jack77"]);
+const LICENSE_REQUIRED_USERS = new Set(["jack", "jack77", "free", "basic", "pro"]);
 
 function stableStringify(v) {
   if (v === null || typeof v !== "object") return JSON.stringify(v);
@@ -126,6 +129,34 @@ function getMachineId() {
   const fromEnv = String(process.env.TJ_MACHINE_ID || "").trim();
   if (fromEnv) return fromEnv;
   return String(os.hostname() || "UNKNOWN-MACHINE").trim();
+}
+
+function getLicenseStateSecretPath() {
+  return path.join(APP_DATA_DIR, "license", "state_secret.txt");
+}
+
+function generateLocalStateSecret() {
+  return crypto.randomBytes(48).toString("base64url");
+}
+
+function getOrCreateLicenseStateSecret() {
+  const envSecret = String(process.env.LICENSE_STATE_SECRET || "").trim();
+  if (envSecret) {
+    ensure(envSecret.length >= 16, "Weak LICENSE_STATE_SECRET (min 16 chars)");
+    return envSecret;
+  }
+
+  const secretPath = getLicenseStateSecretPath();
+  fs.mkdirSync(path.dirname(secretPath), { recursive: true });
+
+  if (fs.existsSync(secretPath)) {
+    const existing = String(fs.readFileSync(secretPath, "utf8") || "").trim();
+    if (existing.length >= 16) return existing;
+  }
+
+  const created = generateLocalStateSecret();
+  fs.writeFileSync(secretPath, created + "\n", "utf8");
+  return created;
 }
 
 function verifyLicenseEnvelope(licenseObj, publicPem) {
@@ -226,7 +257,7 @@ function verifyUserLicense(username) {
   const machineMatch = licenseMachine === "*" || licenseMachine === machineId;
   ensure(machineMatch, `Machine mismatch: license=${licenseMachine}, local=${machineId}`);
 
-  const stateSecret = String(process.env.LICENSE_STATE_SECRET || "dev-license-state-secret-change-me");
+  const stateSecret = getOrCreateLicenseStateSecret();
   const statePath = path.join(APP_DATA_DIR, "license", `${user}_license_state.json`);
   const state = loadState(statePath, machineId, stateSecret);
 
