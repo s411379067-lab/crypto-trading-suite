@@ -1,0 +1,44 @@
+name: Build macOS Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "trading journal app/**"
+      - ".github/workflows/build-mac.yml"
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: "trading journal app/package-lock.json"
+
+      - name: Install dependencies
+        working-directory: "trading journal app"
+        run: npm ci
+
+      - name: Build macOS package
+        working-directory: "trading journal app"
+        run: npm run build:mac
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: trading-journal-macos
+          path: |
+            trading journal app/release/*.dmg
+            trading journal app/release/*.zip
+            trading journal app/release/latest-mac.yml
+          if-no-files-found: error
