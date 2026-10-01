@@ -141,3 +141,12 @@ Example order record:
   "realized_r_pnl": 0.0
 }
 ```
+
+### v0.1.4 Fibo control / filled-only order records
+
+- Fibonacci 0/1 controls now use a **large invisible drag hit-zone** (~16 screen pixels high) while the visible Fibo lines stay thin. This makes vertical adjustment reliable across zoom levels.
+- Fibo control hit-zones are recalculated whenever the chart range changes, so zooming no longer makes them too thin to grab.
+- Pending limit / stop-market orders are now **session-only** and are not written to Case JSON.
+- `orders[]` now stores **filled orders only**. A limit/stop order is appended to JSON only at the moment it fills.
+- Cancelling an unfilled pending order simply removes it from the in-memory pending list and creates no history record.
+- Existing v0.1.3 Case files are cleaned on load so open/cancelled order rows are removed from `orders[]`; filled records are retained.

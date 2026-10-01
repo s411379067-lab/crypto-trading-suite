@@ -30,6 +30,9 @@ class OrderPanel(QtWidgets.QWidget):
         self._position = None
         self._realized_pnl = 0.0
         self._realized_r = 0.0
+        # Pending orders are intentionally session-only.
+        # Only actual fills are persisted to ResearchCase.orders.
+        self.pending_orders: list[dict] = []
 
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -119,6 +122,15 @@ class OrderPanel(QtWidgets.QWidget):
         self.case = case
         self.raw_df = raw_df
         self.replay = replay
+        # Unfilled orders are not research records and are never restored.
+        self.pending_orders.clear()
+        # Compatibility cleanup for v0.1.3 cases that may contain open/cancelled rows.
+        if self.case is not None:
+            filled_only = [o for o in self.case.orders if o.get("status") == "filled"]
+            if len(filled_only) != len(self.case.orders):
+                self.case.orders = filled_only
+                self.case.touch()
+                self.changed.emit()
         self.refresh()
 
     def _current_ts(self) -> float:
@@ -209,11 +221,18 @@ class OrderPanel(QtWidgets.QWidget):
 
         record = self._new_order_record(side, order_type, requested_price, qty)
         if order_type == "market":
+            # Market orders are persisted only after the fill exists.
             self._fill_record(record, cp, self._current_ts())
-        self.case.orders.append(record)
-        self.case.touch()
+            self.case.orders.append(record)
+            self.case.touch()
+            self.refresh()
+            self.changed.emit(); self.fills_changed.emit()
+            return
+
+        # Limit / stop-market orders remain in memory until they actually fill.
+        # A cancelled or never-filled order therefore never enters Case JSON.
+        self.pending_orders.append(record)
         self.refresh()
-        self.changed.emit(); self.fills_changed.emit()
 
     def close_position(self):
         if self.case is None or self.replay is None:
@@ -253,9 +272,7 @@ class OrderPanel(QtWidgets.QWidget):
         for _, bar in bars.iterrows():
             bar_ts = float(bar["timestamp"])
             low = float(bar["low"]); high = float(bar["high"])
-            for record in self.case.orders:
-                if record.get("status") != "open":
-                    continue
+            for record in list(self.pending_orders):
                 if float(record.get("created_ts") or 0.0) > bar_ts:
                     continue
                 if record.get("order_type") not in ("limit", "stop market"):
@@ -266,6 +283,8 @@ class OrderPanel(QtWidgets.QWidget):
                 price = float(price)
                 if low <= price <= high:
                     self._fill_record(record, price, bar_ts)
+                    self.pending_orders.remove(record)
+                    self.case.orders.append(record)
                     changed = True
         if changed:
             self.case.touch()
@@ -282,13 +301,10 @@ class OrderPanel(QtWidgets.QWidget):
         if item is None:
             return
         order_id = item.data(QtCore.Qt.UserRole) or item.text()
-        for record in self.case.orders:
-            if record.get("id") == order_id and record.get("status") == "open":
-                record["status"] = "cancelled"
-                record["cancel_ts"] = self._current_ts()
-                record["cancel_time"] = self._current_time_text()
-                self.case.touch()
-                self.refresh(); self.changed.emit()
+        for record in list(self.pending_orders):
+            if record.get("id") == order_id:
+                self.pending_orders.remove(record)
+                self.refresh()
                 return
 
     def delete_selected_record(self):
@@ -408,7 +424,7 @@ class OrderPanel(QtWidgets.QWidget):
         self._refresh_records_table()
 
     def _refresh_pending_table(self):
-        pending = [o for o in (self.case.orders if self.case is not None else []) if o.get("status") == "open"]
+        pending = list(self.pending_orders)
         self.pending_table.setRowCount(len(pending))
         for r, o in enumerate(pending):
             vals = [

@@ -717,6 +717,12 @@ class ChartWidget(QtWidgets.QWidget):
         if self.auto_all_mode and not self._syncing_auto_all:
             self.auto_all_mode = False
 
+        # Keep Fibonacci 0/1 drag hit-zones roughly constant in screen pixels.
+        # This prevents the controls from becoming nearly impossible to grab after zooming.
+        for did, group in list(self.drawing_items.items()):
+            if isinstance(group, dict) and group.get("type") == "fibonacci":
+                self._update_fibo_view_geometry(did, update_box=False)
+
     def export_screenshot(self):
         path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "匯出圖表", "chart.png", "PNG (*.png)")
         if not path:
@@ -1194,6 +1200,18 @@ class ChartWidget(QtWidgets.QWidget):
         finally:
             rect.blockSignals(False)
 
+    def _fibo_handle_height(self, ymin: float, ymax: float) -> float:
+        """Return a stable ~16px vertical hit target in current view coordinates."""
+        try:
+            _x_per_px, y_per_px = self.plot.vb.viewPixelSize()
+            px_height = abs(float(y_per_px)) * 16.0
+            if px_height > 0:
+                return px_height
+        except Exception:
+            pass
+        # Fallback used before the ViewBox has a valid pixel transform.
+        return max((float(ymax) - float(ymin)) * 0.03, max(abs(float(ymax)), 1.0) * 1e-5)
+
     def _update_fibo_view_geometry(self, did: str, update_box: bool = True):
         drawing = self._drawing_by_id(did)
         group = self.drawing_items.get(did)
@@ -1201,7 +1219,7 @@ class ChartWidget(QtWidgets.QWidget):
             return
         sx, sy, ex, ey, left, right, ymin, ymax, ys = self._fibo_geometry(drawing)
         tick = max(float(timeframe_seconds(self.timeframe_combo.currentText())), 1.0)
-        h = max((ymax - ymin) * 0.003, max(abs(ymax), 1.0) * 1e-6)
+        h = self._fibo_handle_height(ymin, ymax)
         handle_left, handle_right = left - 0.5 * tick, right + 0.5 * tick
         if update_box:
             box = group.get("box")
@@ -1270,7 +1288,7 @@ class ChartWidget(QtWidgets.QWidget):
         did = drawing.get("id")
         sx, sy, ex, ey, left, right, ymin, ymax, ys = self._fibo_geometry(drawing)
         tick = max(float(timeframe_seconds(self.timeframe_combo.currentText())), 1.0)
-        handle_h = max((ymax - ymin) * 0.003, max(abs(ymax), 1.0) * 1e-6)
+        handle_h = self._fibo_handle_height(ymin, ymax)
         handle_left, handle_right = left - 0.5 * tick, right + 0.5 * tick
 
         box = pg.RectROI([left, ymin], [right - left, ymax - ymin], pen=pg.mkPen((0, 0, 0, 0)), movable=True)
@@ -1280,15 +1298,24 @@ class ChartWidget(QtWidgets.QWidget):
             pass
         self.plot.addItem(box)
 
+        # The visible Fibo level stays thin; these ROIs are deliberately much taller
+        # invisible hit-zones so the 0/1 controls remain easy to grab at any zoom.
+        transparent_pen = pg.mkPen((255, 255, 255, 0), width=1)
         start_handle = pg.RectROI(
             [handle_left, sy - handle_h * 0.5], [handle_right - handle_left, handle_h],
-            pen=pg.mkPen((255, 80, 80), width=2), movable=True, rotatable=False, resizable=False,
+            pen=transparent_pen, movable=True, rotatable=False, resizable=False,
         )
         end_handle = pg.RectROI(
             [handle_left, ey - handle_h * 0.5], [handle_right - handle_left, handle_h],
-            pen=pg.mkPen((255, 80, 80), width=2), movable=True, rotatable=False, resizable=False,
+            pen=transparent_pen, movable=True, rotatable=False, resizable=False,
         )
-        start_handle.setZValue(9); end_handle.setZValue(9)
+        for handle in (start_handle, end_handle):
+            handle.setZValue(20)
+            handle.setAcceptedMouseButtons(QtCore.Qt.LeftButton)
+            try:
+                handle.setHoverPen(pg.mkPen((255, 235, 59, 210), width=2))
+            except Exception:
+                pass
         self.plot.addItem(start_handle); self.plot.addItem(end_handle)
 
         lines = []
