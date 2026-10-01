@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CHART = (ROOT / "pattern_analyzer" / "chart_widget.py").read_text(encoding="utf-8")
 VIEWER = (ROOT / "pattern_viewer" / "read_only_chart.py").read_text(encoding="utf-8")
+VIEWER_WINDOW = (ROOT / "pattern_viewer" / "main_window.py").read_text(encoding="utf-8")
 
 
 def test_viewer_constructs_chart_in_noninteractive_mode():
@@ -26,3 +27,9 @@ def test_text_rectangle_and_fibo_build_interaction_conditionally():
     assert "if self.drawing_interaction_enabled:\n            self._configure_right_bottom_resize_handles(roi)" in CHART
     assert "if self.drawing_interaction_enabled:\n            self._configure_four_side_resize_handles(roi)" in CHART
     assert "if self.drawing_interaction_enabled:\n            transparent_pen" in CHART
+
+
+def test_viewer_order_toggle_lives_in_overlay_and_not_chart_toolbar():
+    assert 'self.show_orders_checkbox = QtWidgets.QCheckBox("全部 Order")' in VIEWER_WINDOW
+    assert "self.show_orders_checkbox.toggled.connect(self._update_order_visibility)" in VIEWER_WINDOW
+    assert "self.show_orders_checkbox.hide()" in VIEWER

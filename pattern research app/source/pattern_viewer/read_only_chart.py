@@ -41,6 +41,8 @@ class ReadOnlyChartWidget(ChartWidget):
             pass
 
         self.show_drawings_checkbox.setToolTip("圖表唯讀：顯示 / 隱藏 Case 中已保存的 Drawing")
+        # Viewer keeps its visibility controls together in the Viewer Overlay panel.
+        self.show_orders_checkbox.hide()
 
     def set_tool(self, name: str | None):
         # Drawing creation is intentionally unavailable in Pattern Viewer.

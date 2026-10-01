@@ -7,6 +7,7 @@ import pandas as pd
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 from shared_core.market_data import MarketDataService
+from shared_core.order_overlay import build_order_overlay
 from shared_core.replay import ReplayEngine
 from shared_core.repository import CaseRepository
 from shared_core.models import new_id, utc_now_iso
@@ -135,8 +136,12 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.show_notes_checkbox.setChecked(True)
         self.show_rth_checkbox = QtWidgets.QCheckBox("RTH H/L/C")
         self.show_rth_checkbox.setChecked(True)
+        self.show_orders_checkbox = QtWidgets.QCheckBox("全部 Order")
+        self.show_orders_checkbox.setChecked(False)
+        self.show_orders_checkbox.setToolTip("顯示已成交 Order 的紅綠三角形，以及完成交易的 Open → Close PnL 點線")
         vl.addWidget(self.show_notes_checkbox)
         vl.addWidget(self.show_rth_checkbox)
+        vl.addWidget(self.show_orders_checkbox)
         vl.addStretch(1)
         layout.addWidget(view_box)
 
@@ -213,6 +218,7 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.case_list.currentItemChanged.connect(self._case_item_changed)
         self.show_notes_checkbox.toggled.connect(self._update_note_visibility)
         self.show_rth_checkbox.toggled.connect(self._update_rth_visibility)
+        self.show_orders_checkbox.toggled.connect(self._update_order_visibility)
         self.case_pattern_list.itemSelectionChanged.connect(self._case_pattern_selection_changed)
         self.case_pattern_list.itemDoubleClicked.connect(lambda _item: self.case_pattern_input.setFocus())
         self.btn_add_case_pattern.clicked.connect(self.add_case_pattern)
@@ -430,27 +436,6 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         if path:
             self.open_case(Path(str(path)))
 
-    @staticmethod
-    def _filled_order_events(case, current_ts: float) -> list[dict]:
-        out = []
-        for order in getattr(case, "orders", []) or []:
-            if order.get("status") != "filled" or order.get("fill_ts") is None or order.get("fill_price") is None:
-                continue
-            try:
-                fill_ts = float(order["fill_ts"])
-                if fill_ts > float(current_ts):
-                    continue
-                out.append({
-                    "id": order.get("id"),
-                    "timestamp": fill_ts,
-                    "price": float(order["fill_price"]),
-                    "side": order.get("side", "long"),
-                    "action": order.get("computed_action", ""),
-                })
-            except Exception:
-                continue
-        return out
-
     def open_case(self, path: Path):
         try:
             case = self.repo.load(path)
@@ -469,11 +454,13 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.current_raw = raw
         self.current_replay = replay
 
-        self.chart.set_order_events(self._filled_order_events(case, replay.current_ts), render=False)
+        order_events, order_segments = build_order_overlay(case.orders, replay.current_ts)
+        self.chart.set_order_events(order_events, order_segments, render=False)
         self.chart.set_context(case, raw, replay, str(path))
         self._update_rth_availability()
         self.chart.set_previous_rth_visible(self.show_rth_checkbox.isChecked())
         self.chart.set_all_intraday_notes_visible(self.show_notes_checkbox.isChecked())
+        self.chart.set_all_orders_visible(self.show_orders_checkbox.isChecked())
         self.chart.render(reset_x=True)
 
         patterns = [str(x.get("text", "")).strip() for x in case.patterns if isinstance(x, dict) and str(x.get("text", "")).strip()]
@@ -504,6 +491,10 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
     def _update_rth_visibility(self, checked: bool):
         if self.current_case is not None:
             self.chart.set_previous_rth_visible(bool(checked))
+
+    def _update_order_visibility(self, checked: bool):
+        if self.current_case is not None:
+            self.chart.set_all_orders_visible(bool(checked))
 
     def _clear_current_case_display(self):
         self.current_case = None
