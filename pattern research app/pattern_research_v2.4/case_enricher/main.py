@@ -10,6 +10,8 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 from shared_core.market_data import MarketDataService
 from shared_core.repository import CaseRepository
 from shared_core.rth import (
+    DEFAULT_MAX_TAIL_GAP_MINUTES,
+    DEFAULT_MIN_COVERAGE,
     calculate_intraday_volatility,
     find_previous_valid_rth,
     intraday_volatility_is_current,
@@ -29,8 +31,8 @@ QGroupBox { border:1px solid #2a3142; border-radius:4px; margin-top:8px; padding
 """
 
 
-RTH_CALCULATOR_VERSION = "1.1"
-VOL_CALCULATOR_VERSION = "1.0"
+RTH_CALCULATOR_VERSION = "1.2"
+VOL_CALCULATOR_VERSION = "1.1"
 VOL_SESSION_COUNT = 20
 
 
@@ -51,7 +53,7 @@ def _weekend_target(path: Path, is_weekend: bool) -> Path:
 class EnricherWindow(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Case Enricher v1.20 — RTH + 20D Intraday Volatility")
+        self.setWindowTitle("Case Enricher v2.4 — RTH + 20D Intraday Volatility")
         self.resize(860, 760)
         self.setStyleSheet(STYLE)
         self.repo = CaseRepository()
@@ -97,7 +99,8 @@ class EnricherWindow(QtWidgets.QWidget):
         vol_layout.addWidget(self.vol_only_missing)
         desc = QtWidgets.QLabel(
             "Range Points = RTH High - RTH Low；Range % = (High - Low) / RTH Open × 100；"
-            "Std 使用樣本標準差 ddof=1。這版只寫入 JSON / Enricher 顯示，不在 Chart 畫波動線。"
+            "Std 使用樣本標準差 ddof=1。RTH 有效性：coverage ≥ 95%，允許理論收盤前最多 15 分鐘的 CFD 維護缺口；"
+            "半天市／嚴重缺資料仍排除。"
         )
         desc.setWordWrap(True)
         desc.setStyleSheet("color:#9ba8bc;")
@@ -234,6 +237,8 @@ class EnricherWindow(QtWidgets.QWidget):
                     start_hhmm=start_hhmm,
                     end_hhmm=end_hhmm,
                     data_source_id=source_id,
+                    min_coverage=DEFAULT_MIN_COVERAGE,
+                    max_tail_gap_minutes=DEFAULT_MAX_TAIL_GAP_MINUTES,
                 )
 
                 existing_vol = case.reference_statistics.get("intraday_volatility_20d")
@@ -245,6 +250,8 @@ class EnricherWindow(QtWidgets.QWidget):
                     start_hhmm=start_hhmm,
                     end_hhmm=end_hhmm,
                     data_source_id=source_id,
+                    min_coverage=DEFAULT_MIN_COVERAGE,
+                    max_tail_gap_minutes=DEFAULT_MAX_TAIL_GAP_MINUTES,
                 )
 
                 need_rth = (not is_weekend) and (not self.only_missing.isChecked() or not rth_current)
@@ -275,6 +282,8 @@ class EnricherWindow(QtWidgets.QWidget):
                             timezone_name=session_tz,
                             start_hhmm=start_hhmm,
                             end_hhmm=end_hhmm,
+                            min_coverage=DEFAULT_MIN_COVERAGE,
+                            max_tail_gap_minutes=DEFAULT_MAX_TAIL_GAP_MINUTES,
                         )
                     except Exception as exc:
                         rth = None
@@ -282,7 +291,10 @@ class EnricherWindow(QtWidgets.QWidget):
                     if rth is None:
                         case.reference_levels.pop("previous_rth", None)
                         counts["rth_missing"] += 1
-                        self._append(f"RTH NO DATA {path.name}: 找不到上一個完整 RTH Session")
+                        self._append(
+                            f"RTH NO DATA {path.name}: 找不到符合 coverage≥{DEFAULT_MIN_COVERAGE:.0%}、"
+                            f"尾端缺口≤{DEFAULT_MAX_TAIL_GAP_MINUTES:.0f}m 的上一個 RTH Session"
+                        )
                     else:
                         rth.update({
                             "calculator_version": RTH_CALCULATOR_VERSION,
@@ -293,7 +305,9 @@ class EnricherWindow(QtWidgets.QWidget):
                         case.metadata["rth_enriched_at"] = rth["calculated_at"]
                         counts["rth_updated"] += 1
                         self._append(
-                            f"RTH OK {path.name}: {rth['session_date']}  H={rth['high']:.2f}  L={rth['low']:.2f}  C={rth['close']:.2f}"
+                            f"RTH OK {path.name}: {rth['session_date']}  H={rth['high']:.2f}  L={rth['low']:.2f}  C={rth['close']:.2f}  "
+                            f"bars={rth['bar_count']}/{rth['expected_bar_count']} ({rth['coverage_ratio']:.1%})  "
+                            f"tail_gap={rth['tail_gap_minutes']:.0f}m"
                         )
 
                 if not self.vol_enabled.isChecked():
@@ -318,6 +332,8 @@ class EnricherWindow(QtWidgets.QWidget):
                             start_hhmm=start_hhmm,
                             end_hhmm=end_hhmm,
                             lookback_days=60,
+                            min_coverage=DEFAULT_MIN_COVERAGE,
+                            max_tail_gap_minutes=DEFAULT_MAX_TAIL_GAP_MINUTES,
                         )
                     except Exception as exc:
                         vol = None
@@ -326,7 +342,10 @@ class EnricherWindow(QtWidgets.QWidget):
                         case.reference_statistics.pop("intraday_volatility_20d", None)
                         counts["vol_missing"] += 1
                         self._show_vol_summary(path.name, None)
-                        self._append(f"VOL NO DATA {path.name}: 60 個日曆日內不足 {VOL_SESSION_COUNT} 個完整 RTH Session")
+                        self._append(
+                            f"VOL NO DATA {path.name}: 60 個日曆日內不足 {VOL_SESSION_COUNT} 個符合 "
+                            f"coverage≥{DEFAULT_MIN_COVERAGE:.0%}、尾端缺口≤{DEFAULT_MAX_TAIL_GAP_MINUTES:.0f}m 的 RTH Session"
+                        )
                     else:
                         vol.update({
                             "calculator_version": VOL_CALCULATOR_VERSION,

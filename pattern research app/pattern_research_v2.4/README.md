@@ -1,4 +1,17 @@
-# Pattern Research v2.3
+# Pattern Research v2.4
+
+
+## v2.4 — Broker-aware RTH completeness for CFD maintenance gaps
+
+- Fixed Enricher falsely rejecting otherwise complete NAS100 CFD RTH sessions during New York standard time when the broker maintenance window removes the final ~10 minutes before the theoretical 16:00 cash-session close.
+- The theoretical RTH definition remains `09:30–16:00 America/New_York`; it is **not** shortened to 15:49.
+- RTH validity now requires **>=95% bar coverage** and allows at most **15 minutes of unquoted tail** after the final available bar.
+- A typical winter NAS100 CFD session with 380/390 M1 bars and a 15:49 NY final bar is accepted; genuine early-close or heavily truncated sessions remain rejected.
+- Previous RTH and 20D volatility use the same completeness policy.
+- Enriched RTH payloads now record `expected_bar_count`, `coverage_ratio`, `tail_gap_minutes`, `min_coverage`, and `max_tail_gap_minutes` for auditability. 20D session rows retain the same completeness diagnostics.
+- RTH calculator version is bumped to `1.2`; 20D volatility calculator version is bumped to `1.1`, so existing older payloads are automatically treated as outdated and recalculated even when **only missing/outdated** remains checked.
+- Enricher logs now show accepted session bar coverage and tail gap, and no-data messages state the active 95% / 15-minute validity policy.
+- Regression tested against the supplied `NAS100_M1_2025-01-01_2026-09-30.txt`: winter sessions such as 2025-11-03 and 2026-02-20 are accepted at 380/390 bars with a 10-minute tail; summer/DST sessions remain 390/390 with zero tail; 20-session volatility succeeds in both regimes.
 
 
 

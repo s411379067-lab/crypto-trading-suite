@@ -6,6 +6,10 @@ import math
 import pandas as pd
 
 
+DEFAULT_MIN_COVERAGE = 0.95
+DEFAULT_MAX_TAIL_GAP_MINUTES = 15.0
+
+
 def _parse_hhmm(value: str) -> time:
     h, m = value.strip().split(":", 1)
     return time(int(h), int(m))
@@ -40,9 +44,24 @@ def extract_rth_session(
     timezone_name: str = "America/New_York",
     start_hhmm: str = "09:30",
     end_hhmm: str = "16:00",
-    min_coverage: float = 0.80,
+    min_coverage: float = DEFAULT_MIN_COVERAGE,
+    max_tail_gap_minutes: float = DEFAULT_MAX_TAIL_GAP_MINUTES,
 ) -> dict | None:
-    """Return stats only for substantially complete RTH sessions."""
+    """Return stats for substantially complete RTH sessions.
+
+    The theoretical session remains ``start_hhmm`` -> ``end_hhmm``.  Some CFD
+    brokers enter a short daily maintenance break before the cash-session end
+    during part of the year (for NAS100 this can leave the last available M1
+    bar at 15:49 New York time).  Such a session is still accepted when:
+
+    * bar coverage is at least ``min_coverage``;
+    * the session starts near the theoretical open; and
+    * the unquoted tail after the final bar is no longer than
+      ``max_tail_gap_minutes``.
+
+    This keeps genuine early-close / badly truncated sessions rejected while
+    avoiding false negatives caused by a short broker maintenance window.
+    """
     if raw_df.empty or session_date.weekday() >= 5:
         return None
 
@@ -54,17 +73,23 @@ def extract_rth_session(
     resolution = max(1.0, estimate_resolution_seconds(raw_df))
     session_seconds = max(1.0, end_ts - start_ts)
     expected_count = max(1, int(math.floor(session_seconds / resolution + 1e-9)))
-    required_count = max(1, int(math.floor(expected_count * float(min_coverage))))
+    required_count = max(1, int(math.ceil(expected_count * float(min_coverage) - 1e-12)))
 
     first_ts = float(sub["timestamp"].min())
     last_ts = float(sub["timestamp"].max())
-    edge_tolerance = max(resolution * 2.0, 120.0)
+    start_tolerance = max(resolution * 2.0, 120.0)
+    # The last timestamp is the *start* of the final bar.  Measure the truly
+    # unquoted tail from the end of that bar to the theoretical RTH end.
+    tail_gap_seconds = max(0.0, end_ts - (last_ts + resolution))
+    max_tail_gap_seconds = max(0.0, float(max_tail_gap_minutes) * 60.0)
     if len(sub) < required_count:
         return None
-    if first_ts > start_ts + edge_tolerance:
+    if first_ts > start_ts + start_tolerance:
         return None
-    if last_ts < end_ts - edge_tolerance - resolution:
+    if tail_gap_seconds > max_tail_gap_seconds + 1e-9:
         return None
+
+    coverage_ratio = float(len(sub)) / float(expected_count)
 
     ordered = sub.sort_values("timestamp")
     open_row = ordered.iloc[0]
@@ -79,6 +104,8 @@ def extract_rth_session(
         "session_timezone": timezone_name,
         "session_start": start_hhmm,
         "session_end": end_hhmm,
+        "min_coverage": float(min_coverage),
+        "max_tail_gap_minutes": float(max_tail_gap_minutes),
         "open": float(open_row["open"]),
         "high": float(high_row["high"]),
         "low": float(low_row["low"]),
@@ -89,6 +116,9 @@ def extract_rth_session(
         "close_time": _iso_utc_from_ts(float(close_row["timestamp"])),
         "source_resolution_seconds": float(resolution),
         "bar_count": int(len(sub)),
+        "expected_bar_count": int(expected_count),
+        "coverage_ratio": float(coverage_ratio),
+        "tail_gap_minutes": float(tail_gap_seconds / 60.0),
     }
 
 
@@ -100,11 +130,14 @@ def previous_rth_is_current(
     start_hhmm: str,
     end_hhmm: str,
     data_source_id: str = "",
+    min_coverage: float = DEFAULT_MIN_COVERAGE,
+    max_tail_gap_minutes: float = DEFAULT_MAX_TAIL_GAP_MINUTES,
 ) -> bool:
     if not isinstance(rth, dict):
         return False
     required = (
         "session_date", "session_timezone", "session_start", "session_end",
+        "min_coverage", "max_tail_gap_minutes",
         "high", "low", "close", "high_time", "low_time", "close_time",
         "calculator_version",
     )
@@ -117,6 +150,13 @@ def previous_rth_is_current(
     if str(rth.get("session_start")) != str(start_hhmm):
         return False
     if str(rth.get("session_end")) != str(end_hhmm):
+        return False
+    try:
+        if abs(float(rth.get("min_coverage")) - float(min_coverage)) > 1e-12:
+            return False
+        if abs(float(rth.get("max_tail_gap_minutes")) - float(max_tail_gap_minutes)) > 1e-12:
+            return False
+    except Exception:
         return False
     if data_source_id and str(rth.get("data_source_id", "")) != str(data_source_id):
         return False
@@ -134,7 +174,8 @@ def find_previous_valid_rth(
     start_hhmm: str = "09:30",
     end_hhmm: str = "16:00",
     lookback_days: int = 14,
-    min_coverage: float = 0.80,
+    min_coverage: float = DEFAULT_MIN_COVERAGE,
+    max_tail_gap_minutes: float = DEFAULT_MAX_TAIL_GAP_MINUTES,
 ) -> dict | None:
     for days_back in range(1, max(1, int(lookback_days)) + 1):
         candidate = case_date - timedelta(days=days_back)
@@ -147,6 +188,7 @@ def find_previous_valid_rth(
             start_hhmm=start_hhmm,
             end_hhmm=end_hhmm,
             min_coverage=min_coverage,
+            max_tail_gap_minutes=max_tail_gap_minutes,
         )
         if result is not None:
             return result
@@ -162,7 +204,8 @@ def collect_previous_valid_rth_sessions(
     start_hhmm: str = "09:30",
     end_hhmm: str = "16:00",
     lookback_days: int = 60,
-    min_coverage: float = 0.80,
+    min_coverage: float = DEFAULT_MIN_COVERAGE,
+    max_tail_gap_minutes: float = DEFAULT_MAX_TAIL_GAP_MINUTES,
 ) -> list[dict]:
     target = max(1, int(session_count))
     found: list[dict] = []
@@ -177,6 +220,7 @@ def collect_previous_valid_rth_sessions(
             start_hhmm=start_hhmm,
             end_hhmm=end_hhmm,
             min_coverage=min_coverage,
+            max_tail_gap_minutes=max_tail_gap_minutes,
         )
         if result is None:
             continue
@@ -195,7 +239,8 @@ def calculate_intraday_volatility(
     start_hhmm: str = "09:30",
     end_hhmm: str = "16:00",
     lookback_days: int = 60,
-    min_coverage: float = 0.80,
+    min_coverage: float = DEFAULT_MIN_COVERAGE,
+    max_tail_gap_minutes: float = DEFAULT_MAX_TAIL_GAP_MINUTES,
 ) -> dict | None:
     """Recent RTH high-low range stats. Std is sample std (ddof=1)."""
     target = max(2, int(session_count))
@@ -208,6 +253,7 @@ def calculate_intraday_volatility(
         end_hhmm=end_hhmm,
         lookback_days=lookback_days,
         min_coverage=min_coverage,
+        max_tail_gap_minutes=max_tail_gap_minutes,
     )
     if len(sessions) < target:
         return None
@@ -227,6 +273,10 @@ def calculate_intraday_volatility(
             "close": float(session["close"]),
             "range_points": float(range_points),
             "range_pct": float(range_pct),
+            "bar_count": int(session.get("bar_count", 0)),
+            "expected_bar_count": int(session.get("expected_bar_count", 0)),
+            "coverage_ratio": float(session.get("coverage_ratio", 0.0)),
+            "tail_gap_minutes": float(session.get("tail_gap_minutes", 0.0)),
         })
 
     points = pd.Series([row["range_points"] for row in rows], dtype="float64")
@@ -235,6 +285,8 @@ def calculate_intraday_volatility(
         "session_timezone": timezone_name,
         "session_start": start_hhmm,
         "session_end": end_hhmm,
+        "min_coverage": float(min_coverage),
+        "max_tail_gap_minutes": float(max_tail_gap_minutes),
         "lookback_sessions": target,
         "observations": len(rows),
         "range_definition": "high_minus_low",
@@ -257,12 +309,14 @@ def intraday_volatility_is_current(
     start_hhmm: str,
     end_hhmm: str,
     data_source_id: str = "",
+    min_coverage: float = DEFAULT_MIN_COVERAGE,
+    max_tail_gap_minutes: float = DEFAULT_MAX_TAIL_GAP_MINUTES,
 ) -> bool:
     if not isinstance(payload, dict):
         return False
     required = (
-        "session_timezone", "session_start", "session_end", "lookback_sessions",
-        "observations", "range_definition", "range_pct_definition", "std_method",
+        "session_timezone", "session_start", "session_end", "min_coverage", "max_tail_gap_minutes",
+        "lookback_sessions", "observations", "range_definition", "range_pct_definition", "std_method",
         "median_range_points", "std_range_points", "median_range_pct", "std_range_pct",
         "sessions", "calculator_version",
     )
@@ -279,6 +333,13 @@ def intraday_volatility_is_current(
     if str(payload.get("session_start")) != str(start_hhmm):
         return False
     if str(payload.get("session_end")) != str(end_hhmm):
+        return False
+    try:
+        if abs(float(payload.get("min_coverage")) - float(min_coverage)) > 1e-12:
+            return False
+        if abs(float(payload.get("max_tail_gap_minutes")) - float(max_tail_gap_minutes)) > 1e-12:
+            return False
+    except Exception:
         return False
     if str(payload.get("std_method")) != "sample_ddof_1":
         return False

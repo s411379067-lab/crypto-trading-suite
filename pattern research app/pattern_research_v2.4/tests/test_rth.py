@@ -54,6 +54,8 @@ def test_previous_rth_completeness_upgrades_old_payload():
         "session_timezone": "America/New_York",
         "session_start": "09:30",
         "session_end": "16:00",
+        "min_coverage": 0.95,
+        "max_tail_gap_minutes": 15.0,
         "high": 100.0,
         "low": 90.0,
         "high_time": "2026-09-18T15:00:00Z",
@@ -143,6 +145,8 @@ def test_intraday_volatility_currentness_checks_source_and_version():
         "session_timezone": "America/New_York",
         "session_start": "09:30",
         "session_end": "16:00",
+        "min_coverage": 0.95,
+        "max_tail_gap_minutes": 15.0,
         "lookback_sessions": 20,
         "observations": 20,
         "range_definition": "high_minus_low",
@@ -175,6 +179,61 @@ def test_intraday_volatility_currentness_checks_source_and_version():
         data_source_id="nas100-primary",
     )
 
+
+
+def _make_winter_cfd_session(day: str, bars: int = 380):
+    # 09:30 America/New_York in EST = 14:30 UTC. 380 M1 bars end at 15:49 NY,
+    # matching the user's CFD data before the broker maintenance window.
+    dt = pd.date_range(f"{day} 14:30:00+00:00", periods=bars, freq="1min")
+    return pd.DataFrame({
+        "dt_utc": dt,
+        "timestamp": dt.astype("int64") / 1_000_000_000,
+        "open": [100.0 for _ in range(bars)],
+        "high": [101.0 + i * 0.01 for i in range(bars)],
+        "low": [99.0 for _ in range(bars)],
+        "close": [100.5 for _ in range(bars)],
+    })
+
+
+def test_winter_cfd_1549_close_is_accepted():
+    df = _make_winter_cfd_session("2025-11-03", 380)
+    out = extract_rth_session(df, date(2025, 11, 3))
+    assert out is not None
+    assert out["bar_count"] == 380
+    assert out["expected_bar_count"] == 390
+    assert abs(out["coverage_ratio"] - 380 / 390) < 1e-12
+    assert abs(out["tail_gap_minutes"] - 10.0) < 1e-12
+    assert out["min_coverage"] == 0.95
+    assert out["max_tail_gap_minutes"] == 15.0
+
+
+def test_tail_gap_over_15_minutes_is_rejected_even_if_otherwise_dense():
+    # 374 bars gives 95.9% coverage but ends at 15:43 NY, leaving 16 minutes
+    # after the final one-minute bar. It must still be rejected.
+    df = _make_winter_cfd_session("2025-11-03", 374)
+    out = extract_rth_session(df, date(2025, 11, 3))
+    assert out is None
+
+
+def test_early_close_is_rejected_by_95pct_coverage():
+    df = _make_winter_cfd_session("2025-11-03", 210)
+    out = extract_rth_session(df, date(2025, 11, 3))
+    assert out is None
+
+
+def test_20d_accepts_winter_cfd_maintenance_tail():
+    from shared_core.rth import calculate_intraday_volatility
+
+    days = pd.bdate_range(end="2025-12-12", periods=20)
+    frames = [_make_winter_cfd_session(day.strftime("%Y-%m-%d"), 380) for day in days]
+    df = pd.concat(frames, ignore_index=True)
+    out = calculate_intraday_volatility(df, date(2025, 12, 15), session_count=20)
+    assert out is not None
+    assert out["observations"] == 20
+    assert all(row["coverage_ratio"] >= 0.95 for row in out["sessions"])
+    assert all(row["tail_gap_minutes"] <= 15.0 for row in out["sessions"])
+    assert out["min_coverage"] == 0.95
+    assert out["max_tail_gap_minutes"] == 15.0
 
 def test_analyzer_n_day_summary_uses_latest_n_enriched_sessions():
     from shared_core.rth import summarize_intraday_volatility_payload
