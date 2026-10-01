@@ -1,5 +1,13 @@
-# Pattern Research v2.4
+# Pattern Research v2.5
 
+## v2.5 — Generator create-only safety
+
+- Case Generator is now structurally **create-only** for existing research dates. Existing Case JSON files are skipped and are never opened for writing.
+- Existing Analyzer/Viewer research data such as `drawings[]`, `patterns[]`, `intraday_notes[]`, orders, replay state, and enriched reference data therefore remain untouched when Generator is rerun across an old date range.
+- Weekend Cases previously renamed by Enricher to `YYYY-MM-DD(W).json` are recognized as the same research date, preventing Generator from creating a duplicate `YYYY-MM-DD.json`.
+- New Case files use OS-level exclusive-create mode (`x`), so a destination that appears between the initial scan and the write is still refused rather than overwritten.
+- Generator output now reports separate `[CREATE]` and `[SKIP]` rows with created/skipped counts.
+- Generator UI shows an explicit safety notice: existing Cases are skipped and research records are not overwritten.
 
 ## v2.4 — Broker-aware RTH completeness for CFD maintenance gaps
 

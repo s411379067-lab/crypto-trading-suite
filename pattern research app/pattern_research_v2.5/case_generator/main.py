@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 import uuid
 from datetime import date, datetime, time
@@ -8,6 +7,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from shared_core.time_model import build_case_time_range
+from case_generator.safe_create import create_case_json_exclusive, find_existing_case_file
 
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
@@ -25,7 +25,7 @@ QGroupBox { border:1px solid #2a3142; border-radius:4px; margin-top:8px; padding
 class GeneratorWindow(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Case Generator v1.5")
+        self.setWindowTitle("Case Generator v2.5")
         self.resize(720, 520)
         self.setStyleSheet(STYLE)
 
@@ -65,8 +65,11 @@ class GeneratorWindow(QtWidgets.QWidget):
         layout.addLayout(form)
 
         self.generate_btn = QtWidgets.QPushButton("Generate Cases")
+        self.safety_note = QtWidgets.QLabel("安全模式：既有 Case 一律跳過，不覆寫研究紀錄")
+        self.safety_note.setStyleSheet("color:#91c9ff; font-weight:600;")
         self.result = QtWidgets.QPlainTextEdit(); self.result.setReadOnly(True)
         layout.addWidget(self.generate_btn)
+        layout.addWidget(self.safety_note)
         layout.addWidget(self.result, 1)
 
         self.source_btn.clicked.connect(self.choose_source)
@@ -101,10 +104,21 @@ class GeneratorWindow(QtWidgets.QWidget):
         if d1 < d0:
             d0, d1 = d1, d0
         count = d0.daysTo(d1) + 1
-        written = []
+        created: list[Path] = []
+        skipped: list[Path] = []
         for i in range(count):
             day = d0.addDays(i)
             day_str = day.toString("yyyy-MM-dd")
+            folder = out_root / symbol / day.toString("yyyy") / day.toString("MM")
+
+            # Structural safety rule: an existing Case for the same research
+            # date is never regenerated.  Weekend files renamed by Enricher to
+            # YYYY-MM-DD(W).json are treated as the same Case date.
+            existing = find_existing_case_file(folder, day_str)
+            if existing is not None:
+                skipped.append(existing)
+                continue
+
             py_day = date(day.year(), day.month(), day.day())
             tr = build_case_time_range(
                 py_day,
@@ -133,12 +147,21 @@ class GeneratorWindow(QtWidgets.QWidget):
                 "patterns": [], "intraday_notes": [], "drawings": [],
                 "metadata": {"created_at": datetime.now(tz=ZoneInfo("UTC")).isoformat(), "updated_at": datetime.now(tz=ZoneInfo("UTC")).isoformat()}
             }
-            folder = out_root / symbol / day.toString("yyyy") / day.toString("MM")
-            folder.mkdir(parents=True, exist_ok=True)
             path = folder / f"{day_str}.json"
-            path.write_text(json.dumps(case, ensure_ascii=False, indent=2), encoding="utf-8")
-            written.append(path)
-        self.result.setPlainText("\n".join(map(str, written)))
+            if create_case_json_exclusive(path, case):
+                created.append(path)
+            else:
+                # Race-safe fallback: another process created the destination
+                # after the initial check.  It is still never overwritten.
+                skipped.append(path)
+
+        lines = [
+            f"完成：created={len(created)} / skipped existing={len(skipped)}",
+            "",
+        ]
+        lines.extend(f"[CREATE] {p}" for p in created)
+        lines.extend(f"[SKIP]   {p}" for p in skipped)
+        self.result.setPlainText("\n".join(lines))
 
 
 def main():
