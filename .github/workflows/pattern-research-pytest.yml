@@ -1,0 +1,39 @@
+name: Pattern Research pytest
+
+on:
+  push:
+    paths:
+      - "pattern research app/source/**"
+      - ".github/workflows/pattern-research-pytest.yml"
+  pull_request:
+    paths:
+      - "pattern research app/source/**"
+      - ".github/workflows/pattern-research-pytest.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: "pattern research app"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: "pattern research app/source/requirements.txt"
+
+      - name: Install dependencies
+        run: python -m pip install -r source/requirements.txt pytest
+
+      - name: Run tests
+        run: python -m pytest -q source/tests

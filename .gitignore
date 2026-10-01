@@ -23,3 +23,7 @@ trading journal app/license_system/license_state*.json
 
 # Data files
 *.parquet
+
+# Pattern Research local research data
+pattern research app/cases/
+pattern research app/NAS100*.txt
