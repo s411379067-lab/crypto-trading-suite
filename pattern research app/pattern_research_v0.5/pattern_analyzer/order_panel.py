@@ -22,6 +22,19 @@ class OrderPanel(QtWidgets.QWidget):
 
     R_VALUE = 60.0
 
+    @staticmethod
+    def _style_order_table(table: QtWidgets.QTableWidget) -> None:
+        """Keep order tables readable on the dark application theme."""
+        header = table.horizontalHeader()
+        header.setDefaultAlignment(QtCore.Qt.AlignCenter)
+        header.setMinimumHeight(30)
+        font = header.font()
+        font.setBold(True)
+        font.setPointSize(max(font.pointSize(), 10))
+        header.setFont(font)
+        table.verticalHeader().setVisible(False)
+        table.setAlternatingRowColors(True)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.case = None
@@ -85,6 +98,7 @@ class OrderPanel(QtWidgets.QWidget):
         self.pending_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.pending_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.pending_table.horizontalHeader().setStretchLastSection(True)
+        self._style_order_table(self.pending_table)
         self.pending_table.setMaximumHeight(135)
         self.btn_cancel = QtWidgets.QPushButton("Cancel Selected")
         pending_layout.addWidget(self.pending_table); pending_layout.addWidget(self.btn_cancel)
@@ -98,6 +112,7 @@ class OrderPanel(QtWidgets.QWidget):
         self.records_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.records_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.records_table.horizontalHeader().setStretchLastSection(True)
+        self._style_order_table(self.records_table)
         self.records_table.setMinimumHeight(145)
         self.btn_delete_record = QtWidgets.QPushButton("Delete Selected Record")
         records_layout.addWidget(self.records_table, 1); records_layout.addWidget(self.btn_delete_record)

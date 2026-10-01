@@ -21,6 +21,31 @@ QPushButton:hover { background-color:#253249; }
 QLineEdit, QTextEdit, QComboBox, QListWidget, QTreeView {
     background-color:#0d1420; border:1px solid #36445d; border-radius:3px; color:#e6edf7; padding:4px;
 }
+QTableWidget {
+    background-color:#0d1420;
+    alternate-background-color:#111a29;
+    color:#e6edf7;
+    gridline-color:#2d3748;
+    border:1px solid #36445d;
+    selection-background-color:#2a3952;
+    selection-color:#ffffff;
+    font-size:10pt;
+}
+QHeaderView::section {
+    background-color:#263247;
+    color:#ffffff;
+    border:0px;
+    border-right:1px solid #4d5a73;
+    border-bottom:1px solid #4d5a73;
+    padding:6px 5px;
+    font-size:10pt;
+    font-weight:700;
+}
+QHeaderView::section:hover { background-color:#31405a; }
+QTableCornerButton::section {
+    background-color:#263247;
+    border:1px solid #4d5a73;
+}
 QGroupBox { border:1px solid #2a3142; border-radius:4px; margin-top:8px; padding-top:8px; font-weight:700; }
 QGroupBox::title { subcontrol-origin:margin; left:8px; padding:0 4px; }
 QSplitter::handle { background:#252c3b; }
