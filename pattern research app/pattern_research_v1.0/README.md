@@ -1,4 +1,4 @@
-#### Pattern Research v0.1
+#### Pattern Research v1.0
 
 這是依照新版 architecture 建立的第一個可迭代版本。UI 視覺沿用舊 `backtest_UI.py` 的 PyQtGraph 深色風格，但核心已拆成 `shared_core`、`pattern_analyzer`、`case_generator`。
 
@@ -190,3 +190,17 @@ Example order record:
 - 選取後可拖曳整個文字框，亦可拖曳 handles 修改寬、高；幾何資訊保存到 Case JSON 的 text `box`。
 - Text Box 保留 Ctrl magnet，拖曳與 resize 時可吸附已揭露 K 棒。
 - 舊版 text drawing 沒有 `box` / 新 style 欄位時會自動套用相容預設值。
+
+
+### v1.0 — 第一版完整版
+
+- 將 v0.1.10 之後的功能集合定義為第一版完整版。
+- 新增 Drawing/Text **Ctrl+C / Ctrl+V**：
+  - 必須先用左鍵雙擊選取 Drawing。
+  - Ctrl+C 複製 Drawing Domain 資料，不複製 PyQtGraph 物件。
+  - Ctrl+V 產生新的 Drawing ID，保留原本樣式、文字內容、Fibo levels、Text Box 寬高等設定。
+  - 貼上的物件依目前畫面比例向右下偏移約 12px；連續貼上會逐次增加偏移，避免完全重疊。
+  - 貼上後新 Drawing 自動成為目前選取物件並立即寫入 Case JSON。
+  - Horizontal Line、Trend Line、Rectangle、Fibonacci、Text Box 全部支援。
+- Drawing Clipboard 是 Pattern Analyzer 內部 clipboard，並刻意使用 Chart-local shortcut；在 Notes / Pattern / Order 文字欄位內的 Ctrl+C / Ctrl+V 仍維持正常文字剪貼功能。
+- Clipboard 不會因切換 Case 清空，因此可複製 Drawing 後切換 Case 再貼上。

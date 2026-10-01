@@ -55,7 +55,7 @@ QSplitter::handle { background:#252c3b; }
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, case_root: str | Path):
         super().__init__()
-        self.setWindowTitle("Pattern Analyzer v0.1.10")
+        self.setWindowTitle("Pattern Analyzer v1.0")
         self.resize(1550, 900)
         self.setStyleSheet(APP_STYLE)
 
@@ -159,7 +159,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chart.set_context(case, raw, replay, path)
         self.research.set_case(case, self.current_replay_time_text)
         self.update_status()
-        self.setWindowTitle(f"Pattern Analyzer v0.1.10 — {case.case.get('symbol')} — {self.case_path.name}")
+        self.setWindowTitle(f"Pattern Analyzer v1.0 — {case.case.get('symbol')} — {self.case_path.name}")
 
     def current_replay_time_text(self) -> str:
         if self.replay is None or self.case is None:

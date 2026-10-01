@@ -10,6 +10,7 @@ import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 from shared_core.aggregation import aggregate_visible_bars, timeframe_seconds
+from shared_core.drawing_clipboard import clone_drawing_with_offset
 from pattern_analyzer.drawing_templates import DrawingTemplateRepository
 
 
@@ -657,6 +658,8 @@ class ChartWidget(QtWidgets.QWidget):
         self.pending_point = None
         self._last_bars = pd.DataFrame()
         self.selected_drawing_id: str | None = None
+        self._drawing_clipboard: dict | None = None
+        self._clipboard_paste_count = 0
         self.template_repo = DrawingTemplateRepository()
         self.auto_all_mode = False
         self._syncing_auto_all = False
@@ -664,6 +667,7 @@ class ChartWidget(QtWidgets.QWidget):
 
         pg.setConfigOption("background", "#181c27")
         pg.setConfigOption("foreground", "white")
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
 
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -786,12 +790,23 @@ class ChartWidget(QtWidgets.QWidget):
         self.plot.scene().sigMouseClicked.connect(self._scene_clicked)
         self.plot.sigRangeChanged.connect(self._on_view_range_changed)
         self._mouse_proxy = pg.SignalProxy(self.graphics.scene().sigMouseMoved, rateLimit=60, slot=self._mouse_moved)
+        self.graphics.setFocusPolicy(QtCore.Qt.StrongFocus)
+
+        # Drawing clipboard shortcuts are chart-local so Ctrl+C/V in Notes, Pattern,
+        # Order fields, etc. keep their normal text-editing behavior.
+        self.shortcut_copy_drawing = QtGui.QShortcut(QtGui.QKeySequence.Copy, self)
+        self.shortcut_copy_drawing.setContext(QtCore.Qt.WidgetWithChildrenShortcut)
+        self.shortcut_copy_drawing.activated.connect(self.copy_selected_drawing)
+        self.shortcut_paste_drawing = QtGui.QShortcut(QtGui.QKeySequence.Paste, self)
+        self.shortcut_paste_drawing.setContext(QtCore.Qt.WidgetWithChildrenShortcut)
+        self.shortcut_paste_drawing.activated.connect(self.paste_copied_drawing)
 
     def set_context(self, case, raw_df: pd.DataFrame, replay, case_path: str):
         self.case = case
         self.raw_df = raw_df
         self.replay = replay
         self.current_case_path = case_path
+        self.selected_drawing_id = None
         self.symbol_label.setText(f"{case.case.get('symbol', '')}   {case.case.get('research_date', '')}")
 
         self.timeframe_combo.blockSignals(True)
@@ -1678,6 +1693,11 @@ class ChartWidget(QtWidgets.QWidget):
     def _select_drawing_id(self, did: str | None):
         self.selected_drawing_id = did
         self._refresh_selection_visuals()
+        if did is not None:
+            try:
+                self.graphics.setFocus(QtCore.Qt.MouseFocusReason)
+            except Exception:
+                self.setFocus(QtCore.Qt.MouseFocusReason)
 
     def _refresh_selection_visuals(self):
         if self.case is None:
@@ -2433,6 +2453,54 @@ class ChartWidget(QtWidgets.QWidget):
             self.case.touch(); self.dirty.emit()
         except Exception:
             pass
+
+    def _clipboard_offset_delta(self, paste_count: int) -> tuple[float, float]:
+        """Return a small screen-consistent right/down paste offset in view coordinates."""
+        count = max(int(paste_count), 1)
+        try:
+            x_per_px, y_per_px = self.plot.vb.viewPixelSize()
+            dx = abs(float(x_per_px)) * 12.0 * count
+            # Screen-down corresponds to a lower price in the chart's view coordinates.
+            dy = -abs(float(y_per_px)) * 12.0 * count
+            if not np.isfinite(dx) or not np.isfinite(dy):
+                raise ValueError("non-finite pixel size")
+            return dx, dy
+        except Exception:
+            tf_step = max(float(timeframe_seconds(self.timeframe_combo.currentText())), 1.0)
+            return tf_step * count, -1.0 * count
+
+    def copy_selected_drawing(self) -> bool:
+        """Copy the selected Drawing Domain object into the internal drawing clipboard."""
+        if self.case is None or self.selected_drawing_id is None:
+            return False
+        # Persist any current drag/resize state before taking the copy.
+        self.sync_all_drawings_from_view()
+        drawing = self._drawing_by_id(self.selected_drawing_id)
+        if drawing is None:
+            return False
+        self._drawing_clipboard = deepcopy(drawing)
+        self._clipboard_paste_count = 0
+        QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), "已複製 Drawing  (Ctrl+V 貼上)")
+        return True
+
+    def paste_copied_drawing(self) -> bool:
+        """Paste a cloned drawing with a new id and a small visible offset."""
+        if self.case is None or self._drawing_clipboard is None:
+            return False
+        self._clipboard_paste_count += 1
+        dx, dy = self._clipboard_offset_delta(self._clipboard_paste_count)
+        clone = clone_drawing_with_offset(self._drawing_clipboard, dx, dy)
+        self.case.drawings.append(clone)
+        self.selected_drawing_id = str(clone.get("id"))
+        self.case.touch()
+        self.dirty.emit()
+        self.render(reset_x=False)
+        try:
+            self.graphics.setFocus(QtCore.Qt.MouseFocusReason)
+        except Exception:
+            pass
+        QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), "已貼上 Drawing")
+        return True
 
     def delete_selected_drawing(self):
         if self.case is None or self.selected_drawing_id is None:
