@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from shared_core.time_model import build_case_time_range
 from case_generator.safe_create import create_case_json_exclusive, find_existing_case_file
+from shared_core.paths import default_case_root
 
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
@@ -47,7 +48,7 @@ class GeneratorWindow(QtWidgets.QWidget):
         self.b_time = QtWidgets.QTimeEdit(QtCore.QTime(21, 30)); self.b_time.setDisplayFormat("HH:mm")
         self.c_time = QtWidgets.QTimeEdit(QtCore.QTime(23, 0)); self.c_time.setDisplayFormat("HH:mm")
         self.view_tf = QtWidgets.QComboBox(); self.view_tf.addItems(["M1","M5","M15","H1"]); self.view_tf.setCurrentText("M5")
-        self.output_edit = QtWidgets.QLineEdit(str(Path.cwd()/"cases"))
+        self.output_edit = QtWidgets.QLineEdit(str(default_case_root()))
         self.output_btn = QtWidgets.QPushButton("瀏覽")
         out_row = QtWidgets.QHBoxLayout(); out_row.addWidget(self.output_edit, 1); out_row.addWidget(self.output_btn)
         out_wrap = QtWidgets.QWidget(); out_wrap.setLayout(out_row)

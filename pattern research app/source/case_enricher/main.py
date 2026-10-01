@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 from shared_core.market_data import MarketDataService
+from shared_core.paths import default_case_root
 from shared_core.repository import CaseRepository
 from shared_core.rth import (
     DEFAULT_MAX_TAIL_GAP_MINUTES,
@@ -65,7 +66,7 @@ class EnricherWindow(QtWidgets.QWidget):
         layout.addWidget(title)
 
         form = QtWidgets.QFormLayout()
-        self.case_root_edit = QtWidgets.QLineEdit(str(Path.cwd() / "cases"))
+        self.case_root_edit = QtWidgets.QLineEdit(str(default_case_root()))
         self.case_root_btn = QtWidgets.QPushButton("瀏覽")
         row = QtWidgets.QHBoxLayout(); row.addWidget(self.case_root_edit, 1); row.addWidget(self.case_root_btn)
         wrap = QtWidgets.QWidget(); wrap.setLayout(row)
