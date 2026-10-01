@@ -56,7 +56,7 @@ QSplitter::handle { background:#252c3b; }
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, case_root: str | Path):
         super().__init__()
-        self.setWindowTitle("Pattern Analyzer v1.17")
+        self.setWindowTitle("Pattern Analyzer v1.19")
         self.resize(1550, 900)
         self.setStyleSheet(APP_STYLE)
 
@@ -180,7 +180,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Rendering can normalize legacy Drawing fields; start history from the normalized state.
         self.undo_manager.reset(case)
         self.update_status()
-        self.setWindowTitle(f"Pattern Analyzer v1.17 — {case.case.get('symbol')} — {self.case_path.name}")
+        self.setWindowTitle(f"Pattern Analyzer v1.19 — {case.case.get('symbol')} — {self.case_path.name}")
 
     def _record_history(self, label: str):
         if self.case is None:

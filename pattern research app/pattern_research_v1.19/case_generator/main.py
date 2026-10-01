@@ -129,6 +129,7 @@ class GeneratorWindow(QtWidgets.QWidget):
                 },
                 "display": {"view_timeframe": self.view_tf.currentText(), "timezone": tz_name, "x_tick_interval": "15m"},
                 "replay": {"step_minutes": 1, "current_time": tr["replay_start"]},
+                "calendar": {}, "reference_levels": {}, "reference_statistics": {},
                 "patterns": [], "intraday_notes": [], "drawings": [],
                 "metadata": {"created_at": datetime.now(tz=ZoneInfo("UTC")).isoformat(), "updated_at": datetime.now(tz=ZoneInfo("UTC")).isoformat()}
             }

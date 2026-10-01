@@ -1,7 +1,29 @@
-# Pattern Research v1.17
+# Pattern Research v1.19
 
 
 
+
+
+## v1.19 — Enricher 20D RTH intraday volatility statistics
+
+- Added `reference_statistics.intraday_volatility_20d` to Case JSON.
+- Case Enricher calculates the 20 most recent complete RTH sessions strictly before the Case date.
+- Daily range points = `RTH High - RTH Low`.
+- Daily range percent = `(RTH High - RTH Low) / RTH Open * 100`.
+- Stores and displays 20D median range and sample standard deviation (`ddof=1`) in both points and percent.
+- Stores the 20 underlying session rows so later research can derive custom reasonable-volatility bands without rereading raw data.
+- Weekend Cases still do not receive Previous RTH reference levels, but 20D volatility statistics are calculated from the preceding 20 valid RTH sessions.
+- No volatility lines or overlays are added to Pattern Analyzer in this version.
+
+
+## v1.18 — Bulk intraday-note callout auto layout
+
+- Reworked **顯示全部紀錄** into a two-zone layout: callouts can use both the top and bottom safe areas instead of stacking only at the top.
+- A note anchored in the upper half of the price viewport prefers the bottom zone; a note anchored in the lower half prefers the top zone, reducing leader-line crossings through candles.
+- Each side has multiple lanes. Nearby labels are packed into the nearest non-overlapping lane based on estimated on-screen label width.
+- When a lane would collide, the layout first tries another lane, then a small horizontal shift, then the opposite side before allowing a dense fallback.
+- Bulk mode uses slightly more compact wrapping while single-note Callout behavior is unchanged.
+- Layout is transient UI state only; Note JSON, M1 anchors, Undo/Redo, and Drawing data are unchanged.
 
 ## v1.17 — Global Drawing / Intraday Note visibility
 

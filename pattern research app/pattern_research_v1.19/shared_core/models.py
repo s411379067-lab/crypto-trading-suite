@@ -25,6 +25,7 @@ class ResearchCase:
     replay: dict[str, Any]
     calendar: dict[str, Any] = field(default_factory=dict)
     reference_levels: dict[str, Any] = field(default_factory=dict)
+    reference_statistics: dict[str, Any] = field(default_factory=dict)
     patterns: list[dict[str, Any]] = field(default_factory=list)
     intraday_notes: list[dict[str, Any]] = field(default_factory=list)
     drawings: list[dict[str, Any]] = field(default_factory=list)
@@ -57,6 +58,7 @@ class ResearchCase:
             replay=dict(data.get("replay", {})),
             calendar=dict(data.get("calendar", {})),
             reference_levels=dict(data.get("reference_levels", {})),
+            reference_statistics=dict(data.get("reference_statistics", {})),
             patterns=list(data.get("patterns", [])),
             intraday_notes=list(data.get("intraday_notes", [])),
             drawings=list(data.get("drawings", [])),
@@ -108,6 +110,7 @@ class ResearchCase:
             "replay": self.replay,
             "calendar": self.calendar,
             "reference_levels": self.reference_levels,
+            "reference_statistics": self.reference_statistics,
             "patterns": self.patterns,
             "intraday_notes": self.intraday_notes,
             "drawings": self.drawings,

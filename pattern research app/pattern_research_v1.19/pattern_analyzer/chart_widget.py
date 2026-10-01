@@ -12,7 +12,7 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 from shared_core.geometry_picker import point_to_rect_distance, point_to_segment_distance
 from shared_core.aggregation import aggregate_visible_bars, timeframe_seconds
 from shared_core.drawing_clipboard import clone_drawing_with_offset
-from shared_core.note_callout import align_note_x_to_timeframe, find_m1_close, resolve_note_timestamp, wrap_note_text
+from shared_core.note_callout import align_note_x_to_timeframe, find_m1_close, layout_note_callouts, resolve_note_timestamp, wrap_note_text
 from pattern_analyzer.drawing_templates import DrawingTemplateRepository
 
 
@@ -1108,7 +1108,14 @@ class ChartWidget(QtWidgets.QWidget):
         x_span = max(x_max - x_min, 1.0)
         y_span = max(y_max - y_min, max(abs(y_max), abs(y_min), 1.0) * 0.001)
 
+        try:
+            scene_rect = self.plot.getViewBox().sceneBoundingRect()
+            view_width_px = max(float(scene_rect.width()), 480.0)
+        except Exception:
+            view_width_px = 900.0
+
         visible = []
+        layout_inputs = []
         for note in list(getattr(self.case, "intraday_notes", []) or []):
             anchor = self._resolve_note_anchor(note)
             if anchor is None:
@@ -1116,30 +1123,54 @@ class ChartWidget(QtWidgets.QWidget):
             anchor_x, anchor_y = anchor
             if anchor_x < x_min or anchor_x > x_max:
                 continue
-            text = wrap_note_text(note.get("text", ""), width=22)
-            if text:
-                visible.append((anchor_x, anchor_y, text))
-        visible.sort(key=lambda x: x[0])
+            # Bulk mode uses a slightly more compact wrap than the selected-note
+            # callout so several annotations can coexist without dominating the chart.
+            text = wrap_note_text(note.get("text", ""), width=20)
+            if not text:
+                continue
+            lines = text.splitlines() or [text]
+            longest = max((len(line) for line in lines), default=1)
+            width_px = min(max(92.0 + longest * 4.6, 118.0), 245.0)
+            width_norm = min(max(width_px / view_width_px, 0.10), 0.34)
+            x_norm = min(max((anchor_x - x_min) / x_span, 0.0), 1.0)
+            y_norm = min(max((anchor_y - y_min) / y_span, 0.0), 1.0)
+            visible.append((anchor_x, anchor_y, text))
+            layout_inputs.append({
+                "x_norm": x_norm,
+                "y_norm": y_norm,
+                "width_norm": width_norm,
+            })
+
         if not visible:
             return
 
-        # Stagger labels across four upper safe-area rows.  This is a transient
-        # display layout; note timestamps/prices are unchanged.
-        rows = 4
-        for idx, (anchor_x, anchor_y, text) in enumerate(visible):
-            row = idx % rows
-            label_y = y_max - y_span * (0.035 + row * 0.105)
-            # Keep label near its anchor but inside the plot's safe margins.
-            label_x = min(max(anchor_x - x_span * 0.035, x_min + x_span * 0.02), x_max - x_span * 0.25)
-            line_end_x = label_x + x_span * 0.06
-            line_end_y = label_y - y_span * 0.025
+        placements = layout_note_callouts(layout_inputs, max_lanes=4, gap_norm=0.010)
+        # Four lanes on each side use roughly the outer third of the chart, leaving
+        # the central candle area readable.  Side choice is opposite the anchor's
+        # vertical half unless collision avoidance needs the other side.
+        lane_step = 0.085
+        edge_margin = 0.025
+
+        for (anchor_x, anchor_y, text), placement in zip(visible, placements):
+            side = placement["side"]
+            lane = int(placement["lane"])
+            label_x = x_min + float(placement["center_x_norm"]) * x_span
+
+            if side == "top":
+                label_y = y_max - y_span * (edge_margin + lane * lane_step)
+                label_anchor = (0.5, 0.0)
+                line_end_y = label_y - y_span * 0.018
+            else:
+                label_y = y_min + y_span * (edge_margin + lane * lane_step)
+                label_anchor = (0.5, 1.0)
+                line_end_y = label_y + y_span * 0.018
 
             line = pg.PlotDataItem(
-                x=[anchor_x, line_end_x], y=[anchor_y, line_end_y],
-                pen=pg.mkPen((255, 220, 40, 225), width=1.25),
+                x=[anchor_x, label_x], y=[anchor_y, line_end_y],
+                pen=pg.mkPen((255, 220, 40, 225), width=1.15),
             )
             label = pg.TextItem(
-                text=text, color=(245, 247, 250), anchor=(0, 0),
+                text=text, color=(245, 247, 250), anchor=label_anchor,
                 fill=pg.mkBrush(15, 20, 30, 235), border=pg.mkPen(255, 220, 40, 205),
             )
             line.setZValue(70)

@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from shared_core.note_callout import align_note_x_to_timeframe, find_m1_close, resolve_note_timestamp, wrap_note_text
+from shared_core.note_callout import align_note_x_to_timeframe, find_m1_close, layout_note_callouts, resolve_note_timestamp, wrap_note_text
 
 
 def test_resolve_new_note_utc_time():
@@ -52,3 +52,38 @@ def test_note_x_aligns_across_common_timeframes():
     assert align_note_x_to_timeframe(ts, 900) == datetime(2026, 9, 3, 12, 45, tzinfo=timezone.utc).timestamp()
     assert align_note_x_to_timeframe(ts, 1800) == datetime(2026, 9, 3, 12, 30, tzinfo=timezone.utc).timestamp()
     assert align_note_x_to_timeframe(ts, 3600) == datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc).timestamp()
+
+
+def test_bulk_callout_prefers_opposite_vertical_side():
+    items = [
+        {"x_norm": 0.25, "y_norm": 0.80, "width_norm": 0.18},
+        {"x_norm": 0.75, "y_norm": 0.20, "width_norm": 0.18},
+    ]
+    result = layout_note_callouts(items, max_lanes=4)
+    assert result[0]["side"] == "bottom"
+    assert result[1]["side"] == "top"
+
+
+def test_bulk_callout_uses_extra_lanes_for_nearby_notes():
+    items = [
+        {"x_norm": 0.50, "y_norm": 0.25, "width_norm": 0.24},
+        {"x_norm": 0.52, "y_norm": 0.25, "width_norm": 0.24},
+        {"x_norm": 0.54, "y_norm": 0.25, "width_norm": 0.24},
+    ]
+    result = layout_note_callouts(items, max_lanes=4)
+    assert all(r["side"] == "top" for r in result)
+    assert len({r["lane"] for r in result}) >= 2
+
+
+def test_bulk_callout_can_shift_x_before_forcing_overlap():
+    items = [
+        {"x_norm": 0.48, "y_norm": 0.75, "width_norm": 0.20},
+        {"x_norm": 0.50, "y_norm": 0.75, "width_norm": 0.20},
+        {"x_norm": 0.52, "y_norm": 0.75, "width_norm": 0.20},
+        {"x_norm": 0.54, "y_norm": 0.75, "width_norm": 0.20},
+        {"x_norm": 0.56, "y_norm": 0.75, "width_norm": 0.20},
+    ]
+    result = layout_note_callouts(items, max_lanes=4)
+    assert len(result) == len(items)
+    assert all(0.0 <= r["center_x_norm"] <= 1.0 for r in result)
+    assert any(abs(r["center_x_norm"] - items[i]["x_norm"]) > 1e-6 for i, r in enumerate(result))

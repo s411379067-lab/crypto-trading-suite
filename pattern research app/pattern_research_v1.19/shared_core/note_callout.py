@@ -130,3 +130,99 @@ def wrap_note_text(text: str, width: int = 26) -> str:
         wrapped = textwrap.wrap(paragraph, width=max(8, int(width)), replace_whitespace=False, drop_whitespace=False)
         lines.extend(wrapped or [""])
     return "\n".join(lines)
+
+
+def layout_note_callouts(items: list[dict], max_lanes: int = 4, gap_norm: float = 0.012) -> list[dict]:
+    """Assign bulk note callouts to top/bottom lanes without overlapping labels.
+
+    Input items use normalized plot coordinates: ``x_norm`` / ``y_norm`` in [0, 1]
+    plus an estimated ``width_norm``.  Anchors in the upper half prefer bottom
+    labels and anchors in the lower half prefer top labels, keeping leader lines
+    out of the densest candle region.  Within each side, labels are packed into
+    the nearest non-overlapping lane and may shift slightly in X when needed.
+    """
+    lane_count = max(1, int(max_lanes))
+    occupancy = {
+        "top": [[] for _ in range(lane_count)],
+        "bottom": [[] for _ in range(lane_count)],
+    }
+    out: list[dict] = []
+
+    def clamp_center(center: float, width: float) -> float:
+        margin = 0.015
+        half = width * 0.5
+        lo = margin + half
+        hi = 1.0 - margin - half
+        if hi < lo:
+            return 0.5
+        return min(max(center, lo), hi)
+
+    def interval(center: float, width: float) -> tuple[float, float]:
+        half = width * 0.5 + float(gap_norm)
+        return center - half, center + half
+
+    def overlaps(existing: list[tuple[float, float]], candidate: tuple[float, float]) -> bool:
+        left, right = candidate
+        return any(not (right <= a or left >= b) for a, b in existing)
+
+    def overlap_cost(existing: list[tuple[float, float]], candidate: tuple[float, float]) -> float:
+        left, right = candidate
+        total = 0.0
+        for a, b in existing:
+            total += max(0.0, min(right, b) - max(left, a))
+        return total
+
+    # Pack in time order for stable layouts while panning/zooming.
+    ordered = sorted(enumerate(items), key=lambda pair: float(pair[1].get("x_norm", 0.0)))
+    placements: dict[int, dict] = {}
+    shift_candidates = [0.0, -0.04, 0.04, -0.08, 0.08, -0.12, 0.12, -0.18, 0.18]
+
+    for original_idx, item in ordered:
+        x = min(max(float(item.get("x_norm", 0.5)), 0.0), 1.0)
+        y = min(max(float(item.get("y_norm", 0.5)), 0.0), 1.0)
+        width = min(max(float(item.get("width_norm", 0.16)), 0.08), 0.42)
+        preferred = "bottom" if y >= 0.5 else "top"
+        sides = (preferred, "top" if preferred == "bottom" else "bottom")
+
+        chosen = None
+        for side in sides:
+            for shift in shift_candidates:
+                center = clamp_center(x + shift, width)
+                cand = interval(center, width)
+                for lane in range(lane_count):
+                    if not overlaps(occupancy[side][lane], cand):
+                        chosen = (side, lane, center, cand)
+                        break
+                if chosen is not None:
+                    break
+            if chosen is not None:
+                break
+
+        if chosen is None:
+            # Dense fallback: choose the least-overlapping slot while still
+            # preferring the side opposite the anchor's vertical half.
+            best = None
+            for side_rank, side in enumerate(sides):
+                for shift in shift_candidates:
+                    center = clamp_center(x + shift, width)
+                    cand = interval(center, width)
+                    for lane in range(lane_count):
+                        cost = overlap_cost(occupancy[side][lane], cand)
+                        score = (cost, side_rank, abs(shift), lane)
+                        if best is None or score < best[0]:
+                            best = (score, side, lane, center, cand)
+            assert best is not None
+            _, side, lane, center, cand = best
+            chosen = (side, lane, center, cand)
+
+        side, lane, center, cand = chosen
+        occupancy[side][lane].append(cand)
+        placements[original_idx] = {
+            "side": side,
+            "lane": int(lane),
+            "center_x_norm": float(center),
+        }
+
+    for idx in range(len(items)):
+        out.append(placements[idx])
+    return out
