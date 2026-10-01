@@ -251,3 +251,13 @@ Example order record:
 ## v1.6 Enricher upgrade
 
 Previous RTH now stores High / Low / Close plus their timestamps. The Enricher only skips an existing payload when all required fields are present and the calculator version, session timezone/start/end, and data source ID match the current settings. Older H/L-only payloads are automatically recalculated and upgraded.
+
+## v1.7 - Temporary Measure Mode
+
+- Middle-click toggles Measure Mode on/off.
+- While Measure Mode is enabled, press and hold the right mouse button to set the start point and drag the endpoint.
+- The temporary line and endpoint label update continuously while dragging.
+- Label shows endpoint price and percentage change from the start price.
+- Releasing the right mouse button immediately removes the measurement; Measure Mode stays enabled for the next measurement.
+- Middle-click again exits Measure Mode.
+- Measurements are transient only and are never written to Case JSON / drawings[].

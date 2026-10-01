@@ -676,6 +676,12 @@ class ChartWidget(QtWidgets.QWidget):
         self.order_events: list[dict] = []
         self.show_previous_rth = False
 
+        # Transient measure mode. Nothing here is persisted to Case JSON.
+        self.measure_mode = False
+        self._measure_dragging = False
+        self._measure_start: tuple[float, float] | None = None
+        self._measure_end: tuple[float, float] | None = None
+
         pg.setConfigOption("background", "#181c27")
         pg.setConfigOption("foreground", "white")
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
@@ -726,6 +732,13 @@ class ChartWidget(QtWidgets.QWidget):
         tb.addWidget(QtWidgets.QLabel("X刻度"))
         tb.addWidget(self.x_tick_combo)
         tb.addWidget(self.timezone_combo)
+        self.measure_status = QtWidgets.QLabel("MEASURE")
+        self.measure_status.setStyleSheet(
+            "background-color:#2a3952; border:1px solid #ffcc80; border-radius:3px; "
+            "color:#ffcc80; padding:3px 8px; font-weight:700;"
+        )
+        self.measure_status.setVisible(False)
+        tb.addWidget(self.measure_status)
         tb.addStretch(1)
         outer.addWidget(self.toolbar)
 
@@ -757,6 +770,20 @@ class ChartWidget(QtWidgets.QWidget):
         self.plot.addItem(self.hline, ignoreBounds=True)
         self.vline.hide()
         self.hline.hide()
+
+        # Temporary measure overlay. It is visible only while the right button is held
+        # inside Measure Mode and is never written to drawings[].
+        self.measure_line = pg.PlotDataItem(pen=pg.mkPen((245, 245, 245), width=1))
+        self.measure_label = pg.TextItem(
+            text="", color=(245, 245, 245), anchor=(0, 1),
+            fill=pg.mkBrush(13, 20, 32, 220), border=pg.mkPen(107, 127, 161, 180),
+        )
+        self.measure_line.setZValue(50)
+        self.measure_label.setZValue(51)
+        self.plot.addItem(self.measure_line, ignoreBounds=True)
+        self.plot.addItem(self.measure_label, ignoreBounds=True)
+        self.measure_line.hide()
+        self.measure_label.hide()
 
         coord_style = (
             "background-color:#0d1420; border:1px solid #6b7fa1; border-radius:2px; "
@@ -802,6 +829,11 @@ class ChartWidget(QtWidgets.QWidget):
         self.plot.sigRangeChanged.connect(self._on_view_range_changed)
         self._mouse_proxy = pg.SignalProxy(self.graphics.scene().sigMouseMoved, rateLimit=60, slot=self._mouse_moved)
         self.graphics.setFocusPolicy(QtCore.Qt.StrongFocus)
+        try:
+            self.graphics.viewport().setMouseTracking(True)
+            self.graphics.viewport().installEventFilter(self)
+        except Exception:
+            pass
 
         # Drawing clipboard shortcuts are chart-local so Ctrl+C/V in Notes, Pattern,
         # Order fields, etc. keep their normal text-editing behavior.
@@ -894,7 +926,11 @@ class ChartWidget(QtWidgets.QWidget):
         self.plot.clear()
         self.plot.addItem(self.vline, ignoreBounds=True)
         self.plot.addItem(self.hline, ignoreBounds=True)
+        self.plot.addItem(self.measure_line, ignoreBounds=True)
+        self.plot.addItem(self.measure_label, ignoreBounds=True)
         self.vline.hide(); self.hline.hide()
+        if not self._measure_dragging:
+            self.measure_line.hide(); self.measure_label.hide()
         self.price_coord_label.hide(); self.time_coord_label.hide()
         self.btn_short_axis.hide(); self.btn_long_axis.hide()
 
@@ -1085,6 +1121,141 @@ class ChartWidget(QtWidgets.QWidget):
         if not path:
             return
         self.grab().save(path)
+
+    @staticmethod
+    def _qt_mouse_pos(event):
+        """Return a QPoint compatible with Qt5/Qt6 mouse events."""
+        try:
+            return event.position().toPoint()
+        except Exception:
+            try:
+                return event.pos()
+            except Exception:
+                return QtCore.QPoint()
+
+    def _viewport_event_to_scene(self, event):
+        try:
+            return self.graphics.mapToScene(self._qt_mouse_pos(event))
+        except Exception:
+            return None
+
+    def _set_measure_mode(self, enabled: bool):
+        self.measure_mode = bool(enabled)
+        self.measure_status.setVisible(self.measure_mode)
+        self._clear_measure_overlay()
+        try:
+            self.graphics.viewport().setCursor(
+                QtCore.Qt.CrossCursor if self.measure_mode else QtCore.Qt.ArrowCursor
+            )
+        except Exception:
+            pass
+
+    def _toggle_measure_mode(self):
+        self._set_measure_mode(not self.measure_mode)
+
+    def _clear_measure_overlay(self):
+        self._measure_dragging = False
+        self._measure_start = None
+        self._measure_end = None
+        try:
+            self.graphics.viewport().releaseMouse()
+        except Exception:
+            pass
+        try:
+            self.measure_line.setData([], [])
+            self.measure_line.hide()
+            self.measure_label.setText("")
+            self.measure_label.hide()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _measure_text(start_price: float, end_price: float) -> str:
+        if abs(float(end_price)) < 10:
+            price_text = f"{float(end_price):.4f}"
+        else:
+            price_text = f"{float(end_price):.2f}"
+        if abs(float(start_price)) < 1e-12:
+            pct = 0.0
+        else:
+            pct = (float(end_price) - float(start_price)) / float(start_price) * 100.0
+        return f"{price_text}   {pct:+.2f}%"
+
+    def _measure_begin(self, scene_pos) -> bool:
+        if scene_pos is None or not self.plot.sceneBoundingRect().contains(scene_pos):
+            return False
+        point = self.plot.vb.mapSceneToView(scene_pos)
+        self._measure_start = (float(point.x()), float(point.y()))
+        self._measure_end = self._measure_start
+        self._measure_dragging = True
+        try:
+            self.graphics.viewport().grabMouse()
+        except Exception:
+            pass
+        self._update_measure_overlay(self._measure_start[0], self._measure_start[1])
+        return True
+
+    def _update_measure_overlay(self, x: float, y: float):
+        if not self._measure_dragging or self._measure_start is None:
+            return
+        sx, sy = self._measure_start
+        ex, ey = float(x), float(y)
+        self._measure_end = (ex, ey)
+        self.measure_line.setData([sx, ex], [sy, ey])
+        self.measure_line.show()
+        self.measure_label.setText(self._measure_text(sy, ey))
+        self.measure_label.setPos(ex, ey)
+        self.measure_label.show()
+
+    def eventFilter(self, watched, event):
+        """Middle click toggles Measure Mode; right drag performs transient measurement."""
+        try:
+            viewport = self.graphics.viewport()
+        except Exception:
+            viewport = None
+        if watched is not viewport:
+            return super().eventFilter(watched, event)
+
+        et = event.type()
+        mouse_press = QtCore.QEvent.MouseButtonPress
+        mouse_release = QtCore.QEvent.MouseButtonRelease
+        mouse_move = QtCore.QEvent.MouseMove
+
+        if et == mouse_press and event.button() == QtCore.Qt.MiddleButton:
+            self._toggle_measure_mode()
+            event.accept()
+            return True
+
+        if not self.measure_mode:
+            return super().eventFilter(watched, event)
+
+        if et == mouse_press and event.button() == QtCore.Qt.RightButton:
+            scene_pos = self._viewport_event_to_scene(event)
+            self._measure_begin(scene_pos)
+            event.accept()
+            return True
+
+        if et == mouse_move and self._measure_dragging:
+            # Right-button ownership remains with Measure Mode until release.
+            try:
+                right_down = bool(event.buttons() & QtCore.Qt.RightButton)
+            except Exception:
+                right_down = True
+            if right_down:
+                scene_pos = self._viewport_event_to_scene(event)
+                if scene_pos is not None:
+                    point = self.plot.vb.mapSceneToView(scene_pos)
+                    self._update_measure_overlay(float(point.x()), float(point.y()))
+                event.accept()
+                return True
+
+        if et == mouse_release and event.button() == QtCore.Qt.RightButton:
+            # The requested behavior is deliberately ephemeral: release means disappear.
+            self._clear_measure_overlay()
+            event.accept()
+            return True
+
+        return super().eventFilter(watched, event)
 
     def _mouse_moved(self, evt):
         pos = evt[0]
@@ -1348,6 +1519,11 @@ class ChartWidget(QtWidgets.QWidget):
             return
         pos = evt.scenePos()
         if not self.plot.sceneBoundingRect().contains(pos):
+            return
+
+        # Measure Mode owns right-click press/drag/release through the viewport event filter.
+        # Never open a Drawing context menu while measuring.
+        if self.measure_mode and evt.button() == QtCore.Qt.RightButton:
             return
 
         # Right-click always checks for a drawing first, matching the legacy UI behavior.
