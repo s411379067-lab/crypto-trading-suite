@@ -175,3 +175,9 @@ Example order record:
 - 按住 Ctrl 時，十字游標會吸附到最近已揭露 K 棒的 O/H/L/C。
 - 建立 Drawing、Line 端點 resize / 整體拖曳、Horizontal Line、Rectangle 拖曳/縮放、Fibo 控制與 Text 拖曳均接入磁鐵約束。
 - Magnet 只使用 Replay 已揭露資料，不讀取未來 K 棒。
+
+
+### v0.1.9
+- 修正 Text Drawing 右鍵沒有選單的問題。
+- Text 右鍵選單現在包含：文字設定、改顏色、改大小、模板，以及最底部的刪除。
+- Text 內部文字物件不再攔截右鍵；拖曳與 Ctrl Magnet 功能維持不變。

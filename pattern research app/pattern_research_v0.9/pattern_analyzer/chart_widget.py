@@ -122,12 +122,33 @@ class TimeAxis(pg.AxisItem):
 
 
 class MovableTextItem(pg.TextItem):
-    """Text item that notifies the domain layer after a drag finishes and supports Ctrl magnet snapping."""
+    """Text item with drag persistence, Ctrl magnet snapping, and a reliable custom context menu."""
     movementFinished = QtCore.Signal()
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.magnet_callback = None
+        self.context_menu_callback = None
+
+        # Keep left-button dragging on the TextItem itself, but prevent the internal
+        # QGraphicsTextItem from swallowing right-clicks.  This was the reason text
+        # drawings could not open the common drawing context menu in v0.1.8.
+        try:
+            self.setAcceptedMouseButtons(QtCore.Qt.LeftButton | QtCore.Qt.RightButton)
+            self.textItem.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+            self.textItem.setTextInteractionFlags(QtCore.Qt.NoTextInteraction)
+        except Exception:
+            pass
+
+    def contextMenuEvent(self, ev):
+        if callable(self.context_menu_callback):
+            self.context_menu_callback()
+            ev.accept()
+            return
+        try:
+            super().contextMenuEvent(ev)
+        except Exception:
+            ev.ignore()
 
     def mouseMoveEvent(self, ev):
         super().mouseMoveEvent(ev)
@@ -1300,6 +1321,10 @@ class ChartWidget(QtWidgets.QWidget):
         if dtype == "text":
             settings_action = menu.addAction("文字設定")
             settings_action.triggered.connect(lambda: self._open_text_settings(did))
+            color_action = menu.addAction("改顏色")
+            color_action.triggered.connect(lambda: self._change_text_color(did))
+            size_action = menu.addAction("改大小")
+            size_action.triggered.connect(lambda: self._change_text_size(did))
         elif dtype == "rectangle":
             settings_action = menu.addAction("長方形設定")
             settings_action.triggered.connect(lambda: self._open_rectangle_settings(did))
@@ -1843,6 +1868,7 @@ class ChartWidget(QtWidgets.QWidget):
                 item.setPos(float(drawing["time"]), float(drawing["price"]))
                 item.setFlag(QtWidgets.QGraphicsItem.ItemIsMovable, True)
                 item.magnet_callback = self._magnet_snap_point
+                item.context_menu_callback = lambda d=did: self._show_drawing_context_menu(d)
                 item.movementFinished.connect(lambda obj=item, d=drawing: self._sync_text(obj, d))
                 self.plot.addItem(item)
             elif dtype == "rectangle":
