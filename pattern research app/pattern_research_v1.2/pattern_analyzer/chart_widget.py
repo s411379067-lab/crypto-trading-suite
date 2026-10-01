@@ -398,10 +398,19 @@ class TextSettingsDialog(QtWidgets.QDialog):
         self.size_combo.setFixedWidth(92)
         toolbar.addWidget(self.size_combo)
 
+        toggle_style = (
+            "QPushButton { background-color:#1f1f1f; color:#e8edf6; border:1px solid #4b5260; "
+            "border-radius:5px; }"
+            "QPushButton:hover { border:1px solid #7a8598; }"
+            "QPushButton:checked { background-color:#d7d7d7; color:#111111; "
+            "border:1px solid #f3f3f3; }"
+        )
+
         self.bold_btn = QtWidgets.QPushButton("B")
         self.bold_btn.setCheckable(True)
         self.bold_btn.setChecked(bool(bold))
         self.bold_btn.setFixedSize(44, 34)
+        self.bold_btn.setStyleSheet(toggle_style)
         bold_font = self.bold_btn.font(); bold_font.setBold(True); self.bold_btn.setFont(bold_font)
         toolbar.addWidget(self.bold_btn)
 
@@ -409,6 +418,7 @@ class TextSettingsDialog(QtWidgets.QDialog):
         self.italic_btn.setCheckable(True)
         self.italic_btn.setChecked(bool(italic))
         self.italic_btn.setFixedSize(44, 34)
+        self.italic_btn.setStyleSheet(toggle_style)
         italic_font = self.italic_btn.font(); italic_font.setItalic(True); self.italic_btn.setFont(italic_font)
         toolbar.addWidget(self.italic_btn)
         toolbar.addStretch(1)
@@ -1462,40 +1472,86 @@ class ChartWidget(QtWidgets.QWidget):
         # inside a tiny box when the chart is zoomed far out.
         return self._view_size_from_pixels(360.0, 180.0)
 
+    @staticmethod
+    def _text_font_from_style(style: dict) -> QtGui.QFont:
+        font = QtGui.QFont()
+        font.setPointSize(max(6, int(style.get("font_size", 12))))
+        font.setBold(bool(style.get("bold", False)))
+        font.setItalic(bool(style.get("italic", False)))
+        return font
+
+    @classmethod
+    def _measure_no_wrap_text_pixels(cls, text: str, style: dict) -> tuple[float, float]:
+        """Measure plain text without wrapping.
+
+        Width follows the longest explicit line (split by newline), matching the
+        requested TradingView-style no-wrap behaviour. A small inner padding is
+        included so glyphs never touch the frame.
+        """
+        font = cls._text_font_from_style(style)
+        metrics = QtGui.QFontMetricsF(font)
+        lines = str(text or "").splitlines() or [""]
+        longest = max((float(metrics.horizontalAdvance(line.expandtabs(4))) for line in lines), default=0.0)
+        line_height = max(float(metrics.height()), 1.0)
+        width_px = max(40.0, longest + 18.0)
+        height_px = max(30.0, line_height * max(len(lines), 1) + 16.0)
+        return width_px, height_px
+
     def _initial_text_box_size(self, text: str, style: dict) -> tuple[float, float]:
-        """Return the default text box, enlarged vertically if initial content needs it."""
+        """Return a predictable initial box while fully containing its text."""
         default_w, default_h = self._default_text_box_size()
         try:
-            # Measure using the same font/wrap assumptions as the rendered TextItem.
-            font = QtGui.QFont()
-            font.setPointSize(max(6, int(style.get("font_size", 12))))
-            font.setBold(bool(style.get("bold", False)))
-            font.setItalic(bool(style.get("italic", False)))
+            font = self._text_font_from_style(style)
+            if not bool(style.get("auto_wrap", True)):
+                required_w_px, required_h_px = self._measure_no_wrap_text_pixels(text, style)
+                required_w, required_h = self._view_size_from_pixels(required_w_px, max(180.0, required_h_px))
+                return max(required_w, 1e-6), max(default_h, required_h)
 
+            # Wrapped text starts from the default 360 px width and grows in
+            # height only when the initial content needs more room.
             doc = QtGui.QTextDocument()
             doc.setDefaultFont(font)
             doc.setPlainText(str(text or ""))
-            if bool(style.get("auto_wrap", True)):
-                doc.setTextWidth(344.0)  # 360px box minus comfortable horizontal padding.
-            else:
-                doc.adjustSize()
+            doc.setTextWidth(344.0)  # 360 px box minus horizontal padding.
             required_h_px = max(180.0, float(doc.size().height()) + 18.0)
             _w, required_h = self._view_size_from_pixels(360.0, required_h_px)
             return default_w, max(default_h, required_h)
         except Exception:
             return default_w, default_h
 
+    def _fit_text_box_width_to_content(self, drawing: dict):
+        """When auto-wrap is disabled, fit box width to the longest explicit line."""
+        style, box = self._normalize_text_drawing(drawing)
+        if bool(style.get("auto_wrap", True)):
+            return
+        try:
+            width_px, _height_px = self._measure_no_wrap_text_pixels(str(drawing.get("text", "")), style)
+            width_view, _ = self._view_size_from_pixels(width_px, 32.0)
+            box["width"] = max(float(width_view), 1e-6)
+        except Exception:
+            pass
+
     @staticmethod
     def _configure_right_bottom_resize_handles(roi):
-        """Use only right-middle (width) and bottom-middle (height) resize handles.
+        """Install exactly two resize handles: right-middle and bottom-middle.
 
-        RectROI normally creates a top-right corner scaler.  Removing it and
-        installing two axis-specific handles gives a more predictable text/box
-        editing interaction: right edge controls width, bottom edge controls height.
+        New text/rectangle ROIs are created from bare ``pg.ROI`` instead of
+        ``RectROI`` so the legacy top-right corner handle never exists.  The
+        cleanup below is kept for compatibility with any older object rebuilt
+        from a previous session.
         """
         try:
             for handle in list(roi.getHandles()):
-                roi.removeHandle(handle)
+                try:
+                    roi.removeHandle(handle)
+                except Exception:
+                    try:
+                        handle.setParentItem(None)
+                        scene = handle.scene()
+                        if scene is not None:
+                            scene.removeItem(handle)
+                    except Exception:
+                        pass
             right_handle = roi.addScaleHandle([1.0, 0.5], [0.0, 0.5], name="resize_width")
             bottom_handle = roi.addScaleHandle([0.5, 0.0], [0.5, 1.0], name="resize_height")
             for handle in (right_handle, bottom_handle):
@@ -1504,8 +1560,6 @@ class ChartWidget(QtWidgets.QWidget):
                 except Exception:
                     pass
         except Exception:
-            # If an older pyqtgraph build behaves differently, keep the ROI usable
-            # rather than failing the entire drawing renderer.
             pass
 
     def _normalize_text_drawing(self, drawing: dict) -> tuple[dict, dict]:
@@ -1560,6 +1614,7 @@ class ChartWidget(QtWidgets.QWidget):
         roi = group.get("roi")
         text_item = group.get("text")
         border_item = group.get("border")
+        selection_item = group.get("selection")
         background_item = group.get("background")
         if roi is None or text_item is None:
             return
@@ -1588,12 +1643,27 @@ class ChartWidget(QtWidgets.QWidget):
             else:
                 background_item.setBrush(QtGui.QBrush(QtCore.Qt.NoBrush))
 
+        outline_x = [left, right, right, left, left]
+        outline_y = [top, top, bottom, bottom, top]
         if border_item is not None:
-            border_item.setRect(rect)
-            if bool(style.get("border_enabled", False)):
-                border_item.setPen(QtGui.QPen(QtGui.QColor(style.get("border_color", "#ffffff")), max(1, int(style.get("border_width", 1)))))
-            else:
-                border_item.setPen(QtGui.QPen(QtCore.Qt.NoPen))
+            try:
+                border_item.setData(outline_x, outline_y)
+                if bool(style.get("border_enabled", False)):
+                    border_item.setPen(pg.mkPen(style.get("border_color", "#ffffff"), width=max(1, int(style.get("border_width", 1)))))
+                else:
+                    border_item.setPen(pg.mkPen((255, 255, 255, 0), width=1))
+            except Exception:
+                pass
+        if selection_item is not None:
+            try:
+                selection_item.setData(outline_x, outline_y)
+                if did == self.selected_drawing_id:
+                    selection_item.setPen(pg.mkPen("#ffff00", width=2))
+                    selection_item.show()
+                else:
+                    selection_item.hide()
+            except Exception:
+                pass
 
         try:
             text_item.setText(str(drawing.get("text", "")), color=style.get("color", "#ffffff"))
@@ -1710,11 +1780,24 @@ class ChartWidget(QtWidgets.QWidget):
         background.setAcceptedMouseButtons(QtCore.Qt.NoButton)
         self.plot.addItem(background)
 
-        border = QtWidgets.QGraphicsRectItem(left, bottom, width, height)
-        border.setBrush(QtGui.QBrush(QtCore.Qt.NoBrush))
+        border = pg.PlotDataItem(
+            x=[left, right, right, left, left],
+            y=[top, top, bottom, bottom, top],
+            pen=pg.mkPen((255, 255, 255, 0), width=1),
+        )
         border.setZValue(6)
         border.setAcceptedMouseButtons(QtCore.Qt.NoButton)
         self.plot.addItem(border)
+
+        selection = pg.PlotDataItem(
+            x=[left, right, right, left, left],
+            y=[top, top, bottom, bottom, top],
+            pen=pg.mkPen("#ffff00", width=2),
+        )
+        selection.setZValue(8)
+        selection.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        selection.hide()
+        self.plot.addItem(selection)
 
         text_item = MovableTextItem(text=str(drawing.get("text", "")), color=style.get("color", "#ffffff"), anchor=(0, 0))
         text_item.setZValue(7)
@@ -1727,7 +1810,13 @@ class ChartWidget(QtWidgets.QWidget):
         text_item.context_menu_callback = lambda d=did: self._show_drawing_context_menu(d)
         self.plot.addItem(text_item)
 
-        roi = pg.RectROI([left, bottom], [width, height], pen=pg.mkPen((255,255,0,0), width=1), movable=True)
+        # Bare ROI has no default top-right handle; only our two midpoint
+        # handles are installed below.
+        roi = pg.ROI([left, bottom], [width, height], pen=pg.mkPen((255,255,0,0), width=1), movable=True)
+        try:
+            roi.setHoverPen(pg.mkPen((255,255,0,0), width=1))
+        except Exception:
+            pass
         self._configure_right_bottom_resize_handles(roi)
         roi.setZValue(8)
         roi.setAcceptedMouseButtons(QtCore.Qt.NoButton)
@@ -1736,9 +1825,9 @@ class ChartWidget(QtWidgets.QWidget):
         roi._magnet_prev_rect = (left, bottom, right, top)
         self.plot.addItem(roi)
 
-        group = {"type": "text", "roi": roi, "text": text_item, "border": border, "background": background}
+        group = {"type": "text", "roi": roi, "text": text_item, "border": border, "selection": selection, "background": background}
         self.drawing_items[did] = group
-        for item in (roi, text_item, border, background):
+        for item in (roi, text_item, border, selection, background):
             self._register_drawing_hit_item(did, item)
             try: item.setToolTip(f"text / {did}")
             except Exception: pass
@@ -1778,7 +1867,7 @@ class ChartWidget(QtWidgets.QWidget):
                 if roi is not None:
                     try:
                         roi.setAcceptedMouseButtons(QtCore.Qt.LeftButton if selected else QtCore.Qt.NoButton)
-                        roi.setPen(pg.mkPen("#ffff00" if selected else (255, 255, 0, 0), width=2 if selected else 1))
+                        roi.setPen(pg.mkPen((255, 255, 0, 0), width=1))
                         self._set_roi_handles_visible(roi, selected)
                     except Exception:
                         pass
@@ -1787,10 +1876,13 @@ class ChartWidget(QtWidgets.QWidget):
             elif dtype == "rectangle" and isinstance(item, dict):
                 roi = item.get("roi")
                 if roi is not None:
-                    style = drawing.get("style", {})
-                    base = style.get("border_color", "#ffffff")
-                    width = int(style.get("width", 2))
-                    roi.setPen(pg.mkPen("#ffff00" if selected else base, width=width + (1 if selected else 0)))
+                    try:
+                        roi.setAcceptedMouseButtons(QtCore.Qt.LeftButton if selected else QtCore.Qt.NoButton)
+                        roi.setPen(pg.mkPen((255, 255, 255, 0), width=1))
+                        self._set_roi_handles_visible(roi, selected)
+                    except Exception:
+                        pass
+                self._update_rectangle_fill(item)
             elif dtype == "fibonacci" and isinstance(item, dict):
                 levels = drawing.get("levels", [])
                 width = int(drawing.get("style", {}).get("width", 2))
@@ -1889,6 +1981,8 @@ class ChartWidget(QtWidgets.QWidget):
         if dtype in {"horizontal_line", "trend_line", "rectangle", "text"}:
             if isinstance(template.get("style"), dict):
                 drawing["style"] = deepcopy(template["style"])
+                if dtype == "text" and not bool(drawing["style"].get("auto_wrap", True)):
+                    self._fit_text_box_width_to_content(drawing)
         elif dtype == "fibonacci":
             if isinstance(template.get("levels"), list):
                 drawing["levels"] = deepcopy(template["levels"])
@@ -1954,6 +2048,8 @@ class ChartWidget(QtWidgets.QWidget):
         text, new_style = dialog.values()
         drawing["text"] = text
         drawing["style"] = new_style
+        if not bool(new_style.get("auto_wrap", True)):
+            self._fit_text_box_width_to_content(drawing)
         self._commit_drawing_change()
 
     def _change_text_color(self, did: str):
@@ -2291,7 +2387,25 @@ class ChartWidget(QtWidgets.QWidget):
             return
         try:
             pos = roi.pos(); size = roi.size()
-            fill.setRect(float(pos.x()), float(pos.y()), float(size.x()), float(size.y()))
+            left = float(pos.x()); bottom = float(pos.y())
+            right = left + float(size.x()); top = bottom + float(size.y())
+            fill.setRect(left, bottom, right - left, top - bottom)
+            drawing = group.get("drawing") or {}
+            style = drawing.get("style", {})
+            outline_x = [left, right, right, left, left]
+            outline_y = [top, top, bottom, bottom, top]
+            outline = group.get("outline")
+            if outline is not None:
+                outline.setData(outline_x, outline_y)
+                outline.setPen(pg.mkPen(style.get("border_color", "#ffffff"), width=max(1, int(style.get("width", 2)))))
+            selection = group.get("selection")
+            if selection is not None:
+                selection.setData(outline_x, outline_y)
+                if drawing.get("id") == self.selected_drawing_id:
+                    selection.setPen(pg.mkPen("#ffff00", width=max(2, int(style.get("width", 2)) + 1)))
+                    selection.show()
+                else:
+                    selection.hide()
         except Exception:
             pass
 
@@ -2311,17 +2425,45 @@ class ChartWidget(QtWidgets.QWidget):
         fill_item.setZValue(3)
         self.plot.addItem(fill_item)
 
-        roi = pg.RectROI(
-            [left, bottom], [right - left, top - bottom],
-            pen=pg.mkPen(border, width=int(style.get("width", 2))), movable=True,
+        outline = pg.PlotDataItem(
+            x=[left, right, right, left, left],
+            y=[top, top, bottom, bottom, top],
+            pen=pg.mkPen(border, width=int(style.get("width", 2))),
         )
+        outline.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        outline.setZValue(4)
+        self.plot.addItem(outline)
+
+        selection = pg.PlotDataItem(
+            x=[left, right, right, left, left],
+            y=[top, top, bottom, bottom, top],
+            pen=pg.mkPen("#ffff00", width=max(2, int(style.get("width", 2)) + 1)),
+        )
+        selection.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        selection.setZValue(5)
+        selection.hide()
+        self.plot.addItem(selection)
+
+        # Bare ROI prevents pyqtgraph's built-in top-right corner handle from
+        # appearing; only right-middle and bottom-middle handles are installed.
+        roi = pg.ROI(
+            [left, bottom], [right - left, top - bottom],
+            pen=pg.mkPen((255, 255, 255, 0), width=1), movable=True,
+        )
+        try:
+            roi.setHoverPen(pg.mkPen((255, 255, 255, 0), width=1))
+        except Exception:
+            pass
         self._configure_right_bottom_resize_handles(roi)
-        roi.setZValue(4)
+        self._set_roi_handles_visible(roi, False)
+        roi.setZValue(6)
         self.plot.addItem(roi)
-        group = {"type": "rectangle", "roi": roi, "fill": fill_item}
+        group = {"type": "rectangle", "roi": roi, "fill": fill_item, "outline": outline, "selection": selection, "drawing": drawing}
         self.drawing_items[did] = group
         self._register_drawing_hit_item(did, roi)
         self._register_drawing_hit_item(did, fill_item)
+        self._register_drawing_hit_item(did, outline)
+        self._register_drawing_hit_item(did, selection)
         roi._magnet_guard = False
         roi._magnet_prev_rect = (left, bottom, right, top)
         roi.sigRegionChanged.connect(lambda _=None, d=did: self._rectangle_region_changed(d))

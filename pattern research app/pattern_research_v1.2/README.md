@@ -1,6 +1,14 @@
-#### Pattern Research v1.0
+#### Pattern Research v1.2
 
 這是依照新版 architecture 建立的第一個可迭代版本。UI 視覺沿用舊 `backtest_UI.py` 的 PyQtGraph 深色風格，但核心已拆成 `shared_core`、`pattern_analyzer`、`case_generator`。
+
+
+##### v1.2 Text / Rectangle resize 修正
+
+- Text 實體框線與選取框都改為完整四邊閉合線。
+- Text 關閉自動換行時，套用設定會依最長一行自動 fit 寬度。
+- Text / Rectangle 完全移除舊右上角縮放 handle，只保留右側中點與下側中點。
+- Text 設定中的 B / I 按鈕啟用時會反白。
 
 ##### v0.1 已包含
 
