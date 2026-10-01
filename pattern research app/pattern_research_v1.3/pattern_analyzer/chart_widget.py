@@ -1532,14 +1532,8 @@ class ChartWidget(QtWidgets.QWidget):
             pass
 
     @staticmethod
-    def _configure_right_bottom_resize_handles(roi):
-        """Install exactly two resize handles: right-middle and bottom-middle.
-
-        New text/rectangle ROIs are created from bare ``pg.ROI`` instead of
-        ``RectROI`` so the legacy top-right corner handle never exists.  The
-        cleanup below is kept for compatibility with any older object rebuilt
-        from a previous session.
-        """
+    def _clear_roi_handles(roi):
+        """Remove any existing ROI handles, including legacy corner handles."""
         try:
             for handle in list(roi.getHandles()):
                 try:
@@ -1552,9 +1546,42 @@ class ChartWidget(QtWidgets.QWidget):
                             scene.removeItem(handle)
                     except Exception:
                         pass
-            right_handle = roi.addScaleHandle([1.0, 0.5], [0.0, 0.5], name="resize_width")
-            bottom_handle = roi.addScaleHandle([0.5, 0.0], [0.5, 1.0], name="resize_height")
+        except Exception:
+            pass
+
+    @staticmethod
+    def _configure_right_bottom_resize_handles(roi):
+        """Text-box handles: right-middle adjusts width; bottom-middle adjusts height."""
+        ChartWidget._clear_roi_handles(roi)
+        try:
+            right_handle = roi.addScaleHandle([1.0, 0.5], [0.0, 0.5], name="resize_right")
+            bottom_handle = roi.addScaleHandle([0.5, 0.0], [0.5, 1.0], name="resize_bottom")
             for handle in (right_handle, bottom_handle):
+                try:
+                    handle.setZValue(30)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    @staticmethod
+    def _configure_four_side_resize_handles(roi):
+        """Rectangle handles: one midpoint on each edge, with no corner handles.
+
+        Each handle scales only the corresponding edge while the opposite edge
+        remains anchored:
+        - left-middle  -> adjusts left edge
+        - right-middle -> adjusts right edge
+        - top-middle   -> adjusts top edge
+        - bottom-middle-> adjusts bottom edge
+        """
+        ChartWidget._clear_roi_handles(roi)
+        try:
+            left_handle = roi.addScaleHandle([0.0, 0.5], [1.0, 0.5], name="resize_left")
+            right_handle = roi.addScaleHandle([1.0, 0.5], [0.0, 0.5], name="resize_right")
+            top_handle = roi.addScaleHandle([0.5, 1.0], [0.5, 0.0], name="resize_top")
+            bottom_handle = roi.addScaleHandle([0.5, 0.0], [0.5, 1.0], name="resize_bottom")
+            for handle in (left_handle, right_handle, top_handle, bottom_handle):
                 try:
                     handle.setZValue(30)
                 except Exception:
@@ -2444,8 +2471,8 @@ class ChartWidget(QtWidgets.QWidget):
         selection.hide()
         self.plot.addItem(selection)
 
-        # Bare ROI prevents pyqtgraph's built-in top-right corner handle from
-        # appearing; only right-middle and bottom-middle handles are installed.
+        # Bare ROI prevents pyqtgraph's built-in corner handle from appearing.
+        # Rectangle uses exactly four edge-midpoint resize handles.
         roi = pg.ROI(
             [left, bottom], [right - left, top - bottom],
             pen=pg.mkPen((255, 255, 255, 0), width=1), movable=True,
@@ -2454,7 +2481,7 @@ class ChartWidget(QtWidgets.QWidget):
             roi.setHoverPen(pg.mkPen((255, 255, 255, 0), width=1))
         except Exception:
             pass
-        self._configure_right_bottom_resize_handles(roi)
+        self._configure_four_side_resize_handles(roi)
         self._set_roi_handles_visible(roi, False)
         roi.setZValue(6)
         self.plot.addItem(roi)

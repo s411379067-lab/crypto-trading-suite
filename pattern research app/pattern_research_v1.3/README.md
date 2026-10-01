@@ -1,3 +1,10 @@
+# Pattern Research v1.3
+
+## v1.3 changes
+- Rectangle resize controls now use four edge-midpoint handles: left, right, top, and bottom.
+- Corner resize handles remain disabled.
+- Text box resize behavior is unchanged (right-middle and bottom-middle only).
+
 #### Pattern Research v1.2
 
 這是依照新版 architecture 建立的第一個可迭代版本。UI 視覺沿用舊 `backtest_UI.py` 的 PyQtGraph 深色風格，但核心已拆成 `shared_core`、`pattern_analyzer`、`case_generator`。
