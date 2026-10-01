@@ -145,6 +145,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.shortcut_redo.setContext(QtCore.Qt.ApplicationShortcut)
         self.shortcut_redo.activated.connect(self.redo)
 
+        self.shortcut_clear_note = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Escape), self)
+        self.shortcut_clear_note.setContext(QtCore.Qt.WindowShortcut)
+        self.shortcut_clear_note.activated.connect(self.research.clear_note_selection)
+
         self.autosave = QtCore.QTimer(self)
         self.autosave.setInterval(1000)
         self.autosave.timeout.connect(self.save_if_dirty)
@@ -175,7 +179,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Rendering can normalize legacy Drawing fields; start history from the normalized state.
         self.undo_manager.reset(case)
         self.update_status()
-        self.setWindowTitle(f"Pattern Analyzer v1.9 — {case.case.get('symbol')} — {self.case_path.name}")
+        self.setWindowTitle(f"Pattern Analyzer v1.10 — {case.case.get('symbol')} — {self.case_path.name}")
 
     def _record_history(self, label: str):
         if self.case is None:

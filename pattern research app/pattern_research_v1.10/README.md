@@ -1,12 +1,12 @@
-# Pattern Research v1.9
+# Pattern Research v1.10
 
-## v1.9 Selected Intraday Note Callout
+## v1.10 Selected Intraday Note Callout
 - 單擊一筆盤中紀錄後，以該紀錄時間對應的原始 M1 Close 作為 Anchor。
 - 從 Anchor 拉出高 z-order 黃色斜線，連到圖表上方固定安全區。
 - 上方顯示深色背景／白字的盤中紀錄文字；一次只顯示目前選取的一筆。
 - 切換 Note、取消選取、切換 Case 時同步更新／清除。
 - Callout 為 transient overlay，不寫入 drawings[]、不進 Template、也不加入 Undo/Redo。
-- 新增 Note 額外保存 replay_time_utc；舊 Note 仍可由既有 replay_time 相容解析。
+- 不新增 Callout 專用 JSON 欄位；既有 replay_time 直接作為 M1 Anchor 的時間來源。
 
 # Pattern Research v1.5
 
@@ -282,3 +282,9 @@ Previous RTH now stores High / Low / Close plus their timestamps. The Enricher o
 - Intraday Note operations covered: add/delete/edit.
 - Text editors retain native text undo/redo while focused.
 - Trend Line whole-object movement now persists absolute endpoints correctly so moved/copied lines do not jump back after re-render.
+
+
+### v1.10 — Intraday Note Callout deselection
+- Click the currently selected intraday note again to clear its selection and hide the chart callout.
+- Press Esc in the analyzer window to clear the selected intraday note and hide the callout.
+- Double-click inline note editing remains available.

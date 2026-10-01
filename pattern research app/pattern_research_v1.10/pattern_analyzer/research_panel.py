@@ -5,6 +5,64 @@ from pyqtgraph.Qt import QtCore, QtWidgets
 from shared_core.models import utc_now_iso
 
 
+class DeselectableNoteListWidget(QtWidgets.QListWidget):
+    """QListWidget where a second single-click on the selected row deselects it.
+
+    A real double-click still behaves normally so the parent can open the
+    inline note editor without leaving the row deselected.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._clear_on_release_id = None
+        self._press_pos = None
+
+    @staticmethod
+    def _event_pos(event):
+        try:
+            return event.position().toPoint()
+        except Exception:
+            return event.pos()
+
+    def mousePressEvent(self, event):
+        self._clear_on_release_id = None
+        self._press_pos = self._event_pos(event)
+        if event.button() == QtCore.Qt.LeftButton:
+            item = self.itemAt(self._press_pos)
+            if item is not None and item.isSelected():
+                self._clear_on_release_id = item.data(QtCore.Qt.UserRole)
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        # Do not let the second release of a double-click toggle selection off.
+        self._clear_on_release_id = None
+        super().mouseDoubleClickEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        release_pos = self._event_pos(event)
+        pending_id = self._clear_on_release_id
+        press_pos = self._press_pos
+        self._clear_on_release_id = None
+        self._press_pos = None
+        super().mouseReleaseEvent(event)
+
+        if event.button() != QtCore.Qt.LeftButton or pending_id is None:
+            return
+        item = self.itemAt(release_pos)
+        if item is None or item.data(QtCore.Qt.UserRole) != pending_id:
+            return
+        if press_pos is not None:
+            delta = release_pos - press_pos
+            if delta.manhattanLength() > QtWidgets.QApplication.startDragDistance():
+                return
+        self.clearSelection()
+        try:
+            self.selectionModel().clearCurrentIndex()
+        except Exception:
+            pass
+
+
+
 class ResearchPanel(QtWidgets.QWidget):
     changed = QtCore.Signal()
     reference_levels_changed = QtCore.Signal(bool)
@@ -55,7 +113,7 @@ class ResearchPanel(QtWidgets.QWidget):
         self.note_input.setPlaceholderText("記錄目前 Replay 時點看到的結構與想法…")
         self.note_input.setMaximumHeight(100)
         self.btn_add_note = QtWidgets.QPushButton("新增盤中紀錄")
-        self.note_list = QtWidgets.QListWidget()
+        self.note_list = DeselectableNoteListWidget()
         self.btn_delete_note = QtWidgets.QPushButton("刪除選取紀錄")
         n_layout.addWidget(self.note_input)
         n_layout.addWidget(self.btn_add_note)
@@ -80,7 +138,7 @@ class ResearchPanel(QtWidgets.QWidget):
     def refresh(self, preserve_note_selection=True):
         selected_note_id = None
         if preserve_note_selection:
-            current = self.note_list.currentItem()
+            current = self._selected_note_item()
             if current is not None:
                 selected_note_id = current.data(QtCore.Qt.UserRole)
         self._editing_note_id = None
@@ -177,10 +235,28 @@ class ResearchPanel(QtWidgets.QWidget):
         self.changed.emit()
         self.history_committed.emit("Add Note")
 
+    def _selected_note_item(self):
+        items = self.note_list.selectedItems()
+        return items[0] if items else None
+
+    def clear_note_selection(self):
+        """Clear the selected intraday note and therefore its chart callout."""
+        if self._editing_note_id is not None:
+            self.refresh(preserve_note_selection=False)
+            return
+        self.note_list.blockSignals(True)
+        self.note_list.clearSelection()
+        try:
+            self.note_list.selectionModel().clearCurrentIndex()
+        except Exception:
+            pass
+        self.note_list.blockSignals(False)
+        self.note_selection_changed.emit(None)
+
     def delete_note(self):
         if self.case is None:
             return
-        item = self.note_list.currentItem()
+        item = self._selected_note_item()
         if item is None:
             return
         target_id = item.data(QtCore.Qt.UserRole)
@@ -194,7 +270,7 @@ class ResearchPanel(QtWidgets.QWidget):
         if self.case is None:
             self.note_selection_changed.emit(None)
             return
-        item = self.note_list.currentItem()
+        item = self._selected_note_item()
         if item is None:
             self.note_selection_changed.emit(None)
             return
