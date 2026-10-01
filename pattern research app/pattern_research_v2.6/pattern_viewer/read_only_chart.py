@@ -20,6 +20,7 @@ class ReadOnlyChartWidget(ChartWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.drawing_interaction_enabled = False
 
         # Hide drawing-creation tools. The Drawing visibility toggle remains useful.
         for widget in (self.btn_h, self.btn_l, self.btn_t, self.btn_rect, self.btn_fibo):
@@ -138,13 +139,31 @@ class ReadOnlyChartWidget(ChartWidget):
         super()._render_drawing_items()
         self._lock_all_drawing_items()
 
+    @staticmethod
+    def _disable_graphics_interaction(obj):
+        if obj is None:
+            return
+        try:
+            obj.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        except Exception:
+            pass
+        try:
+            obj.setFlag(QtWidgets.QGraphicsItem.ItemIsMovable, False)
+        except Exception:
+            pass
+        try:
+            obj.setEnabled(False)
+        except Exception:
+            pass
+
     def _lock_roi(self, roi):
         if roi is None:
             return
         try:
-            roi.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+            roi.setMovable(False)
         except Exception:
             pass
+        self._disable_graphics_interaction(roi)
         try:
             self._set_roi_handles_visible(roi, False)
         except Exception:
@@ -152,22 +171,21 @@ class ReadOnlyChartWidget(ChartWidget):
         for marker in list(getattr(roi, "_standard_handle_markers", []) or []):
             try:
                 marker.setVisible(False)
-                marker.setAcceptedMouseButtons(QtCore.Qt.NoButton)
             except Exception:
                 pass
+            self._disable_graphics_interaction(marker)
         try:
             handles = list(roi.getHandles())
         except Exception:
             handles = []
         for handle in handles:
-            try:
-                handle.setAcceptedMouseButtons(QtCore.Qt.NoButton)
-            except Exception:
-                pass
+            self._disable_graphics_interaction(handle)
 
     def _lock_all_drawing_items(self):
         """Disable every mutable Drawing hit target after each render/rebuild."""
         self.selected_drawing_id = None
+        self.drawing_hit_items.clear()
+        self._drawing_hit_objects.clear()
         for item in list(self.drawing_items.values()):
             if isinstance(item, dict):
                 roi = item.get("roi")
@@ -175,16 +193,10 @@ class ReadOnlyChartWidget(ChartWidget):
                 for key in ("text", "border", "selection", "background", "fill", "outline"):
                     obj = item.get(key)
                     if obj is not None:
-                        try:
-                            obj.setAcceptedMouseButtons(QtCore.Qt.NoButton)
-                        except Exception:
-                            pass
+                        self._disable_graphics_interaction(obj)
                 for key in ("anchors", "anchor_markers", "hit_lines", "lines"):
                     for obj in item.get(key, []) or []:
-                        try:
-                            obj.setAcceptedMouseButtons(QtCore.Qt.NoButton)
-                        except Exception:
-                            pass
+                        self._disable_graphics_interaction(obj)
                         if key in {"anchors", "anchor_markers"}:
                             try:
                                 obj.setVisible(False)
@@ -197,7 +209,4 @@ class ReadOnlyChartWidget(ChartWidget):
                 item.setMovable(False)
             except Exception:
                 pass
-            try:
-                item.setAcceptedMouseButtons(QtCore.Qt.NoButton)
-            except Exception:
-                pass
+            self._disable_graphics_interaction(item)

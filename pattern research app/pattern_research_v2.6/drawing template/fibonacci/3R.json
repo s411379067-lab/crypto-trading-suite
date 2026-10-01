@@ -1,0 +1,35 @@
+{
+  "template_version": "1.0",
+  "name": "3R",
+  "drawing_type": "fibonacci",
+  "levels": [
+    {
+      "multiplier": 0.0,
+      "color": "#ffffff"
+    },
+    {
+      "multiplier": 0.5,
+      "color": "#fff9c4"
+    },
+    {
+      "multiplier": 1.0,
+      "color": "#ffffff"
+    },
+    {
+      "multiplier": 2.0,
+      "color": "#ffffff"
+    },
+    {
+      "multiplier": 3.0,
+      "color": "#ffffff"
+    },
+    {
+      "multiplier": 4.0,
+      "color": "#ff9800"
+    }
+  ],
+  "style": {
+    "width": 1,
+    "line_style": "dashed"
+  }
+}

@@ -1,4 +1,12 @@
-# Pattern Research v2.5
+# Pattern Research v2.6
+
+## v2.6 — Viewer Drawing interaction hard-disable + Analyzer Current Range
+
+- Viewer keeps the existing Drawing renderer but removes saved Drawings from the interaction layer after every render/rebuild: no selection, drag, resize, context-menu editing, copy/paste, or delete.
+- Analyzer Drawing editing remains unchanged.
+- Analyzer toolbar adds `目前 Range`, calculated from revealed raw M1 rows from `replay_start` through the current replay timestamp.
+- Current Range points = highest High - lowest Low; Current Range % = Range points / first M1 Open at or after `replay_start` × 100.
+- It is independent of M1/M5/M15/H1 view timeframe, updates on replay forward/backward/reset/render, and is transient only.
 
 ## v2.5 — Generator create-only safety
 

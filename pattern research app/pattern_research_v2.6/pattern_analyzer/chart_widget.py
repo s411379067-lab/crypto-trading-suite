@@ -14,6 +14,7 @@ from shared_core.aggregation import aggregate_visible_bars, timeframe_seconds
 from shared_core.drawing_clipboard import clone_drawing_with_offset
 from shared_core.note_callout import align_note_x_to_timeframe, find_m1_close, layout_alternating_note_callouts, resolve_note_timestamp, wrap_note_text
 from shared_core.rth import summarize_intraday_volatility_payload
+from shared_core.replay_stats import summarize_current_replay_range
 from pattern_analyzer.drawing_templates import DrawingTemplateRepository
 
 
@@ -778,6 +779,12 @@ class ChartWidget(QtWidgets.QWidget):
         self.vol_stats_label = QtWidgets.QLabel("Med -- | σ -- | 2σ -- | 3σ --")
         self.vol_stats_label.setStyleSheet("color:#d7deea; font-weight:600; padding-left:4px;")
         self.vol_stats_label.setToolTip("Range % = (RTH High - RTH Low) / RTH Open × 100；σ 使用樣本標準差 ddof=1")
+        self.current_range_label = QtWidgets.QLabel("目前 Range --")
+        self.current_range_label.setStyleSheet("color:#ffcc80; font-weight:700; padding-left:8px;")
+        self.current_range_label.setToolTip(
+            "從 replay_start 到目前 Replay 時間，使用已揭露 M1 的最高 High / 最低 Low。\n"
+            "Range % = (High - Low) / replay_start 第一根 M1 Open × 100；不受 View Timeframe 影響。"
+        )
 
         for w in (self.btn_h, self.btn_l, self.btn_t, self.btn_rect, self.btn_fibo):
             tb.addWidget(w)
@@ -791,6 +798,7 @@ class ChartWidget(QtWidgets.QWidget):
         tb.addWidget(self.vol_n_label)
         tb.addWidget(self.vol_n_spin)
         tb.addWidget(self.vol_stats_label)
+        tb.addWidget(self.current_range_label)
         self.measure_status = QtWidgets.QLabel("MEASURE")
         self.measure_status.setStyleSheet(
             "background-color:#2a3952; border:1px solid #ffcc80; border-radius:3px; "
@@ -950,6 +958,7 @@ class ChartWidget(QtWidgets.QWidget):
         self.axis.set_tick_interval(self.x_tick_combo.currentText())
         self.show_previous_rth = bool(case.display.get("show_previous_rth", False))
         self._update_volatility_stats()
+        self._update_current_replay_range()
 
         self.rebuild_drawings()
         self.render(reset_x=True)
@@ -1012,6 +1021,22 @@ class ChartWidget(QtWidgets.QWidget):
             f"最近 {summary['session_count']} 個完整 RTH Session："
             f"{summary['start_date']} → {summary['end_date']}\n"
             "Range % = (High-Low)/RTH Open × 100；σ 為樣本標準差 ddof=1"
+        )
+
+    def _update_current_replay_range(self):
+        """Refresh replay_start → current M1 range; transient and never persisted."""
+        if self.replay is None or self.raw_df is None or self.raw_df.empty:
+            self.current_range_label.setText("目前 Range --")
+            return
+        summary = summarize_current_replay_range(self.raw_df, float(self.replay.replay_start_ts), float(self.replay.current_ts))
+        if summary is None:
+            self.current_range_label.setText("目前 Range --")
+            return
+        self.current_range_label.setText(f"目前 Range {summary['range_pct']:.3f}% ({summary['range_points']:.2f})")
+        self.current_range_label.setToolTip(
+            "Replay 即時波幅（M1 revealed data）\n"
+            f"Open {summary['base_open']:.2f} | High {summary['high']:.2f} | Low {summary['low']:.2f}\n"
+            f"Range {summary['range_points']:.2f} = {summary['range_pct']:.3f}% | bars {summary['bar_count']}"
         )
 
     def set_order_events(self, events: list[dict], render: bool = True):
@@ -1079,6 +1104,7 @@ class ChartWidget(QtWidgets.QWidget):
         if self.auto_all_mode:
             self.auto_all()
 
+        self._update_current_replay_range()
         self._update_note_callout_overlay()
 
 
