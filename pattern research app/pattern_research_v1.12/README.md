@@ -1,4 +1,28 @@
-# Pattern Research v1.10
+# Pattern Research v1.12
+
+## v1.12 Fibonacci line controls + line style
+
+- Fibonacci 不再顯示任何菱形／調整點；所有調整改由水平 level 線本身完成。
+- Level `0` 線：調整第一個基準 Y（start price）。
+- Level `1` 線：調整第二個基準 Y（end price）。
+- 畫面上「最高價格」的 Fibonacci level 線：調整整組 Fibonacci 的右側 X 範圍。
+  - 若最高價格線同時是 0 或 1，拖曳以螢幕方向判斷：垂直拖曳調 Y、水平拖曳調 X。
+  - 因此由高往低畫、levels 為 `0, 0.5, 1, 2, 3` 時，最高價格通常是 `0`，X 只由 `0` 線調整。
+- Fibo 設定新增「整體線條」：
+  - 線型：實線 / 虛線 / 點線
+  - 線粗：1–12
+- 線型與線粗會套用到所有 Fibonacci levels，並隨 Fibonacci Template 儲存。
+- 保留每一個 level 各自的顏色設定。
+- Ctrl magnet 仍支援 0/1 的 Y 調整與最高價格線的 X 調整。
+- Fibo 操作完成仍只產生一筆 Undo transaction。
+
+## v1.11 Note Callout timeframe X alignment
+
+- Note Callout 的 Y anchor 仍固定使用該 replay_time 的原始 M1 close。
+- X anchor 改為依目前顯示 timeframe 對齊「包含該分鐘的 K 棒起始時間」。
+- 例：12:59 Note 在 M1 顯示於 12:59；在 M5 顯示於 12:55；在 M15 顯示於 12:45。
+- 對齊規則與 aggregate_visible_bars() 使用相同的 bucket convention，避免 Callout 指到下一根 K。
+
 
 ## v1.10 Selected Intraday Note Callout
 - 單擊一筆盤中紀錄後，以該紀錄時間對應的原始 M1 Close 作為 Anchor。

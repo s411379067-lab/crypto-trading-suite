@@ -11,7 +11,7 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 from shared_core.aggregation import aggregate_visible_bars, timeframe_seconds
 from shared_core.drawing_clipboard import clone_drawing_with_offset
-from shared_core.note_callout import find_m1_close, resolve_note_timestamp, wrap_note_text
+from shared_core.note_callout import align_note_x_to_timeframe, find_m1_close, resolve_note_timestamp, wrap_note_text
 from pattern_analyzer.drawing_templates import DrawingTemplateRepository
 
 
@@ -542,15 +542,40 @@ class TextSettingsDialog(QtWidgets.QDialog):
 
 
 class FiboSettingsDialog(QtWidgets.QDialog):
+    STYLE_OPTIONS = [
+        ("實線", "solid"),
+        ("虛線", "dashed"),
+        ("點線", "dotted"),
+    ]
+
     def __init__(self, levels: list[dict], style: dict | None = None,
                  save_template_callback: Callable[[dict], None] | None = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Fibo 設定")
-        self.resize(445, 360)
+        self.resize(465, 430)
         self._save_template_callback = save_template_callback
         self._style = deepcopy(style or {"width": 2, "line_style": "solid"})
         layout = QtWidgets.QVBoxLayout(self)
-        layout.addWidget(QtWidgets.QLabel("每列設定倍率與顏色；操作方式沿用舊版 FIBO。"))
+
+        style_box = QtWidgets.QGroupBox("整體線條")
+        style_layout = QtWidgets.QHBoxLayout(style_box)
+        style_layout.addWidget(QtWidgets.QLabel("線型:"))
+        self.style_combo = QtWidgets.QComboBox()
+        for label, key in self.STYLE_OPTIONS:
+            self.style_combo.addItem(label, key)
+        idx = self.style_combo.findData(str(self._style.get("line_style", "solid")))
+        self.style_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        style_layout.addWidget(self.style_combo)
+        style_layout.addSpacing(14)
+        style_layout.addWidget(QtWidgets.QLabel("線粗:"))
+        self.width_spin = QtWidgets.QSpinBox()
+        self.width_spin.setRange(1, 12)
+        self.width_spin.setValue(max(1, int(self._style.get("width", 2))))
+        style_layout.addWidget(self.width_spin)
+        style_layout.addStretch(1)
+        layout.addWidget(style_box)
+
+        layout.addWidget(QtWidgets.QLabel("每列設定倍率與顏色。0 / 1 線調整基準 Y；最高價格線調整 X 寬度。"))
 
         self.table = QtWidgets.QTableWidget(0, 2)
         self.table.setHorizontalHeaderLabels(["倍數", "顏色"])
@@ -622,7 +647,7 @@ class FiboSettingsDialog(QtWidgets.QDialog):
         if row >= 0:
             self.table.removeRow(row)
 
-    def values(self) -> list[dict]:
+    def _level_values(self) -> list[dict]:
         levels = []
         for row in range(self.table.rowCount()):
             item = self.table.item(row, 0)
@@ -639,15 +664,22 @@ class FiboSettingsDialog(QtWidgets.QDialog):
             raise ValueError("請至少保留一個 Fibo level")
         return levels
 
+    def values(self) -> tuple[list[dict], dict]:
+        levels = self._level_values()
+        style = deepcopy(self._style)
+        style["line_style"] = str(self.style_combo.currentData() or "solid")
+        style["width"] = int(self.width_spin.value())
+        return levels, style
+
     def _save_template(self):
         if self._save_template_callback is None:
             return
         try:
-            levels = self.values()
+            levels, style = self.values()
         except ValueError as exc:
             QtWidgets.QMessageBox.warning(self, "Fibo 設定", str(exc))
             return
-        self._save_template_callback({"levels": levels, "style": deepcopy(self._style)})
+        self._save_template_callback({"levels": levels, "style": style})
 
 
 class ChartWidget(QtWidgets.QWidget):
@@ -1019,7 +1051,18 @@ class ChartWidget(QtWidgets.QWidget):
         if anchor is None:
             self._clear_note_callout_overlay()
             return
-        anchor_x, anchor_y = anchor
+        m1_x, anchor_y = anchor
+
+        # The price always comes from the exact M1 close at the note time, but
+        # the X coordinate must belong to the candle that contains that minute
+        # in the CURRENT view timeframe.  Example: a 12:59 note belongs to the
+        # 12:55 candle on M5, while it remains at 12:59 on M1.  This mirrors the
+        # same epoch-floor bucket convention used by aggregate_visible_bars().
+        try:
+            tf_sec = float(timeframe_seconds(self.timeframe_combo.currentText()))
+            anchor_x = align_note_x_to_timeframe(float(m1_x), tf_sec)
+        except Exception:
+            anchor_x = float(m1_x)
 
         try:
             x_range, y_range = self.plot.viewRange()
@@ -2253,15 +2296,8 @@ class ChartWidget(QtWidgets.QWidget):
                         pass
                 self._update_rectangle_fill(item)
             elif dtype == "fibonacci" and isinstance(item, dict):
-                levels = drawing.get("levels", [])
-                width = int(drawing.get("style", {}).get("width", 2))
                 for i, line in enumerate(item.get("lines", [])):
-                    base = levels[i].get("color", "#ffffff") if i < len(levels) else "#ffffff"
-                    line.setPen(pg.mkPen("#ffff00" if selected else base, width=width + (1 if selected else 0)))
-                try:
-                    item["box"].setPen(pg.mkPen((255, 255, 0, 120) if selected else (0, 0, 0, 0), width=1))
-                except Exception:
-                    pass
+                    line.setPen(self._fibo_line_pen(drawing, i, selected=selected))
 
     def _show_drawing_context_menu(self, did: str):
         drawing = self._drawing_by_id(did)
@@ -2468,7 +2504,9 @@ class ChartWidget(QtWidgets.QWidget):
         if dialog.exec() != QtWidgets.QDialog.Accepted:
             return
         try:
-            drawing["levels"] = dialog.values()
+            levels, style = dialog.values()
+            drawing["levels"] = levels
+            drawing["style"] = style
         except ValueError as exc:
             QtWidgets.QMessageBox.warning(self, "Fibo 設定", str(exc))
             return
@@ -2553,14 +2591,6 @@ class ChartWidget(QtWidgets.QWidget):
             ymax = ymin + 1e-6
         return sx, sy, ex, ey, left, right, ymin, ymax, ys
 
-    def _set_rect_line(self, rect, left: float, right: float, y: float, height: float):
-        rect.blockSignals(True)
-        try:
-            rect.setPos([left, y - height * 0.5])
-            rect.setSize([max(right - left, 1e-6), max(height, 1e-6)])
-        finally:
-            rect.blockSignals(False)
-
     def _fibo_handle_height(self, ymin: float, ymax: float) -> float:
         """Return a stable ~16px vertical hit target in current view coordinates."""
         try:
@@ -2570,111 +2600,149 @@ class ChartWidget(QtWidgets.QWidget):
                 return px_height
         except Exception:
             pass
-        # Fallback used before the ViewBox has a valid pixel transform.
         return max((float(ymax) - float(ymin)) * 0.03, max(abs(float(ymax)), 1.0) * 1e-5)
 
+    @staticmethod
+    def _fibo_control_roles(drawing: dict, ys: list[float]) -> dict[int, set[str]]:
+        """Return line-index -> control roles.
+
+        Fibonacci editing intentionally has no visible adjustment handles:
+        - level 0 line controls the start/base Y value;
+        - level 1 line controls the end/base Y value;
+        - the visually highest-price level controls the right X extent.
+
+        A line can own both a Y role and the X role. In that case the dominant
+        screen-space drag axis decides which value changes.
+        """
+        levels = drawing.get("levels", []) or []
+        roles: dict[int, set[str]] = {}
+        for i, level in enumerate(levels):
+            try:
+                multiplier = float(level.get("multiplier", 0.0))
+            except Exception:
+                continue
+            if abs(multiplier - 0.0) <= 1e-9:
+                roles.setdefault(i, set()).add("y0")
+            if abs(multiplier - 1.0) <= 1e-9:
+                roles.setdefault(i, set()).add("y1")
+        if ys:
+            max_idx = max(range(len(ys)), key=lambda i: float(ys[i]))
+            roles.setdefault(max_idx, set()).add("x")
+        return roles
+
+    @staticmethod
+    def _set_fibo_control_roi(roi, left: float, right: float, y: float, height: float):
+        roi.blockSignals(True)
+        try:
+            roi.setPos([float(left), float(y) - float(height) * 0.5])
+            roi.setSize([max(float(right) - float(left), 1e-6), max(float(height), 1e-9)])
+            roi._fibo_expected_left = float(left)
+            roi._fibo_expected_y = float(y)
+        finally:
+            roi.blockSignals(False)
+
+    def _fibo_line_pen(self, drawing: dict, level_index: int, selected: bool = False):
+        levels = drawing.get("levels", []) or []
+        style = drawing.get("style", {}) or {}
+        base = levels[level_index].get("color", "#ffffff") if level_index < len(levels) else "#ffffff"
+        color = "#ffff00" if selected else base
+        width = max(1, int(style.get("width", 2)) + (1 if selected else 0))
+        qt_style = self._qt_line_style(str(style.get("line_style", "solid")))
+        return pg.mkPen(color, width=width, style=qt_style)
+
     def _update_fibo_view_geometry(self, did: str, update_box: bool = True):
+        del update_box  # kept for backward-compatible call sites
         drawing = self._drawing_by_id(did)
         group = self.drawing_items.get(did)
         if drawing is None or not isinstance(group, dict):
             return
         sx, sy, ex, ey, left, right, ymin, ymax, ys = self._fibo_geometry(drawing)
-        tick = max(float(timeframe_seconds(self.timeframe_combo.currentText())), 1.0)
         h = self._fibo_handle_height(ymin, ymax)
-        handle_left, handle_right = left - 0.5 * tick, right + 0.5 * tick
-        if update_box:
-            box = group.get("box")
-            if box is not None:
-                box.blockSignals(True)
-                try:
-                    box.setPos([left, ymin]); box.setSize([right - left, ymax - ymin])
-                finally:
-                    box.blockSignals(False)
-        self._set_rect_line(group["start_handle"], handle_left, handle_right, sy, h)
-        self._set_rect_line(group["end_handle"], handle_left, handle_right, ey, h)
-        group["handle_height"] = h
-        group["last_box_rect"] = [left, right, ymin, ymax]
-        width = int(drawing.get("style", {}).get("width", 2))
+        roles = self._fibo_control_roles(drawing, ys)
         selected = did == self.selected_drawing_id
-        levels = drawing.get("levels", [])
-        for i, (line, y) in enumerate(zip(group.get("lines", []), ys)):
-            line.setData([sx, ex], [y, y])
-            base = levels[i].get("color", "#ffffff") if i < len(levels) else "#ffffff"
-            line.setPen(pg.mkPen("#ffff00" if selected else base, width=width + (1 if selected else 0)))
 
-    def _sync_fibo_from_box(self, did: str):
+        lines = group.get("lines", [])
+        controls = group.get("controls", [])
+        for i, y in enumerate(ys):
+            if i < len(lines):
+                lines[i].setData([sx, ex], [y, y])
+                lines[i].setPen(self._fibo_line_pen(drawing, i, selected=selected))
+            if i < len(controls):
+                control = controls[i]
+                self._set_fibo_control_roi(control, left, right, y, h)
+                control._fibo_roles = set(roles.get(i, set()))
+                control.setAcceptedMouseButtons(
+                    QtCore.Qt.LeftButton if control._fibo_roles else QtCore.Qt.NoButton
+                )
+                control.setZValue(22 if control._fibo_roles else 1)
+
+        group["control_roles"] = roles
+        group["handle_height"] = h
+
+    def _sync_fibo_from_control(self, did: str, level_index: int):
         drawing = self._drawing_by_id(did)
         group = self.drawing_items.get(did)
         if drawing is None or not isinstance(group, dict) or group.get("syncing"):
             return
-        box = group.get("box")
-        if box is None:
+        controls = group.get("controls", [])
+        if level_index < 0 or level_index >= len(controls):
             return
+        control = controls[level_index]
+        roles = set(getattr(control, "_fibo_roles", set()) or set())
+        if not roles:
+            return
+
         group["syncing"] = True
         try:
-            pos = box.pos(); size = box.size()
-            curr_left = float(pos.x()); curr_right = float(pos.x() + size.x())
-            curr_ymin = float(pos.y()); curr_ymax = float(pos.y() + size.y())
-            last_left, last_right, last_ymin, last_ymax = group.get(
-                "last_box_rect", [curr_left, curr_right, curr_ymin, curr_ymax]
-            )
-            start_is_left = float(drawing["start"]["time"]) <= float(drawing["end"]["time"])
-            drawing["start"]["time"] = curr_left if start_is_left else curr_right
-            drawing["end"]["time"] = curr_right if start_is_left else curr_left
-            dy = curr_ymin - float(last_ymin)
-            drawing["start"]["price"] = float(drawing["start"]["price"]) + dy
-            drawing["end"]["price"] = float(drawing["end"]["price"]) + dy
-            if self._ctrl_pressed():
-                width_changed = abs((curr_right-curr_left) - (float(last_right)-float(last_left))) > 1e-9
-                if width_changed:
+            pos = control.pos(); size = control.size()
+            current_left = float(pos.x())
+            current_y = float(pos.y() + size.y() * 0.5)
+            expected_left = float(getattr(control, "_fibo_expected_left", current_left))
+            expected_y = float(getattr(control, "_fibo_expected_y", current_y))
+            dx = current_left - expected_left
+            dy = current_y - expected_y
+
+            use_x = False
+            if "x" in roles and not ({"y0", "y1"} & roles):
+                use_x = True
+            elif "x" in roles and ({"y0", "y1"} & roles):
+                try:
+                    x_per_px, y_per_px = self.plot.vb.viewPixelSize()
+                    px_dx = abs(dx / float(x_per_px)) if x_per_px else abs(dx)
+                    px_dy = abs(dy / float(y_per_px)) if y_per_px else abs(dy)
+                except Exception:
+                    px_dx, px_dy = abs(dx), abs(dy)
+                use_x = px_dx >= px_dy
+
+            if use_x:
+                sx, _sy, ex, _ey, left, right, _ymin, _ymax, _ys = self._fibo_geometry(drawing)
+                new_right = float(right + dx)
+                if self._ctrl_pressed():
                     cursor = self._cursor_view_position()
                     if cursor is not None:
-                        sx, _sy = self._magnet_snap_point(*cursor)
-                        if abs(curr_left-float(last_left)) >= abs(curr_right-float(last_right)):
-                            if start_is_left:
-                                drawing["start"]["time"] = sx
-                            else:
-                                drawing["end"]["time"] = sx
-                        else:
-                            if start_is_left:
-                                drawing["end"]["time"] = sx
-                            else:
-                                drawing["start"]["time"] = sx
+                        snap_x, _snap_y = self._magnet_snap_point(*cursor)
+                        new_right = float(snap_x)
+                min_width = max(float(timeframe_seconds(self.timeframe_combo.currentText())) * 0.20, 1e-6)
+                new_right = max(new_right, float(left) + min_width)
+                # X control always edits the visually right edge; whichever domain
+                # endpoint currently owns that edge is updated.
+                if float(drawing["start"]["time"]) >= float(drawing["end"]["time"]):
+                    drawing["start"]["time"] = new_right
                 else:
-                    dx, mdy = self._magnet_cursor_delta()
-                    drawing["start"]["time"] = float(drawing["start"]["time"]) + dx
-                    drawing["end"]["time"] = float(drawing["end"]["time"]) + dx
-                    drawing["start"]["price"] = float(drawing["start"]["price"]) + mdy
-                    drawing["end"]["price"] = float(drawing["end"]["price"]) + mdy
-            self._update_fibo_view_geometry(did, update_box=True)
-            self.case.touch(); self.dirty.emit()
-        finally:
-            group["syncing"] = False
+                    drawing["end"]["time"] = new_right
+            else:
+                new_y = current_y
+                if self._ctrl_pressed():
+                    cursor = self._cursor_view_position()
+                    if cursor is not None:
+                        _snap_x, snap_y = self._magnet_snap_point(*cursor)
+                        new_y = float(snap_y)
+                if "y0" in roles:
+                    drawing["start"]["price"] = float(new_y)
+                elif "y1" in roles:
+                    drawing["end"]["price"] = float(new_y)
 
-    def _sync_fibo_from_handles(self, did: str):
-        drawing = self._drawing_by_id(did)
-        group = self.drawing_items.get(did)
-        if drawing is None or not isinstance(group, dict) or group.get("syncing"):
-            return
-        group["syncing"] = True
-        try:
-            sh = group.get("start_handle"); eh = group.get("end_handle")
-            sp, ss = sh.pos(), sh.size(); ep, es = eh.pos(), eh.size()
-            new_start = float(sp.y() + ss.y() * 0.5)
-            new_end = float(ep.y() + es.y() * 0.5)
-            old_start = float(drawing["start"]["price"])
-            old_end = float(drawing["end"]["price"])
-            if self._ctrl_pressed():
-                cursor = self._cursor_view_position()
-                if cursor is not None:
-                    _sx, sy = self._magnet_snap_point(*cursor)
-                    if abs(new_start-old_start) >= abs(new_end-old_end):
-                        new_start = sy
-                    else:
-                        new_end = sy
-            drawing["start"]["price"] = new_start
-            drawing["end"]["price"] = new_end
-            self._update_fibo_view_geometry(did, update_box=True)
+            self._update_fibo_view_geometry(did)
             self.case.touch(); self.dirty.emit()
         finally:
             group["syncing"] = False
@@ -2682,8 +2750,6 @@ class ChartWidget(QtWidgets.QWidget):
     def _finish_fibo_change(self, did: str):
         if self.case is None or self._drawing_by_id(did) is None:
             return
-        # Domain values are updated live while dragging; only the finished signal
-        # becomes one undo transaction.
         self.case.touch()
         self.dirty.emit()
         self.history_committed.emit("Move/Resize Fibonacci")
@@ -2691,65 +2757,63 @@ class ChartWidget(QtWidgets.QWidget):
     def _render_fibonacci(self, drawing: dict):
         did = drawing.get("id")
         sx, sy, ex, ey, left, right, ymin, ymax, ys = self._fibo_geometry(drawing)
-        tick = max(float(timeframe_seconds(self.timeframe_combo.currentText())), 1.0)
         handle_h = self._fibo_handle_height(ymin, ymax)
-        handle_left, handle_right = left - 0.5 * tick, right + 0.5 * tick
-
-        box = pg.RectROI([left, ymin], [right - left, ymax - ymin], pen=pg.mkPen((0, 0, 0, 0)), movable=True)
-        try:
-            box.setHoverPen(pg.mkPen((255, 255, 0, 100), width=1))
-        except Exception:
-            pass
-        self.plot.addItem(box)
-
-        # The visible Fibo level stays thin; these ROIs are deliberately much taller
-        # invisible hit-zones so the 0/1 controls remain easy to grab at any zoom.
-        transparent_pen = pg.mkPen((255, 255, 255, 0), width=1)
-        start_handle = pg.RectROI(
-            [handle_left, sy - handle_h * 0.5], [handle_right - handle_left, handle_h],
-            pen=transparent_pen, movable=True, rotatable=False, resizable=False,
-        )
-        end_handle = pg.RectROI(
-            [handle_left, ey - handle_h * 0.5], [handle_right - handle_left, handle_h],
-            pen=transparent_pen, movable=True, rotatable=False, resizable=False,
-        )
-        for handle in (start_handle, end_handle):
-            handle.setZValue(20)
-            handle.setAcceptedMouseButtons(QtCore.Qt.LeftButton)
-            try:
-                handle.setHoverPen(pg.mkPen((255, 235, 59, 210), width=2))
-            except Exception:
-                pass
-        self.plot.addItem(start_handle); self.plot.addItem(end_handle)
+        roles = self._fibo_control_roles(drawing, ys)
 
         lines = []
-        levels = drawing.get("levels", [])
-        width = int(drawing.get("style", {}).get("width", 2))
+        levels = drawing.get("levels", []) or []
         for i, y in enumerate(ys):
-            color = levels[i].get("color", "#ffffff") if i < len(levels) else "#ffffff"
-            line = pg.PlotDataItem(x=[sx, ex], y=[y, y], pen=pg.mkPen(color, width=width))
+            line = pg.PlotDataItem(x=[sx, ex], y=[y, y], pen=self._fibo_line_pen(drawing, i, selected=False))
             line.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+            line.setZValue(10)
             self.plot.addItem(line)
             lines.append(line)
 
+        # One invisible, handle-free hit strip is placed over every level line.
+        # Only the 0, 1 and highest-price level receive mouse input. Using bare
+        # pg.ROI (not RectROI / LineSegmentROI) guarantees there are no diamond
+        # adjustment points at any zoom or selection state.
+        controls = []
+        transparent_pen = pg.mkPen((255, 255, 255, 0), width=1)
+        for i, y in enumerate(ys):
+            control = pg.ROI(
+                [left, y - handle_h * 0.5],
+                [max(right - left, 1e-6), handle_h],
+                pen=transparent_pen,
+                movable=True,
+            )
+            control._fibo_roles = set(roles.get(i, set()))
+            control._fibo_expected_left = float(left)
+            control._fibo_expected_y = float(y)
+            control.setAcceptedMouseButtons(QtCore.Qt.LeftButton if control._fibo_roles else QtCore.Qt.NoButton)
+            control.setZValue(22 if control._fibo_roles else 1)
+            try:
+                control.setHoverPen(transparent_pen)
+            except Exception:
+                pass
+            self.plot.addItem(control)
+            controls.append(control)
+
         group = {
-            "type": "fibonacci", "box": box, "start_handle": start_handle, "end_handle": end_handle,
-            "lines": lines, "last_box_rect": [left, right, ymin, ymax], "syncing": False,
+            "type": "fibonacci",
+            "lines": lines,
+            "controls": controls,
+            "control_roles": roles,
+            "syncing": False,
             "handle_height": handle_h,
         }
         self.drawing_items[did] = group
-        for item in [box, start_handle, end_handle, *lines]:
+
+        for item in [*controls, *lines]:
             self._register_drawing_hit_item(did, item)
             try:
                 item.setToolTip(f"fibonacci / {did}")
             except Exception:
                 pass
-        box.sigRegionChanged.connect(lambda _=None, d=did: self._sync_fibo_from_box(d))
-        start_handle.sigRegionChanged.connect(lambda _=None, d=did: self._sync_fibo_from_handles(d))
-        end_handle.sigRegionChanged.connect(lambda _=None, d=did: self._sync_fibo_from_handles(d))
-        box.sigRegionChangeFinished.connect(lambda _=None, d=did: self._finish_fibo_change(d))
-        start_handle.sigRegionChangeFinished.connect(lambda _=None, d=did: self._finish_fibo_change(d))
-        end_handle.sigRegionChangeFinished.connect(lambda _=None, d=did: self._finish_fibo_change(d))
+
+        for i, control in enumerate(controls):
+            control.sigRegionChanged.connect(lambda _=None, d=did, idx=i: self._sync_fibo_from_control(d, idx))
+            control.sigRegionChangeFinished.connect(lambda _=None, d=did: self._finish_fibo_change(d))
 
     def _rectangle_geometry(self, drawing: dict):
         p1, p2 = drawing["points"]
@@ -2922,7 +2986,7 @@ class ChartWidget(QtWidgets.QWidget):
                 if roi is not None:
                     self._sync_rectangle(roi, d, emit=False)
             elif d.get("type") == "fibonacci":
-                # Fibo domain data is updated live from the box/0x/1x handles.
+                # Fibo domain data is updated live from the handle-free line control strips.
                 pass
 
     def _magnetize_hline(self, item):

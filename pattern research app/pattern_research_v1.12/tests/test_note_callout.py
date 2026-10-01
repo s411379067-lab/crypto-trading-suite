@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from shared_core.note_callout import find_m1_close, resolve_note_timestamp, wrap_note_text
+from shared_core.note_callout import align_note_x_to_timeframe, find_m1_close, resolve_note_timestamp, wrap_note_text
 
 
 def test_resolve_new_note_utc_time():
@@ -37,3 +37,18 @@ def test_wrap_note_text_preserves_content():
     wrapped = wrap_note_text(text, width=10)
     assert "\n" in wrapped
     assert wrapped.replace("\n", "") == text
+
+
+def test_note_x_aligns_to_display_candle_bucket():
+    # 12:59:00 UTC belongs to the 12:55 M5 candle, while M1 stays at 12:59.
+    ts = datetime(2026, 9, 3, 12, 59, tzinfo=timezone.utc).timestamp()
+    expected_m5 = datetime(2026, 9, 3, 12, 55, tzinfo=timezone.utc).timestamp()
+    assert align_note_x_to_timeframe(ts, 60) == ts
+    assert align_note_x_to_timeframe(ts, 300) == expected_m5
+
+
+def test_note_x_aligns_across_common_timeframes():
+    ts = datetime(2026, 9, 3, 12, 59, tzinfo=timezone.utc).timestamp()
+    assert align_note_x_to_timeframe(ts, 900) == datetime(2026, 9, 3, 12, 45, tzinfo=timezone.utc).timestamp()
+    assert align_note_x_to_timeframe(ts, 1800) == datetime(2026, 9, 3, 12, 30, tzinfo=timezone.utc).timestamp()
+    assert align_note_x_to_timeframe(ts, 3600) == datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc).timestamp()

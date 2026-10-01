@@ -108,6 +108,19 @@ def find_m1_close(raw_df: pd.DataFrame, target_ts: float, tolerance_seconds: flo
     return actual_ts, close
 
 
+
+def align_note_x_to_timeframe(m1_timestamp: float, timeframe_seconds: float) -> float:
+    """Map an exact M1 note timestamp to the containing displayed candle start.
+
+    The Y anchor can still use the exact M1 close; only the X coordinate is
+    bucketed.  This intentionally uses the same epoch-floor convention as the
+    chart aggregation code.
+    """
+    step = float(timeframe_seconds)
+    if step <= 0:
+        return float(m1_timestamp)
+    return float(np.floor(float(m1_timestamp) / step) * step)
+
 def wrap_note_text(text: str, width: int = 26) -> str:
     cleaned = str(text or "").strip()
     if not cleaned:
