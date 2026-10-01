@@ -1392,7 +1392,7 @@ class ChartWidget(QtWidgets.QWidget):
             if dialog.exec() == QtWidgets.QDialog.Accepted:
                 text, style = dialog.values()
                 if text.strip():
-                    box_w, box_h = self._default_text_box_size()
+                    box_w, box_h = self._initial_text_box_size(text, style)
                     self.case.drawings.append({
                         "id": f"drawing-{uuid.uuid4().hex[:12]}",
                         "type": "text",
@@ -1443,14 +1443,70 @@ class ChartWidget(QtWidgets.QWidget):
             "auto_wrap": True,
         }
 
-    def _default_text_box_size(self) -> tuple[float, float]:
+    def _view_size_from_pixels(self, width_px: float, height_px: float) -> tuple[float, float]:
+        """Convert a screen-pixel box size into current chart view coordinates."""
         try:
-            (x0, x1), (y0, y1) = self.plot.viewRange()
-            x_span = max(abs(float(x1) - float(x0)), float(timeframe_seconds(self.timeframe_combo.currentText())) * 10.0)
-            y_span = max(abs(float(y1) - float(y0)), 1e-6)
-            return max(x_span * 0.22, float(timeframe_seconds(self.timeframe_combo.currentText())) * 6.0), max(y_span * 0.16, 1e-6)
+            x_per_px, y_per_px = self.plot.vb.viewPixelSize()
+            width = max(abs(float(x_per_px)) * float(width_px), 1e-6)
+            height = max(abs(float(y_per_px)) * float(height_px), 1e-9)
+            if np.isfinite(width) and np.isfinite(height):
+                return width, height
         except Exception:
-            return float(timeframe_seconds(self.timeframe_combo.currentText())) * 12.0, 1.0
+            pass
+        tf = float(timeframe_seconds(self.timeframe_combo.currentText()))
+        return max(tf * 12.0, 1e-6), 1.0
+
+    def _default_text_box_size(self) -> tuple[float, float]:
+        # Use a predictable TradingView-like initial box rather than a percentage
+        # of the current viewport.  This prevents newly-created text from starting
+        # inside a tiny box when the chart is zoomed far out.
+        return self._view_size_from_pixels(360.0, 180.0)
+
+    def _initial_text_box_size(self, text: str, style: dict) -> tuple[float, float]:
+        """Return the default text box, enlarged vertically if initial content needs it."""
+        default_w, default_h = self._default_text_box_size()
+        try:
+            # Measure using the same font/wrap assumptions as the rendered TextItem.
+            font = QtGui.QFont()
+            font.setPointSize(max(6, int(style.get("font_size", 12))))
+            font.setBold(bool(style.get("bold", False)))
+            font.setItalic(bool(style.get("italic", False)))
+
+            doc = QtGui.QTextDocument()
+            doc.setDefaultFont(font)
+            doc.setPlainText(str(text or ""))
+            if bool(style.get("auto_wrap", True)):
+                doc.setTextWidth(344.0)  # 360px box minus comfortable horizontal padding.
+            else:
+                doc.adjustSize()
+            required_h_px = max(180.0, float(doc.size().height()) + 18.0)
+            _w, required_h = self._view_size_from_pixels(360.0, required_h_px)
+            return default_w, max(default_h, required_h)
+        except Exception:
+            return default_w, default_h
+
+    @staticmethod
+    def _configure_right_bottom_resize_handles(roi):
+        """Use only right-middle (width) and bottom-middle (height) resize handles.
+
+        RectROI normally creates a top-right corner scaler.  Removing it and
+        installing two axis-specific handles gives a more predictable text/box
+        editing interaction: right edge controls width, bottom edge controls height.
+        """
+        try:
+            for handle in list(roi.getHandles()):
+                roi.removeHandle(handle)
+            right_handle = roi.addScaleHandle([1.0, 0.5], [0.0, 0.5], name="resize_width")
+            bottom_handle = roi.addScaleHandle([0.5, 0.0], [0.5, 1.0], name="resize_height")
+            for handle in (right_handle, bottom_handle):
+                try:
+                    handle.setZValue(30)
+                except Exception:
+                    pass
+        except Exception:
+            # If an older pyqtgraph build behaves differently, keep the ROI usable
+            # rather than failing the entire drawing renderer.
+            pass
 
     def _normalize_text_drawing(self, drawing: dict) -> tuple[dict, dict]:
         style = drawing.setdefault("style", {})
@@ -1672,6 +1728,7 @@ class ChartWidget(QtWidgets.QWidget):
         self.plot.addItem(text_item)
 
         roi = pg.RectROI([left, bottom], [width, height], pen=pg.mkPen((255,255,0,0), width=1), movable=True)
+        self._configure_right_bottom_resize_handles(roi)
         roi.setZValue(8)
         roi.setAcceptedMouseButtons(QtCore.Qt.NoButton)
         self._set_roi_handles_visible(roi, False)
@@ -2258,6 +2315,7 @@ class ChartWidget(QtWidgets.QWidget):
             [left, bottom], [right - left, top - bottom],
             pen=pg.mkPen(border, width=int(style.get("width", 2))), movable=True,
         )
+        self._configure_right_bottom_resize_handles(roi)
         roi.setZValue(4)
         self.plot.addItem(roi)
         group = {"type": "rectangle", "roi": roi, "fill": fill_item}

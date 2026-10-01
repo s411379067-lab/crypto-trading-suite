@@ -204,3 +204,13 @@ Example order record:
   - Horizontal Line、Trend Line、Rectangle、Fibonacci、Text Box 全部支援。
 - Drawing Clipboard 是 Pattern Analyzer 內部 clipboard，並刻意使用 Chart-local shortcut；在 Notes / Pattern / Order 文字欄位內的 Ctrl+C / Ctrl+V 仍維持正常文字剪貼功能。
 - Clipboard 不會因切換 Case 清空，因此可複製 Drawing 後切換 Case 再貼上。
+
+### v1.1 Text / Rectangle resize update
+
+- New Text drawings start with a predictable default box size of about 360x180 screen pixels at creation time.
+- If the initial text content needs more vertical space, the initial box height expands to contain it.
+- Text resize handles changed from the top-right corner to two independent handles:
+  - right-edge midpoint: adjusts width only;
+  - bottom-edge midpoint: adjusts height only while keeping the top edge fixed.
+- Rectangle resize handles use the same right-midpoint / bottom-midpoint interaction.
+- Existing Text / Rectangle JSON geometry remains compatible; no schema migration is required.
