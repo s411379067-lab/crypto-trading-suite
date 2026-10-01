@@ -26,4 +26,6 @@ trading journal app/license_system/license_state*.json
 
 # Pattern Research local research data
 pattern research app/cases/
+pattern research app/source/cases/
+pattern research app/market-data/
 pattern research app/NAS100*.txt

@@ -5,7 +5,9 @@
 - The active application source now lives in the fixed `source/` folder.
 - Version history is managed by Git commits, tags, and GitHub Releases instead of versioned source folders.
 - Local Case JSON files and NAS100 market-data files are excluded from future Git commits.
-- Runtime behavior is unchanged from v2.8; this release establishes the repository layout for future iterations.
+- Default Case storage is the sibling `../cases/` folder, independent of the launch working directory.
+- Store other local market-data files under `../market-data/`; that folder is also excluded from Git.
+- Core research behavior is unchanged from v2.8; this release establishes the repository layout for future iterations.
 
 
 ## v2.8 — Cursor-following OHLC + candle change %
