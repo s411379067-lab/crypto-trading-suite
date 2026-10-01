@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import json
+import os
+
+from shared_core.models import utc_now_iso
 
 
 @dataclass(frozen=True)
@@ -96,3 +99,36 @@ def filter_case_entries(
         if matched:
             out.append(entry)
     return out
+
+
+def save_case_patterns(path: str | Path, patterns: list[dict]) -> None:
+    """Atomically update only the Case JSON pattern payload.
+
+    Pattern Viewer deliberately does not use ResearchCase/CaseRepository.save() for
+    edits. The original JSON is reloaded, ``patterns`` is replaced, and only
+    ``metadata.updated_at`` is touched. Unknown/current-version fields are preserved.
+    """
+    path = Path(path)
+    with path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    if not isinstance(data, dict):
+        raise ValueError("Case JSON root must be an object")
+    if not isinstance(data.get("case"), dict):
+        raise ValueError("Case JSON missing case")
+    if not isinstance(data.get("market_data"), dict):
+        raise ValueError("Case JSON missing market_data")
+    if not isinstance(data.get("time_range"), dict):
+        raise ValueError("Case JSON missing time_range")
+
+    data["patterns"] = [dict(x) for x in patterns]
+    metadata = dict(data.get("metadata") or {})
+    metadata["updated_at"] = utc_now_iso()
+    data["metadata"] = metadata
+
+    tmp = path.with_suffix(path.suffix + ".pattern-viewer.tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)

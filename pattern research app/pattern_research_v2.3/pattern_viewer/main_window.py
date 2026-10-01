@@ -9,22 +9,30 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 from shared_core.market_data import MarketDataService
 from shared_core.replay import ReplayEngine
 from shared_core.repository import CaseRepository
+from shared_core.models import new_id, utc_now_iso
 from pattern_analyzer.main_window import APP_STYLE
 
-from .filtering import ViewerCaseEntry, collect_patterns, filter_case_entries, scan_case_entries
+from .filtering import (
+    ViewerCaseEntry,
+    collect_patterns,
+    filter_case_entries,
+    save_case_patterns,
+    scan_case_entries,
+)
 from .read_only_chart import ReadOnlyChartWidget
 
 
 class PatternViewerWindow(QtWidgets.QMainWindow):
-    """Read-only Pattern library browser.
+    """Pattern library browser with chart-read-only viewing.
 
-    Case JSON is loaded for display only. There is deliberately no repository.save()
-    path in this program.
+    Drawings, notes, orders and chart research state are never editable here.
+    v2.3 intentionally permits one narrow write path: ``patterns[]`` can be
+    added/renamed/deleted from the left sidebar via an atomic pattern-only saver.
     """
 
     def __init__(self, case_root: str | Path = "."):
         super().__init__()
-        self.setWindowTitle("Pattern Viewer v2.2")
+        self.setWindowTitle("Pattern Viewer v2.3")
         self.resize(1600, 920)
         self.setStyleSheet(APP_STYLE)
 
@@ -59,7 +67,7 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         sl.setContentsMargins(6, 3, 6, 3)
         self.case_status = QtWidgets.QLabel("尚未載入 Case")
         self.range_status = QtWidgets.QLabel("")
-        self.readonly_badge = QtWidgets.QLabel("READ ONLY")
+        self.readonly_badge = QtWidgets.QLabel("CHART READ ONLY • PATTERN EDITABLE")
         self.readonly_badge.setStyleSheet(
             "background-color:#24344d; border:1px solid #5d789f; border-radius:3px; "
             "color:#dbe9ff; padding:3px 8px; font-weight:700;"
@@ -167,6 +175,35 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         dl.addWidget(self.selected_patterns_label)
         layout.addWidget(detail_box)
 
+        self.pattern_edit_box = QtWidgets.QGroupBox("Case Pattern 編輯")
+        pel = QtWidgets.QVBoxLayout(self.pattern_edit_box)
+        pel.setSpacing(5)
+
+        self.case_pattern_list = QtWidgets.QListWidget()
+        self.case_pattern_list.setMinimumHeight(92)
+        self.case_pattern_list.setMaximumHeight(145)
+        self.case_pattern_list.setStyleSheet(
+            "QListWidget { background:#0d1420; color:#f3f6fb; border:1px solid #36445d; }"
+            "QListWidget::item { padding:3px 5px; }"
+            "QListWidget::item:selected { background:#2b4a73; color:#ffffff; }"
+        )
+        pel.addWidget(self.case_pattern_list)
+
+        self.case_pattern_input = QtWidgets.QLineEdit()
+        self.case_pattern_input.setPlaceholderText("輸入 Pattern…")
+        pel.addWidget(self.case_pattern_input)
+
+        edit_btn_row = QtWidgets.QHBoxLayout()
+        self.btn_add_case_pattern = QtWidgets.QPushButton("新增")
+        self.btn_rename_case_pattern = QtWidgets.QPushButton("更改")
+        self.btn_delete_case_pattern = QtWidgets.QPushButton("刪除")
+        edit_btn_row.addWidget(self.btn_add_case_pattern)
+        edit_btn_row.addWidget(self.btn_rename_case_pattern)
+        edit_btn_row.addWidget(self.btn_delete_case_pattern)
+        pel.addLayout(edit_btn_row)
+        self.pattern_edit_box.setEnabled(False)
+        layout.addWidget(self.pattern_edit_box)
+
         self.btn_folder.clicked.connect(self.choose_folder)
         self.btn_refresh.clicked.connect(lambda: self.refresh_cases(select_first=False))
         self.mode_combo.currentIndexChanged.connect(self.apply_filter)
@@ -176,7 +213,128 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.case_list.currentItemChanged.connect(self._case_item_changed)
         self.show_notes_checkbox.toggled.connect(self._update_note_visibility)
         self.show_rth_checkbox.toggled.connect(self._update_rth_visibility)
+        self.case_pattern_list.itemSelectionChanged.connect(self._case_pattern_selection_changed)
+        self.case_pattern_list.itemDoubleClicked.connect(lambda _item: self.case_pattern_input.setFocus())
+        self.btn_add_case_pattern.clicked.connect(self.add_case_pattern)
+        self.btn_rename_case_pattern.clicked.connect(self.rename_case_pattern)
+        self.btn_delete_case_pattern.clicked.connect(self.delete_case_pattern)
         return panel
+
+    def _refresh_case_pattern_editor(self, select_row: int | None = None):
+        self.case_pattern_list.blockSignals(True)
+        self.case_pattern_list.clear()
+        case = self.current_case
+        if case is None:
+            self.pattern_edit_box.setEnabled(False)
+            self.case_pattern_input.clear()
+            self.case_pattern_list.blockSignals(False)
+            return
+
+        self.pattern_edit_box.setEnabled(True)
+        for row, pattern in enumerate(getattr(case, "patterns", []) or []):
+            if not isinstance(pattern, dict):
+                continue
+            text = str(pattern.get("text", "")).strip()
+            if not text:
+                continue
+            item = QtWidgets.QListWidgetItem(text)
+            item.setData(QtCore.Qt.UserRole, row)
+            self.case_pattern_list.addItem(item)
+
+        self.case_pattern_list.blockSignals(False)
+        if select_row is not None and 0 <= int(select_row) < self.case_pattern_list.count():
+            self.case_pattern_list.setCurrentRow(int(select_row))
+        else:
+            self.case_pattern_input.clear()
+
+    def _case_pattern_selection_changed(self):
+        item = self.case_pattern_list.currentItem()
+        if item is None:
+            return
+        self.case_pattern_input.setText(item.text())
+        self.case_pattern_input.selectAll()
+
+    def _save_patterns_from_viewer(self, patterns: list[dict], action_name: str) -> bool:
+        if self.current_case_path is None:
+            return False
+        try:
+            save_case_patterns(self.current_case_path, patterns)
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Pattern Save Error",
+                f"{action_name}失敗：\n\n{exc}",
+            )
+            return False
+
+        # Re-scan so Pattern Filter counts and Case List text immediately match disk.
+        # select_first=True also moves to the next visible Case if an edit makes the
+        # current Case no longer satisfy the active Pattern filter.
+        self.refresh_cases(select_first=True)
+        return True
+
+    def add_case_pattern(self):
+        if self.current_case is None:
+            return
+        text = self.case_pattern_input.text().strip()
+        if not text:
+            return
+        now = utc_now_iso()
+        patterns = [dict(x) for x in (self.current_case.patterns or []) if isinstance(x, dict)]
+        patterns.append({
+            "id": new_id("pattern"),
+            "text": text,
+            "created_at": now,
+            "updated_at": now,
+        })
+        if self._save_patterns_from_viewer(patterns, "新增 Pattern"):
+            self.case_pattern_input.clear()
+
+    def rename_case_pattern(self):
+        if self.current_case is None:
+            return
+        item = self.case_pattern_list.currentItem()
+        if item is None:
+            return
+        text = self.case_pattern_input.text().strip()
+        if not text:
+            return
+        try:
+            source_row = int(item.data(QtCore.Qt.UserRole))
+        except Exception:
+            return
+        patterns = [dict(x) for x in (self.current_case.patterns or []) if isinstance(x, dict)]
+        if not (0 <= source_row < len(patterns)):
+            return
+        patterns[source_row]["text"] = text
+        patterns[source_row]["updated_at"] = utc_now_iso()
+        self._save_patterns_from_viewer(patterns, "更改 Pattern")
+
+    def delete_case_pattern(self):
+        if self.current_case is None:
+            return
+        item = self.case_pattern_list.currentItem()
+        if item is None:
+            return
+        try:
+            source_row = int(item.data(QtCore.Qt.UserRole))
+        except Exception:
+            return
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "刪除 Pattern",
+            f"確定刪除「{item.text()}」？",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if answer != QtWidgets.QMessageBox.Yes:
+            return
+        patterns = [dict(x) for x in (self.current_case.patterns or []) if isinstance(x, dict)]
+        if not (0 <= source_row < len(patterns)):
+            return
+        del patterns[source_row]
+        if self._save_patterns_from_viewer(patterns, "刪除 Pattern"):
+            self.case_pattern_input.clear()
 
     def choose_folder(self):
         selected = QtWidgets.QFileDialog.getExistingDirectory(self, "選擇 Case Library", str(self.case_root))
@@ -322,11 +480,12 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.selected_path_label.setText(path.name)
         self.selected_path_label.setToolTip(str(path))
         self.selected_patterns_label.setText("Pattern: " + (" / ".join(patterns) if patterns else "無"))
+        self._refresh_case_pattern_editor()
         self.case_status.setText(f"{case.case.get('symbol', '')}   {case.case.get('research_date', '')}")
         self.range_status.setText(
             f"Full: {case.time_range.get('data_start', '')}  →  {case.time_range.get('default_end', '')}"
         )
-        self.setWindowTitle(f"Pattern Viewer v2.1 — {case.case.get('symbol', '')} — {path.name}")
+        self.setWindowTitle(f"Pattern Viewer v2.3 — {case.case.get('symbol', '')} — {path.name}")
 
     def _update_rth_availability(self):
         case = self.current_case
@@ -353,6 +512,7 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.current_raw = pd.DataFrame()
         self.selected_path_label.setText("--")
         self.selected_patterns_label.setText("Pattern: --")
+        self._refresh_case_pattern_editor()
         self.case_status.setText("沒有符合條件的 Case")
         self.range_status.setText("")
-        self.setWindowTitle("Pattern Viewer v2.2")
+        self.setWindowTitle("Pattern Viewer v2.3")

@@ -1,10 +1,22 @@
-# Pattern Research v2.2
+# Pattern Research v2.3
 
 
 
 
 
 
+
+
+
+## v2.3 — Viewer Pattern editor + permanent Measure
+
+- Pattern Viewer left sidebar adds **Case Pattern 編輯** for the currently selected Case.
+- Viewer can add, rename, and delete `patterns[]` while Drawings, Notes, Orders, replay research state, and chart geometry remain non-editable.
+- Pattern edits use a dedicated atomic pattern-only JSON write path; Viewer still does not call `CaseRepository.save()` for chart state.
+- Pattern Filter counts and Case List text are rescanned immediately after a Pattern edit. If the current Case stops matching an active filter, Viewer moves to the next visible Case.
+- Viewer Measure is permanently enabled. There is no middle-click toggle in Viewer.
+- Any right-button press/drag inside the chart immediately measures endpoint price and percentage change; releasing clears the temporary line/label and the next right-drag is ready immediately.
+- The toolbar keeps the `MEASURE` badge visible as an affordance for permanent measure mode.
 
 ## v2.2 — Pattern Viewer Case List readability fix
 
