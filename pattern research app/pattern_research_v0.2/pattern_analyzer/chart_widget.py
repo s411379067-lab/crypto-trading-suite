@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable
+import math
 import uuid
 import numpy as np
 import pandas as pd
@@ -10,29 +10,112 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 from shared_core.aggregation import aggregate_visible_bars, timeframe_seconds
 
 
+TRADINGVIEW_BASIC_COLORS = [
+    # Red
+    (242, 54, 69), (252, 203, 205), (250, 161, 164), (247, 124, 128), (247, 82, 95), (242, 54, 69),
+    # Orange
+    (255, 152, 0), (255, 224, 178), (255, 204, 128), (255, 183, 77), (255, 167, 38), (255, 152, 0),
+    # Yellow
+    (255, 235, 59), (255, 249, 196), (255, 245, 157), (255, 241, 118), (255, 238, 88), (255, 235, 59),
+    # Green
+    (76, 175, 80), (200, 230, 201), (165, 214, 167), (129, 199, 132), (102, 187, 106), (76, 175, 80),
+    # Teal
+    (8, 153, 129), (172, 229, 220), (112, 204, 189), (66, 189, 168), (34, 171, 148), (8, 153, 129),
+    # Cyan
+    (0, 188, 212), (178, 235, 242), (128, 222, 234), (77, 208, 225), (38, 198, 218), (0, 188, 212),
+    # Blue
+    (41, 98, 255), (187, 217, 251), (144, 191, 249), (91, 156, 246), (49, 121, 245), (41, 98, 255),
+    # Purple
+    (103, 58, 183), (209, 196, 233), (179, 157, 219), (149, 117, 205), (126, 87, 194), (103, 58, 183),
+]
+
+
+def get_tradingview_color(initial: str | QtGui.QColor = "#ffffff", parent=None, title: str = "選擇顏色"):
+    """Legacy TradingView-style fixed color palette used by every drawing color picker."""
+    dialog = QtWidgets.QColorDialog(parent)
+    dialog.setWindowTitle(title)
+    for i, (r, g, b) in enumerate(TRADINGVIEW_BASIC_COLORS[:48]):
+        dialog.setStandardColor(i, QtGui.QColor(r, g, b))
+    initial_color = initial if isinstance(initial, QtGui.QColor) else QtGui.QColor(initial)
+    if initial_color.isValid():
+        dialog.setCurrentColor(initial_color)
+    if dialog.exec() == QtWidgets.QDialog.Accepted:
+        color = dialog.currentColor()
+        if color.isValid():
+            return color
+    return None
+
+
 class TimeAxis(pg.AxisItem):
-    def __init__(self, *args, timezone_name="Asia/Taipei", **kwargs):
+    INTERVAL_SECONDS = {
+        "5m": 5 * 60,
+        "15m": 15 * 60,
+        "30m": 30 * 60,
+        "1H": 60 * 60,
+        "4H": 4 * 60 * 60,
+        "1D": 24 * 60 * 60,
+    }
+
+    def __init__(self, *args, timezone_name="Asia/Taipei", tick_interval="15m", **kwargs):
         super().__init__(*args, **kwargs)
         self.timezone_name = timezone_name
+        self.tick_interval = tick_interval if tick_interval in self.INTERVAL_SECONDS else "15m"
 
     def set_timezone(self, timezone_name: str):
         self.timezone_name = timezone_name
         self.picture = None
         self.update()
 
+    def set_tick_interval(self, tick_interval: str):
+        if tick_interval in self.INTERVAL_SECONDS:
+            self.tick_interval = tick_interval
+            self.picture = None
+            self.update()
+
+    def tickValues(self, minVal, maxVal, size):
+        """Only emit ticks aligned to exact local-time boundaries."""
+        try:
+            lo, hi = sorted((float(minVal), float(maxVal)))
+            if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+                return []
+            step = self.INTERVAL_SECONDS[self.tick_interval]
+            start_local = pd.Timestamp(lo, unit="s", tz="UTC").tz_convert(self.timezone_name)
+
+            if self.tick_interval == "1D":
+                tick_local = start_local.normalize()
+                if tick_local.timestamp() < lo - 1e-9:
+                    tick_local = tick_local + pd.DateOffset(days=1)
+                ticks = []
+                while tick_local.timestamp() <= hi + 1e-9 and len(ticks) < 5000:
+                    ticks.append(float(tick_local.timestamp()))
+                    tick_local = tick_local + pd.DateOffset(days=1)
+            else:
+                midnight = start_local.normalize()
+                elapsed = (start_local - midnight).total_seconds()
+                slot = int(math.ceil((elapsed - 1e-9) / step))
+                tick_local = midnight + pd.Timedelta(seconds=slot * step)
+                ticks = []
+                while tick_local.timestamp() <= hi + 1e-9 and len(ticks) < 5000:
+                    ts = float(tick_local.timestamp())
+                    if ts >= lo - 1e-9:
+                        ticks.append(ts)
+                    tick_local = tick_local + pd.Timedelta(seconds=step)
+            return [(float(step), ticks)]
+        except Exception:
+            return []
+
     def tickStrings(self, values, scale, spacing):
         labels = []
         for ts in values:
             try:
                 dt = pd.Timestamp(ts, unit="s", tz="UTC").tz_convert(self.timezone_name)
-                if spacing >= 86400:
+                if self.tick_interval == "1D":
                     labels.append(dt.strftime("%Y.%m.%d"))
                 else:
                     labels.append(f"{dt.strftime('%H:%M')}\n({dt.strftime('%m.%d')})")
             except Exception:
                 labels.append("")
         return labels
-
 
 
 class MovableTextItem(pg.TextItem):
@@ -55,7 +138,7 @@ class LineSettingsDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("線條設定")
         self.resize(350, 205)
-        self._color = QtGui.QColor(color if color else "#00ffff")
+        self._color = QtGui.QColor(color if color else "#ffffff")
 
         layout = QtWidgets.QVBoxLayout(self)
 
@@ -100,8 +183,8 @@ class LineSettingsDialog(QtWidgets.QDialog):
         self._refresh_color_button()
 
     def _pick_color(self):
-        color = QtWidgets.QColorDialog.getColor(self._color, self, "選擇線條顏色")
-        if color.isValid():
+        color = get_tradingview_color(self._color, self, "選擇線條顏色")
+        if color is not None and color.isValid():
             self._color = color
             self._refresh_color_button()
 
@@ -113,6 +196,99 @@ class LineSettingsDialog(QtWidgets.QDialog):
 
     def values(self):
         return self._color.name(), str(self.style_combo.currentData()), int(self.width_spin.value())
+
+
+class FiboSettingsDialog(QtWidgets.QDialog):
+    def __init__(self, levels: list[dict], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Fibo 設定")
+        self.resize(430, 330)
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(QtWidgets.QLabel("每列設定倍率與顏色；操作方式沿用舊版 FIBO。"))
+
+        self.table = QtWidgets.QTableWidget(0, 2)
+        self.table.setHorizontalHeaderLabels(["倍數", "顏色"])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        layout.addWidget(self.table)
+
+        row_controls = QtWidgets.QHBoxLayout()
+        add_btn = QtWidgets.QPushButton("新增列")
+        remove_btn = QtWidgets.QPushButton("刪除列")
+        add_btn.clicked.connect(lambda: self.add_row(1.0, "#ffffff"))
+        remove_btn.clicked.connect(self.remove_selected_row)
+        row_controls.addWidget(add_btn)
+        row_controls.addWidget(remove_btn)
+        row_controls.addStretch(1)
+        layout.addLayout(row_controls)
+
+        buttons = QtWidgets.QHBoxLayout()
+        ok_btn = QtWidgets.QPushButton("套用")
+        cancel_btn = QtWidgets.QPushButton("取消")
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn.clicked.connect(self.reject)
+        buttons.addStretch(1)
+        buttons.addWidget(ok_btn)
+        buttons.addWidget(cancel_btn)
+        layout.addLayout(buttons)
+
+        source = levels or [
+            {"multiplier": 0.0, "color": "#ffffff"},
+            {"multiplier": 0.5, "color": "#ffffff"},
+            {"multiplier": 1.0, "color": "#ffffff"},
+            {"multiplier": 2.0, "color": "#ffffff"},
+            {"multiplier": 3.0, "color": "#ffffff"},
+        ]
+        for level in source:
+            self.add_row(float(level.get("multiplier", 0.0)), level.get("color", "#ffffff"))
+
+    def _style_color_button(self, button, color: str):
+        qcolor = QtGui.QColor(color if color else "#ffffff")
+        button.setProperty("color_hex", qcolor.name())
+        button.setText(qcolor.name().upper())
+        # readable text on light palette cells
+        brightness = qcolor.red() * 0.299 + qcolor.green() * 0.587 + qcolor.blue() * 0.114
+        fg = "#000000" if brightness > 165 else "#ffffff"
+        button.setStyleSheet(f"background-color:{qcolor.name()}; color:{fg}; border:1px solid #666;")
+
+    def _pick_color(self, button):
+        current = button.property("color_hex") or "#ffffff"
+        color = get_tradingview_color(current, self, "選擇 Fibo 顏色")
+        if color is not None and color.isValid():
+            self._style_color_button(button, color.name())
+
+    def add_row(self, multiplier: float, color: str):
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+        item = QtWidgets.QTableWidgetItem(f"{float(multiplier):g}")
+        item.setTextAlignment(QtCore.Qt.AlignCenter)
+        self.table.setItem(row, 0, item)
+        btn = QtWidgets.QPushButton()
+        self._style_color_button(btn, color)
+        btn.clicked.connect(lambda _=False, b=btn: self._pick_color(b))
+        self.table.setCellWidget(row, 1, btn)
+
+    def remove_selected_row(self):
+        row = self.table.currentRow()
+        if row >= 0:
+            self.table.removeRow(row)
+
+    def values(self) -> list[dict]:
+        levels = []
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item is None or not item.text().strip():
+                continue
+            try:
+                multiplier = float(item.text().strip())
+            except Exception as exc:
+                raise ValueError(f"第 {row + 1} 列倍率格式錯誤") from exc
+            btn = self.table.cellWidget(row, 1)
+            color = (btn.property("color_hex") if btn is not None else "#ffffff") or "#ffffff"
+            levels.append({"multiplier": multiplier, "color": str(color)})
+        if not levels:
+            raise ValueError("請至少保留一個 Fibo level")
+        return levels
 
 
 class ChartWidget(QtWidgets.QWidget):
@@ -127,6 +303,8 @@ class ChartWidget(QtWidgets.QWidget):
         self.case = None
         self.current_case_path = None
         self.drawing_items: dict[str, object] = {}
+        self.drawing_hit_items: dict[int, str] = {}
+        self._drawing_hit_objects: list[tuple[str, object]] = []
         self.tool_mode: str | None = None
         self.pending_point = None
         self._last_bars = pd.DataFrame()
@@ -149,11 +327,13 @@ class ChartWidget(QtWidgets.QWidget):
         self.btn_h = QtWidgets.QPushButton("H")
         self.btn_l = QtWidgets.QPushButton("L")
         self.btn_t = QtWidgets.QPushButton("T")
+        self.btn_fibo = QtWidgets.QPushButton("Fibo")
         self.btn_shot = QtWidgets.QPushButton("Shot")
         self.btn_auto = QtWidgets.QPushButton("Auto")
         self.btn_auto_all = QtWidgets.QPushButton("AutoAll")
         for b in (self.btn_h, self.btn_l, self.btn_t):
             b.setFixedSize(40, 30)
+        self.btn_fibo.setFixedSize(50, 30)
         self.btn_shot.setFixedSize(60, 30)
         self.btn_auto.setFixedSize(60, 30)
         self.btn_auto_all.setFixedSize(70, 30)
@@ -162,14 +342,23 @@ class ChartWidget(QtWidgets.QWidget):
         self.timeframe_combo.addItems(["M1", "M5", "M15", "H1"])
         self.timeframe_combo.setFixedWidth(90)
 
+        self.x_tick_combo = QtWidgets.QComboBox()
+        self.x_tick_combo.addItems(["5m", "15m", "30m", "1H", "4H", "1D"])
+        self.x_tick_combo.setCurrentText("15m")
+        self.x_tick_combo.setFixedWidth(75)
+        self.x_tick_combo.setToolTip("X 軸時間刻度間隔；只顯示整數對齊時間")
+
         self.timezone_combo = QtWidgets.QComboBox()
         self.timezone_combo.setEditable(True)
         self.timezone_combo.addItems(["Asia/Taipei", "America/New_York", "UTC", "Europe/London"])
         self.timezone_combo.setFixedWidth(170)
 
-        for w in (self.btn_h, self.btn_l, self.btn_t, self.btn_shot, self.btn_auto, self.btn_auto_all,
-                  self.timeframe_combo, self.timezone_combo):
+        for w in (self.btn_h, self.btn_l, self.btn_t, self.btn_fibo, self.btn_shot, self.btn_auto, self.btn_auto_all,
+                  self.timeframe_combo):
             tb.addWidget(w)
+        tb.addWidget(QtWidgets.QLabel("X刻度"))
+        tb.addWidget(self.x_tick_combo)
+        tb.addWidget(self.timezone_combo)
         tb.addStretch(1)
         outer.addWidget(self.toolbar)
 
@@ -186,7 +375,7 @@ class ChartWidget(QtWidgets.QWidget):
         outer.addWidget(self.info_panel)
 
         self.graphics = pg.GraphicsLayoutWidget()
-        self.axis = TimeAxis(orientation="bottom", timezone_name="Asia/Taipei")
+        self.axis = TimeAxis(orientation="bottom", timezone_name="Asia/Taipei", tick_interval="15m")
         self.plot = self.graphics.addPlot(axisItems={"bottom": self.axis}, row=0, col=0)
         self.plot.showAxis("right", True)
         self.plot.showAxis("left", False)
@@ -202,13 +391,33 @@ class ChartWidget(QtWidgets.QWidget):
         self.vline.hide()
         self.hline.hide()
 
+        coord_style = (
+            "background-color:#0d1420; border:1px solid #6b7fa1; border-radius:2px; "
+            "color:#e6edf7; padding:2px 6px; font-size:10pt;"
+        )
+        self.price_coord_label = QtWidgets.QLabel(self.graphics)
+        self.price_coord_label.setStyleSheet(coord_style)
+        self.price_coord_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.price_coord_label.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        self.price_coord_label.hide()
+        self.price_coord_label.raise_()
+
+        self.time_coord_label = QtWidgets.QLabel(self.graphics)
+        self.time_coord_label.setStyleSheet(coord_style)
+        self.time_coord_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.time_coord_label.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        self.time_coord_label.hide()
+        self.time_coord_label.raise_()
+
         self.btn_h.clicked.connect(lambda: self.set_tool("horizontal_line"))
         self.btn_l.clicked.connect(lambda: self.set_tool("trend_line"))
         self.btn_t.clicked.connect(lambda: self.set_tool("text"))
+        self.btn_fibo.clicked.connect(lambda: self.set_tool("fibonacci"))
         self.btn_auto.clicked.connect(self.auto_scale)
         self.btn_auto_all.clicked.connect(self.auto_all)
         self.btn_shot.clicked.connect(self.export_screenshot)
         self.timeframe_combo.currentTextChanged.connect(self._tf_changed)
+        self.x_tick_combo.currentTextChanged.connect(self._x_tick_changed)
         self.timezone_combo.currentTextChanged.connect(self._tz_changed)
         self.plot.scene().sigMouseClicked.connect(self._scene_clicked)
         self.plot.sigRangeChanged.connect(self._on_view_range_changed)
@@ -224,10 +433,14 @@ class ChartWidget(QtWidgets.QWidget):
         self.timeframe_combo.blockSignals(True)
         self.timeframe_combo.setCurrentText(case.display.get("view_timeframe", "M5"))
         self.timeframe_combo.blockSignals(False)
+        self.x_tick_combo.blockSignals(True)
+        self.x_tick_combo.setCurrentText(case.display.get("x_tick_interval", "15m"))
+        self.x_tick_combo.blockSignals(False)
         self.timezone_combo.blockSignals(True)
         self.timezone_combo.setCurrentText(case.display.get("timezone", "Asia/Taipei"))
         self.timezone_combo.blockSignals(False)
         self.axis.set_timezone(self.timezone_combo.currentText())
+        self.axis.set_tick_interval(self.x_tick_combo.currentText())
 
         self.rebuild_drawings()
         self.render(reset_x=True)
@@ -244,6 +457,15 @@ class ChartWidget(QtWidgets.QWidget):
             self.dirty.emit()
         self.render(reset_x=False)
         self.view_timeframe_changed.emit(tf)
+
+    def _x_tick_changed(self, interval: str):
+        self.axis.set_tick_interval(interval)
+        if self.case is not None:
+            self.case.display["x_tick_interval"] = interval
+            self.case.touch()
+            self.dirty.emit()
+        self.axis.picture = None
+        self.axis.update()
 
     def _tz_changed(self, tz: str):
         if not tz:
@@ -277,6 +499,7 @@ class ChartWidget(QtWidgets.QWidget):
         self.plot.addItem(self.vline, ignoreBounds=True)
         self.plot.addItem(self.hline, ignoreBounds=True)
         self.vline.hide(); self.hline.hide()
+        self.price_coord_label.hide(); self.time_coord_label.hide()
 
         bars = self.visible_bars()
         self._last_bars = bars
@@ -381,10 +604,54 @@ class ChartWidget(QtWidgets.QWidget):
         pos = evt[0]
         if not self.plot.sceneBoundingRect().contains(pos):
             self.vline.hide(); self.hline.hide()
+            self.price_coord_label.hide(); self.time_coord_label.hide()
             return
         p = self.plot.vb.mapSceneToView(pos)
-        self.vline.setPos(p.x()); self.hline.setPos(p.y())
+        x = float(p.x())
+        y = float(p.y())
+
+        # TradingView-like crosshair: X snaps to the nearest revealed candle; Y follows price.
+        if not self._last_bars.empty:
+            ts = self._last_bars["timestamp"].to_numpy(dtype=float)
+            x = float(ts[int(np.argmin(np.abs(ts - x)))])
+        self.vline.setPos(x)
+        self.hline.setPos(y)
         self.vline.show(); self.hline.show()
+        self._update_crosshair_coordinate_labels(x, y)
+
+    def _update_crosshair_coordinate_labels(self, x: float, y: float):
+        precision = 4 if abs(y) < 10 else 2
+        self.price_coord_label.setText(f"{y:.{precision}f}")
+        self.price_coord_label.adjustSize()
+
+        tz = self.timezone_combo.currentText() or "UTC"
+        try:
+            dt = pd.Timestamp(x, unit="s", tz="UTC").tz_convert(tz)
+            self.time_coord_label.setText(dt.strftime("%Y.%m.%d  %H:%M"))
+        except Exception:
+            self.time_coord_label.setText("--")
+        self.time_coord_label.adjustSize()
+
+        # Y label overlays the fixed right-axis band.
+        vr = self.plot.vb.viewRange()
+        ref_x = (vr[0][0] + vr[0][1]) * 0.5
+        scene_y = self.plot.vb.mapViewToScene(QtCore.QPointF(ref_x, y))
+        widget_y = self.graphics.mapFromScene(scene_y)
+        pw, ph = self.price_coord_label.width(), self.price_coord_label.height()
+        px = max(0, self.graphics.width() - 72 + 2)
+        py = max(0, min(int(widget_y.y() - ph * 0.5), self.graphics.height() - ph))
+        self.price_coord_label.move(px, py)
+        self.price_coord_label.show()
+
+        # X label sits on the bottom axis and follows the snapped candle time.
+        scene_x = self.plot.vb.mapViewToScene(QtCore.QPointF(x, vr[1][0]))
+        widget_x = self.graphics.mapFromScene(scene_x)
+        tw, th = self.time_coord_label.width(), self.time_coord_label.height()
+        tx = max(0, min(int(widget_x.x() - tw * 0.5), self.graphics.width() - tw))
+        ty = max(0, self.graphics.height() - th - 2)
+        self.time_coord_label.move(tx, ty)
+        self.time_coord_label.show()
+        self.price_coord_label.raise_(); self.time_coord_label.raise_()
 
     @staticmethod
     def _is_double_click(evt) -> bool:
@@ -398,7 +665,7 @@ class ChartWidget(QtWidgets.QWidget):
         # First use QGraphicsScene hit-testing. ROI handles are children, so walk parents.
         try:
             scene_items = self.graphics.scene().items(scene_pos)
-            reverse_map = {id(item): did for did, item in self.drawing_items.items()}
+            reverse_map = self.drawing_hit_items
             for candidate in scene_items:
                 obj = candidate
                 while obj is not None:
@@ -412,8 +679,8 @@ class ChartWidget(QtWidgets.QWidget):
         except Exception:
             pass
 
-        # Fallback to each item's shape.
-        for did, item in reversed(list(self.drawing_items.items())):
+        # Fallback to each registered graphics item's shape.
+        for did, item in reversed(self._drawing_hit_objects):
             try:
                 local = item.mapFromScene(scene_pos)
                 if item.shape().contains(local):
@@ -454,7 +721,7 @@ class ChartWidget(QtWidgets.QWidget):
                 "id": f"drawing-{uuid.uuid4().hex[:12]}",
                 "type": "horizontal_line",
                 "price": y,
-                "style": {"color": "#00ffff", "width": 2, "line_style": "solid"},
+                "style": {"color": "#ffffff", "width": 2, "line_style": "solid"},
             })
             self.tool_mode = None
             self.case.touch(); self.dirty.emit(); self.rebuild_drawings(); self.render(False)
@@ -469,7 +736,30 @@ class ChartWidget(QtWidgets.QWidget):
                 "id": f"drawing-{uuid.uuid4().hex[:12]}",
                 "type": "trend_line",
                 "points": [{"time": x1, "price": y1}, {"time": x, "price": y}],
-                "style": {"color": "#00ffff", "width": 2, "line_style": "solid"},
+                "style": {"color": "#ffffff", "width": 2, "line_style": "solid"},
+            })
+            self.pending_point = None; self.tool_mode = None
+            self.case.touch(); self.dirty.emit(); self.rebuild_drawings(); self.render(False)
+            return
+
+        if self.tool_mode == "fibonacci":
+            if self.pending_point is None:
+                self.pending_point = (x, y)
+                return
+            x1, y1 = self.pending_point
+            self.case.drawings.append({
+                "id": f"drawing-{uuid.uuid4().hex[:12]}",
+                "type": "fibonacci",
+                "start": {"time": x1, "price": y1},
+                "end": {"time": x, "price": y},
+                "levels": [
+                    {"multiplier": 0.0, "color": "#ffffff"},
+                    {"multiplier": 0.5, "color": "#ffffff"},
+                    {"multiplier": 1.0, "color": "#ffffff"},
+                    {"multiplier": 2.0, "color": "#ffffff"},
+                    {"multiplier": 3.0, "color": "#ffffff"},
+                ],
+                "style": {"width": 2, "line_style": "solid"},
             })
             self.pending_point = None; self.tool_mode = None
             self.case.touch(); self.dirty.emit(); self.rebuild_drawings(); self.render(False)
@@ -506,7 +796,7 @@ class ChartWidget(QtWidgets.QWidget):
         }.get(style_name, QtCore.Qt.SolidLine)
 
     def _pen_from_style(self, style: dict, selected: bool = False):
-        color = "#ffff00" if selected else style.get("color", "#00ffff")
+        color = "#ffff00" if selected else style.get("color", "#ffffff")
         width = max(int(style.get("width", 2)) + (1 if selected else 0), 1)
         qt_style = self._qt_line_style(style.get("line_style", "solid"))
         return pg.mkPen(color, width=width, style=qt_style)
@@ -538,6 +828,16 @@ class ChartWidget(QtWidgets.QWidget):
                     item.setColor("#ffff00" if selected else base)
                 except Exception:
                     pass
+            elif dtype == "fibonacci" and isinstance(item, dict):
+                levels = drawing.get("levels", [])
+                width = int(drawing.get("style", {}).get("width", 2))
+                for i, line in enumerate(item.get("lines", [])):
+                    base = levels[i].get("color", "#ffffff") if i < len(levels) else "#ffffff"
+                    line.setPen(pg.mkPen("#ffff00" if selected else base, width=width + (1 if selected else 0)))
+                try:
+                    item["box"].setPen(pg.mkPen((255, 255, 0, 120) if selected else (0, 0, 0, 0), width=1))
+                except Exception:
+                    pass
 
     def _show_drawing_context_menu(self, did: str):
         drawing = self._drawing_by_id(did)
@@ -553,6 +853,13 @@ class ChartWidget(QtWidgets.QWidget):
             delete_action.triggered.connect(lambda: self._delete_drawing_by_id(did))
             color_action.triggered.connect(lambda: self._change_text_color(did))
             size_action.triggered.connect(lambda: self._change_text_size(did))
+        elif dtype == "fibonacci":
+            settings_action = menu.addAction("Fibo 設定")
+            delete_action = menu.addAction("刪除")
+            color_action = menu.addAction("改顏色")
+            settings_action.triggered.connect(lambda: self._open_fibo_settings(did))
+            delete_action.triggered.connect(lambda: self._delete_drawing_by_id(did))
+            color_action.triggered.connect(lambda: self._change_fibo_color(did))
         else:
             settings_action = menu.addAction("線條設定")
             delete_action = menu.addAction("刪除")
@@ -569,7 +876,7 @@ class ChartWidget(QtWidgets.QWidget):
             return
         style = drawing.setdefault("style", {})
         dialog = LineSettingsDialog(
-            style.get("color", "#00ffff"),
+            style.get("color", "#ffffff"),
             style.get("line_style", "solid"),
             int(style.get("width", 2)),
             self,
@@ -587,9 +894,9 @@ class ChartWidget(QtWidgets.QWidget):
         if drawing is None:
             return
         style = drawing.setdefault("style", {})
-        current = QtGui.QColor(style.get("color", "#00ffff"))
-        color = QtWidgets.QColorDialog.getColor(current, self, "選擇線條顏色")
-        if not color.isValid():
+        current = QtGui.QColor(style.get("color", "#ffffff"))
+        color = get_tradingview_color(current, self, "選擇線條顏色")
+        if color is None or not color.isValid():
             return
         style["color"] = color.name()
         self._commit_drawing_change()
@@ -600,10 +907,46 @@ class ChartWidget(QtWidgets.QWidget):
             return
         style = drawing.setdefault("style", {})
         current = QtGui.QColor(style.get("color", "#ffffff"))
-        color = QtWidgets.QColorDialog.getColor(current, self, "選擇文字顏色")
-        if not color.isValid():
+        color = get_tradingview_color(current, self, "選擇文字顏色")
+        if color is None or not color.isValid():
             return
         style["color"] = color.name()
+        self._commit_drawing_change()
+
+    def _open_fibo_settings(self, did: str):
+        drawing = self._drawing_by_id(did)
+        if drawing is None:
+            return
+        dialog = FiboSettingsDialog(drawing.get("levels", []), self)
+        if dialog.exec() != QtWidgets.QDialog.Accepted:
+            return
+        try:
+            drawing["levels"] = dialog.values()
+        except ValueError as exc:
+            QtWidgets.QMessageBox.warning(self, "Fibo 設定", str(exc))
+            return
+        self._commit_drawing_change()
+
+    def _change_fibo_color(self, did: str):
+        drawing = self._drawing_by_id(did)
+        if drawing is None:
+            return
+        levels = drawing.setdefault("levels", [])
+        current = levels[0].get("color", "#ffffff") if levels else "#ffffff"
+        color = get_tradingview_color(current, self, "選擇 Fibo 顏色")
+        if color is None or not color.isValid():
+            return
+        if not levels:
+            levels.extend([
+                {"multiplier": 0.0, "color": color.name()},
+                {"multiplier": 0.5, "color": color.name()},
+                {"multiplier": 1.0, "color": color.name()},
+                {"multiplier": 2.0, "color": color.name()},
+                {"multiplier": 3.0, "color": color.name()},
+            ])
+        else:
+            for level in levels:
+                level["color"] = color.name()
         self._commit_drawing_change()
 
     def _change_text_size(self, did: str):
@@ -635,12 +978,170 @@ class ChartWidget(QtWidgets.QWidget):
 
     def rebuild_drawings(self):
         self.drawing_items.clear()
+        self.drawing_hit_items.clear()
+        self._drawing_hit_objects.clear()
         self._render_drawing_items()
+
+    def _register_drawing_hit_item(self, did: str, item):
+        self.drawing_hit_items[id(item)] = did
+        self._drawing_hit_objects.append((did, item))
+
+    @staticmethod
+    def _fibo_line_y(drawing: dict, multiplier: float) -> float:
+        start_y = float(drawing["start"]["price"])
+        end_y = float(drawing["end"]["price"])
+        return start_y + (end_y - start_y) * float(multiplier)
+
+    def _fibo_geometry(self, drawing: dict):
+        sx = float(drawing["start"]["time"]); sy = float(drawing["start"]["price"])
+        ex = float(drawing["end"]["time"]); ey = float(drawing["end"]["price"])
+        levels = drawing.get("levels", []) or [{"multiplier": 0.0, "color": "#ffffff"}]
+        ys = [self._fibo_line_y(drawing, lv.get("multiplier", 0.0)) for lv in levels]
+        left, right = min(sx, ex), max(sx, ex)
+        if right <= left:
+            right = left + 1e-6
+        ymin, ymax = min(ys), max(ys)
+        if ymax <= ymin:
+            ymax = ymin + 1e-6
+        return sx, sy, ex, ey, left, right, ymin, ymax, ys
+
+    def _set_rect_line(self, rect, left: float, right: float, y: float, height: float):
+        rect.blockSignals(True)
+        try:
+            rect.setPos([left, y - height * 0.5])
+            rect.setSize([max(right - left, 1e-6), max(height, 1e-6)])
+        finally:
+            rect.blockSignals(False)
+
+    def _update_fibo_view_geometry(self, did: str, update_box: bool = True):
+        drawing = self._drawing_by_id(did)
+        group = self.drawing_items.get(did)
+        if drawing is None or not isinstance(group, dict):
+            return
+        sx, sy, ex, ey, left, right, ymin, ymax, ys = self._fibo_geometry(drawing)
+        tick = max(float(timeframe_seconds(self.timeframe_combo.currentText())), 1.0)
+        h = max((ymax - ymin) * 0.003, max(abs(ymax), 1.0) * 1e-6)
+        handle_left, handle_right = left - 0.5 * tick, right + 0.5 * tick
+        if update_box:
+            box = group.get("box")
+            if box is not None:
+                box.blockSignals(True)
+                try:
+                    box.setPos([left, ymin]); box.setSize([right - left, ymax - ymin])
+                finally:
+                    box.blockSignals(False)
+        self._set_rect_line(group["start_handle"], handle_left, handle_right, sy, h)
+        self._set_rect_line(group["end_handle"], handle_left, handle_right, ey, h)
+        group["handle_height"] = h
+        group["last_box_rect"] = [left, right, ymin, ymax]
+        width = int(drawing.get("style", {}).get("width", 2))
+        selected = did == self.selected_drawing_id
+        levels = drawing.get("levels", [])
+        for i, (line, y) in enumerate(zip(group.get("lines", []), ys)):
+            line.setData([sx, ex], [y, y])
+            base = levels[i].get("color", "#ffffff") if i < len(levels) else "#ffffff"
+            line.setPen(pg.mkPen("#ffff00" if selected else base, width=width + (1 if selected else 0)))
+
+    def _sync_fibo_from_box(self, did: str):
+        drawing = self._drawing_by_id(did)
+        group = self.drawing_items.get(did)
+        if drawing is None or not isinstance(group, dict) or group.get("syncing"):
+            return
+        box = group.get("box")
+        if box is None:
+            return
+        group["syncing"] = True
+        try:
+            pos = box.pos(); size = box.size()
+            curr_left = float(pos.x()); curr_right = float(pos.x() + size.x())
+            curr_ymin = float(pos.y()); curr_ymax = float(pos.y() + size.y())
+            last_left, last_right, last_ymin, last_ymax = group.get(
+                "last_box_rect", [curr_left, curr_right, curr_ymin, curr_ymax]
+            )
+            start_is_left = float(drawing["start"]["time"]) <= float(drawing["end"]["time"])
+            drawing["start"]["time"] = curr_left if start_is_left else curr_right
+            drawing["end"]["time"] = curr_right if start_is_left else curr_left
+            dy = curr_ymin - float(last_ymin)
+            drawing["start"]["price"] = float(drawing["start"]["price"]) + dy
+            drawing["end"]["price"] = float(drawing["end"]["price"]) + dy
+            self._update_fibo_view_geometry(did, update_box=True)
+            self.case.touch(); self.dirty.emit()
+        finally:
+            group["syncing"] = False
+
+    def _sync_fibo_from_handles(self, did: str):
+        drawing = self._drawing_by_id(did)
+        group = self.drawing_items.get(did)
+        if drawing is None or not isinstance(group, dict) or group.get("syncing"):
+            return
+        group["syncing"] = True
+        try:
+            sh = group.get("start_handle"); eh = group.get("end_handle")
+            sp, ss = sh.pos(), sh.size(); ep, es = eh.pos(), eh.size()
+            drawing["start"]["price"] = float(sp.y() + ss.y() * 0.5)
+            drawing["end"]["price"] = float(ep.y() + es.y() * 0.5)
+            self._update_fibo_view_geometry(did, update_box=True)
+            self.case.touch(); self.dirty.emit()
+        finally:
+            group["syncing"] = False
+
+    def _render_fibonacci(self, drawing: dict):
+        did = drawing.get("id")
+        sx, sy, ex, ey, left, right, ymin, ymax, ys = self._fibo_geometry(drawing)
+        tick = max(float(timeframe_seconds(self.timeframe_combo.currentText())), 1.0)
+        handle_h = max((ymax - ymin) * 0.003, max(abs(ymax), 1.0) * 1e-6)
+        handle_left, handle_right = left - 0.5 * tick, right + 0.5 * tick
+
+        box = pg.RectROI([left, ymin], [right - left, ymax - ymin], pen=pg.mkPen((0, 0, 0, 0)), movable=True)
+        try:
+            box.setHoverPen(pg.mkPen((255, 255, 0, 100), width=1))
+        except Exception:
+            pass
+        self.plot.addItem(box)
+
+        start_handle = pg.RectROI(
+            [handle_left, sy - handle_h * 0.5], [handle_right - handle_left, handle_h],
+            pen=pg.mkPen((255, 80, 80), width=2), movable=True, rotatable=False, resizable=False,
+        )
+        end_handle = pg.RectROI(
+            [handle_left, ey - handle_h * 0.5], [handle_right - handle_left, handle_h],
+            pen=pg.mkPen((255, 80, 80), width=2), movable=True, rotatable=False, resizable=False,
+        )
+        start_handle.setZValue(9); end_handle.setZValue(9)
+        self.plot.addItem(start_handle); self.plot.addItem(end_handle)
+
+        lines = []
+        levels = drawing.get("levels", [])
+        width = int(drawing.get("style", {}).get("width", 2))
+        for i, y in enumerate(ys):
+            color = levels[i].get("color", "#ffffff") if i < len(levels) else "#ffffff"
+            line = pg.PlotDataItem(x=[sx, ex], y=[y, y], pen=pg.mkPen(color, width=width))
+            line.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+            self.plot.addItem(line)
+            lines.append(line)
+
+        group = {
+            "type": "fibonacci", "box": box, "start_handle": start_handle, "end_handle": end_handle,
+            "lines": lines, "last_box_rect": [left, right, ymin, ymax], "syncing": False,
+            "handle_height": handle_h,
+        }
+        self.drawing_items[did] = group
+        for item in [box, start_handle, end_handle, *lines]:
+            self._register_drawing_hit_item(did, item)
+            try:
+                item.setToolTip(f"fibonacci / {did}")
+            except Exception:
+                pass
+        box.sigRegionChanged.connect(lambda _=None, d=did: self._sync_fibo_from_box(d))
+        start_handle.sigRegionChanged.connect(lambda _=None, d=did: self._sync_fibo_from_handles(d))
+        end_handle.sigRegionChanged.connect(lambda _=None, d=did: self._sync_fibo_from_handles(d))
 
     def _render_drawing_items(self):
         if self.case is None:
             return
         self.drawing_items.clear()
+        self.drawing_hit_items.clear()
+        self._drawing_hit_objects.clear()
         for drawing in self.case.drawings:
             dtype = drawing.get("type")
             did = drawing.get("id")
@@ -675,16 +1176,18 @@ class ChartWidget(QtWidgets.QWidget):
                 item.setFlag(QtWidgets.QGraphicsItem.ItemIsMovable, True)
                 item.movementFinished.connect(lambda obj=item, d=drawing: self._sync_text(obj, d))
                 self.plot.addItem(item)
+            elif dtype == "fibonacci":
+                self._render_fibonacci(drawing)
+                continue
             else:
                 continue
-            # Selection is intentionally managed by our own double-click logic.
-            # Do not enable Qt's native single-click ItemIsSelectable behavior.
             try:
                 item.setFlag(QtWidgets.QGraphicsItem.ItemIsSelectable, False)
             except Exception:
                 pass
             item.setToolTip(f"{dtype} / {did}")
             self.drawing_items[did] = item
+            self._register_drawing_hit_item(did, item)
         self._refresh_selection_visuals()
 
     def sync_all_drawings_from_view(self):
@@ -702,6 +1205,9 @@ class ChartWidget(QtWidgets.QWidget):
             elif d.get("type") == "text":
                 pos = item.pos()
                 d["time"] = float(pos.x()); d["price"] = float(pos.y())
+            elif d.get("type") == "fibonacci":
+                # Fibo domain data is updated live from the box/0x/1x handles.
+                pass
 
     def _sync_hline(self, item, drawing):
         drawing["price"] = float(item.value())

@@ -1256,3 +1256,11 @@ Screenshot Template
 ```
 
 這些項目現在不應阻塞核心架構實作。
+
+#### v0.1.2 Drawing / Axis additions
+
+- Fibonacci is stored as a serializable Drawing Domain object (`start`, `end`, `levels`, `style`); PyQtGraph ROI/handles/level lines are view-only objects reconstructed from JSON.
+- Drawing color UI uses one shared legacy TradingView palette service rather than independent QColorDialog behavior.
+- New line drawings default to white.
+- Crosshair labels are UI-only state and are never written into Case research data.
+- `display.x_tick_interval` controls X-axis label spacing independently from `display.view_timeframe` and Replay step.

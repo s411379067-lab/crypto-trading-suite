@@ -61,6 +61,7 @@ class ResearchCase:
 
         self.display.setdefault("view_timeframe", "M5")
         self.display.setdefault("timezone", "Asia/Taipei")
+        self.display.setdefault("x_tick_interval", "15m")
 
         replay_start = self.time_range.get("replay_start")
         self.replay.setdefault("step_minutes", 1)

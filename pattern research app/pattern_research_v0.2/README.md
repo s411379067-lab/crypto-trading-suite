@@ -77,3 +77,22 @@ Replay Step = 1 minute 時，原始資料必須至少是 M1。若輸入 M5 raw d
   - Lines: Line Settings (color / solid-dashed-dotted / width), Delete, Change Color.
   - Text: Delete, Change Color, Change Size.
 - Drawing style changes remain persisted in Case JSON.
+
+### v0.1.2 Fibo / palette / crosshair / X-axis update
+
+- Added **Fibo drawing** using the legacy interaction model but a new JSON-persisted domain model:
+  - Two-click start/end creation.
+  - Default levels: 0 / 0.5 / 1 / 2 / 3.
+  - 0x / 1x control handles.
+  - Group box movement / horizontal extent adjustment.
+  - Right-click: Fibo Settings / Delete / Change Color.
+  - Level multipliers and per-level colors persist in Case JSON.
+- All drawing color pickers now use the same fixed TradingView-style palette from the legacy program.
+- New horizontal/trend/Fibo lines default to **white**.
+- Added TradingView-like crosshair coordinate labels:
+  - X snaps to the nearest revealed candle and shows date/time in the selected view timezone.
+  - Y shows the current price on the right axis.
+- Added independent **X-axis tick interval** control: `5m / 15m / 30m / 1H / 4H / 1D`.
+  - Tick positions are aligned to exact local-time boundaries.
+  - The choice is persisted as `display.x_tick_interval` in Case JSON.
+  - This setting does not change chart timeframe or Replay step.

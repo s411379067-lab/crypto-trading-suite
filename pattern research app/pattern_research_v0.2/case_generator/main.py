@@ -121,7 +121,7 @@ class GeneratorWindow(QtWidgets.QWidget):
                     "replay_start": self._combine(day, self.b_time.time(), tz_name),
                     "default_end": self._combine(day, self.c_time.time(), tz_name)
                 },
-                "display": {"view_timeframe": self.view_tf.currentText(), "timezone": tz_name},
+                "display": {"view_timeframe": self.view_tf.currentText(), "timezone": tz_name, "x_tick_interval": "15m"},
                 "replay": {"step_minutes": 1, "current_time": self._combine(day, self.b_time.time(), tz_name)},
                 "patterns": [], "intraday_notes": [], "drawings": [],
                 "metadata": {"created_at": datetime.now(tz=ZoneInfo("UTC")).isoformat(), "updated_at": datetime.now(tz=ZoneInfo("UTC")).isoformat()}
