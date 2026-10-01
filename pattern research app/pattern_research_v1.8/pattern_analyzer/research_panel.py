@@ -2,15 +2,20 @@ from __future__ import annotations
 
 from pyqtgraph.Qt import QtCore, QtWidgets
 
+from shared_core.models import utc_now_iso
+
 
 class ResearchPanel(QtWidgets.QWidget):
     changed = QtCore.Signal()
     reference_levels_changed = QtCore.Signal(bool)
+    history_committed = QtCore.Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.case = None
         self.replay_time_provider = lambda: ""
+        self._editing_note_id = None
+        self._note_editor = None
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -62,6 +67,7 @@ class ResearchPanel(QtWidgets.QWidget):
         self.btn_delete_pattern.clicked.connect(self.delete_pattern)
         self.btn_add_note.clicked.connect(self.add_note)
         self.btn_delete_note.clicked.connect(self.delete_note)
+        self.note_list.itemDoubleClicked.connect(self._begin_note_edit)
         self.rth_checkbox.toggled.connect(self._rth_toggled)
 
     def set_case(self, case, replay_time_provider):
@@ -70,6 +76,8 @@ class ResearchPanel(QtWidgets.QWidget):
         self.refresh()
 
     def refresh(self):
+        self._editing_note_id = None
+        self._note_editor = None
         self.pattern_list.clear()
         self.note_list.clear()
         if self.case is None:
@@ -125,6 +133,7 @@ class ResearchPanel(QtWidgets.QWidget):
         self.pattern_input.clear()
         self.refresh()
         self.changed.emit()
+        self.history_committed.emit("Add Pattern")
 
     def delete_pattern(self):
         if self.case is None:
@@ -137,6 +146,7 @@ class ResearchPanel(QtWidgets.QWidget):
         self.case.touch()
         self.refresh()
         self.changed.emit()
+        self.history_committed.emit("Delete Pattern")
 
     def add_note(self):
         if self.case is None:
@@ -148,6 +158,7 @@ class ResearchPanel(QtWidgets.QWidget):
         self.note_input.clear()
         self.refresh()
         self.changed.emit()
+        self.history_committed.emit("Add Note")
 
     def delete_note(self):
         if self.case is None:
@@ -160,3 +171,95 @@ class ResearchPanel(QtWidgets.QWidget):
         self.case.touch()
         self.refresh()
         self.changed.emit()
+        self.history_committed.emit("Delete Note")
+
+    def _note_by_id(self, note_id):
+        if self.case is None:
+            return None
+        for note in self.case.intraday_notes:
+            if note.get("id") == note_id:
+                return note
+        return None
+
+    def _begin_note_edit(self, item):
+        """Edit a note in-place inside the existing list row.
+
+        No permanent editor UI is added: the selected row is temporarily replaced
+        by timestamp + text editor + Save/Cancel buttons.
+        """
+        if self.case is None or item is None:
+            return
+        note_id = item.data(QtCore.Qt.UserRole)
+        note = self._note_by_id(note_id)
+        if note is None:
+            return
+        if self._editing_note_id == note_id and self._note_editor is not None:
+            self._note_editor.setFocus(QtCore.Qt.MouseFocusReason)
+            return
+
+        # Starting another edit cancels the previous unsaved inline edit.
+        if self._editing_note_id is not None and self._editing_note_id != note_id:
+            self.refresh()
+            # refresh rebuilt the list, so locate the requested row again.
+            for row in range(self.note_list.count()):
+                candidate = self.note_list.item(row)
+                if candidate.data(QtCore.Qt.UserRole) == note_id:
+                    item = candidate
+                    break
+
+        self._editing_note_id = note_id
+        editor_row = QtWidgets.QWidget(self.note_list)
+        row_layout = QtWidgets.QHBoxLayout(editor_row)
+        row_layout.setContentsMargins(4, 3, 4, 3)
+        row_layout.setSpacing(6)
+
+        stamp = QtWidgets.QLabel(str(note.get("replay_time", "")))
+        stamp.setStyleSheet("color:#8f9bad; font-size:9pt;")
+        stamp.setWordWrap(True)
+        stamp.setMaximumWidth(145)
+
+        editor = QtWidgets.QPlainTextEdit()
+        editor.setPlainText(str(note.get("text", "")))
+        editor.setMinimumHeight(64)
+        editor.setTabChangesFocus(True)
+
+        save_btn = QtWidgets.QPushButton("儲存")
+        cancel_btn = QtWidgets.QPushButton("取消")
+        save_btn.setFixedWidth(52)
+        cancel_btn.setFixedWidth(52)
+
+        row_layout.addWidget(stamp)
+        row_layout.addWidget(editor, 1)
+        row_layout.addWidget(save_btn)
+        row_layout.addWidget(cancel_btn)
+        self.note_list.setItemWidget(item, editor_row)
+        item.setSizeHint(editor_row.sizeHint().expandedTo(QtCore.QSize(0, 74)))
+        self._note_editor = editor
+
+        save_btn.clicked.connect(lambda _=False, nid=note_id: self._save_note_edit(nid))
+        cancel_btn.clicked.connect(self._cancel_note_edit)
+        editor.setFocus(QtCore.Qt.MouseFocusReason)
+        editor.selectAll()
+
+    def _save_note_edit(self, note_id):
+        if self.case is None or self._editing_note_id != note_id or self._note_editor is None:
+            return
+        note = self._note_by_id(note_id)
+        if note is None:
+            self.refresh()
+            return
+        text = self._note_editor.toPlainText().strip()
+        if not text:
+            return
+        if text == str(note.get("text", "")):
+            self.refresh()
+            return
+        note["text"] = text
+        note["updated_at"] = utc_now_iso()
+        self.case.touch()
+        self.refresh()
+        self.changed.emit()
+        self.history_committed.emit("Edit Note")
+
+    def _cancel_note_edit(self):
+        self.refresh()

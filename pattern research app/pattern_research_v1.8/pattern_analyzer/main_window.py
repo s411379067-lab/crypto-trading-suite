@@ -8,6 +8,7 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 from shared_core.repository import CaseRepository
 from shared_core.market_data import MarketDataService
 from shared_core.replay import ReplayEngine, ts_to_iso
+from shared_core.undo import ResearchUndoManager
 from .case_library import CaseLibraryWidget
 from .chart_widget import ChartWidget
 from .research_panel import ResearchPanel
@@ -18,7 +19,7 @@ APP_STYLE = """
 QWidget { background-color:#0f131c; color:#d7deea; }
 QPushButton { background-color:#192131; border:1px solid #4d5a73; border-radius:3px; padding:5px 8px; font-weight:600; }
 QPushButton:hover { background-color:#253249; }
-QLineEdit, QTextEdit, QComboBox, QListWidget, QTreeView {
+QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QListWidget, QTreeView {
     background-color:#0d1420; border:1px solid #36445d; border-radius:3px; color:#e6edf7; padding:4px;
 }
 QTableWidget {
@@ -55,7 +56,7 @@ QSplitter::handle { background:#252c3b; }
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, case_root: str | Path):
         super().__init__()
-        self.setWindowTitle("Pattern Analyzer v1.5")
+        self.setWindowTitle("Pattern Analyzer v1.8")
         self.resize(1550, 900)
         self.setStyleSheet(APP_STYLE)
 
@@ -66,6 +67,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.raw_df = pd.DataFrame()
         self.replay = None
         self.dirty = False
+        self.undo_manager = ResearchUndoManager(max_depth=200)
 
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
@@ -114,7 +116,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.library.case_open_requested.connect(self.open_case)
         self.chart.dirty.connect(self.mark_dirty)
+        self.chart.history_committed.connect(self._record_history)
         self.research.changed.connect(self.mark_dirty)
+        self.research.history_committed.connect(self._record_history)
         self.research.reference_levels_changed.connect(self.chart.set_previous_rth_visible)
         self.order.changed.connect(self.mark_dirty)
         self.order.fills_changed.connect(self._refresh_order_markers)
@@ -132,6 +136,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.shortcut_delete = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Delete), self)
         self.shortcut_delete.setContext(QtCore.Qt.ApplicationShortcut)
         self.shortcut_delete.activated.connect(self.chart.delete_selected_drawing)
+
+        self.shortcut_undo = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Z"), self)
+        self.shortcut_undo.setContext(QtCore.Qt.ApplicationShortcut)
+        self.shortcut_undo.activated.connect(self.undo)
+        self.shortcut_redo = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Y"), self)
+        self.shortcut_redo.setContext(QtCore.Qt.ApplicationShortcut)
+        self.shortcut_redo.activated.connect(self.redo)
 
         self.autosave = QtCore.QTimer(self)
         self.autosave.setInterval(1000)
@@ -160,8 +171,65 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chart.set_context(case, raw, replay, path)
         self.research.set_case(case, self.current_replay_time_text)
         self.chart.set_previous_rth_visible(self.research.rth_checkbox.isChecked())
+        # Rendering can normalize legacy Drawing fields; start history from the normalized state.
+        self.undo_manager.reset(case)
         self.update_status()
-        self.setWindowTitle(f"Pattern Analyzer v1.5 — {case.case.get('symbol')} — {self.case_path.name}")
+        self.setWindowTitle(f"Pattern Analyzer v1.8 — {case.case.get('symbol')} — {self.case_path.name}")
+
+    def _record_history(self, label: str):
+        if self.case is None:
+            return
+        self.undo_manager.record(self.case, label)
+
+    @staticmethod
+    def _focused_text_editor():
+        widget = QtWidgets.QApplication.focusWidget()
+        if isinstance(widget, (QtWidgets.QLineEdit, QtWidgets.QTextEdit, QtWidgets.QPlainTextEdit)):
+            return widget
+        return None
+
+    def undo(self):
+        editor = self._focused_text_editor()
+        if editor is not None:
+            try:
+                editor.undo()
+            except Exception:
+                pass
+            return
+        if self.case is None:
+            return
+        label = self.undo_manager.undo(self.case)
+        if label is None:
+            return
+        self.case.touch()
+        self._refresh_after_history_restore()
+        self.mark_dirty()
+
+    def redo(self):
+        editor = self._focused_text_editor()
+        if editor is not None:
+            try:
+                editor.redo()
+            except Exception:
+                pass
+            return
+        if self.case is None:
+            return
+        label = self.undo_manager.redo(self.case)
+        if label is None:
+            return
+        self.case.touch()
+        self._refresh_after_history_restore()
+        self.mark_dirty()
+
+    def _refresh_after_history_restore(self):
+        if self.case is None:
+            return
+        valid_ids = {str(d.get("id")) for d in self.case.drawings}
+        if self.chart.selected_drawing_id not in valid_ids:
+            self.chart.selected_drawing_id = None
+        self.chart.render(reset_x=False)
+        self.research.refresh()
 
     def current_replay_time_text(self) -> str:
         if self.replay is None or self.case is None:

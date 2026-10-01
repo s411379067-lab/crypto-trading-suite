@@ -651,6 +651,7 @@ class FiboSettingsDialog(QtWidgets.QDialog):
 
 class ChartWidget(QtWidgets.QWidget):
     dirty = QtCore.Signal()
+    history_committed = QtCore.Signal(str)
     view_timeframe_changed = QtCore.Signal(str)
     timezone_changed = QtCore.Signal(str)
     order_prefill_requested = QtCore.Signal(str, float)
@@ -1435,17 +1436,34 @@ class ChartWidget(QtWidgets.QWidget):
 
     @staticmethod
     def _line_state_points(item) -> list[tuple[float, float]]:
+        """Return trend-line endpoints in absolute ViewBox coordinates.
+
+        pyqtgraph LineSegmentROI stores handle points in ROI-local coordinates while
+        whole-object dragging changes ROI.pos().  Persisting only getState()["points"]
+        therefore makes a moved line jump back after the next render/save.  Always
+        fold the ROI translation into the returned coordinates.
+        """
         try:
             pts = item.getState().get("points", [])
             if len(pts) >= 2:
-                return [(float(pts[0][0]), float(pts[0][1])), (float(pts[1][0]), float(pts[1][1]))]
+                pos = item.pos()
+                ox, oy = float(pos.x()), float(pos.y())
+                return [
+                    (float(pts[0][0]) + ox, float(pts[0][1]) + oy),
+                    (float(pts[1][0]) + ox, float(pts[1][1]) + oy),
+                ]
         except Exception:
             pass
         return []
 
     def _set_line_roi_points(self, item, points: list[tuple[float, float]]):
-        """Best-effort point setter compatible with pyqtgraph LineSegmentROI/PolyLineROI."""
-        qpts = [QtCore.QPointF(float(x), float(y)) for x, y in points]
+        """Set absolute trend-line endpoints without losing the ROI translation."""
+        try:
+            pos = item.pos()
+            ox, oy = float(pos.x()), float(pos.y())
+        except Exception:
+            ox, oy = 0.0, 0.0
+        qpts = [QtCore.QPointF(float(x) - ox, float(y) - oy) for x, y in points]
         try:
             item.setPoints(qpts)
             return
@@ -1556,7 +1574,7 @@ class ChartWidget(QtWidgets.QWidget):
                 "style": {"color": "#ffffff", "width": 2, "line_style": "solid"},
             })
             self.tool_mode = None
-            self.case.touch(); self.dirty.emit(); self.rebuild_drawings(); self.render(False)
+            self.case.touch(); self.dirty.emit(); self.history_committed.emit("Add Drawing"); self.rebuild_drawings(); self.render(False)
             return
 
         if self.tool_mode == "trend_line":
@@ -1573,7 +1591,7 @@ class ChartWidget(QtWidgets.QWidget):
                 "style": {"color": "#ffffff", "width": 2, "line_style": "solid"},
             })
             self.pending_point = None; self.tool_mode = None
-            self.case.touch(); self.dirty.emit(); self.rebuild_drawings(); self.render(False)
+            self.case.touch(); self.dirty.emit(); self.history_committed.emit("Add Drawing"); self.rebuild_drawings(); self.render(False)
             return
 
         if self.tool_mode == "rectangle":
@@ -1588,7 +1606,7 @@ class ChartWidget(QtWidgets.QWidget):
                 "style": {"border_color": "#ffffff", "fill_color": "#ffffff", "opacity": 12, "width": 2},
             })
             self.pending_point = None; self.tool_mode = None
-            self.case.touch(); self.dirty.emit(); self.rebuild_drawings(); self.render(False)
+            self.case.touch(); self.dirty.emit(); self.history_committed.emit("Add Drawing"); self.rebuild_drawings(); self.render(False)
             return
 
         if self.tool_mode == "fibonacci":
@@ -1611,7 +1629,7 @@ class ChartWidget(QtWidgets.QWidget):
                 "style": {"width": 2, "line_style": "solid"},
             })
             self.pending_point = None; self.tool_mode = None
-            self.case.touch(); self.dirty.emit(); self.rebuild_drawings(); self.render(False)
+            self.case.touch(); self.dirty.emit(); self.history_committed.emit("Add Drawing"); self.rebuild_drawings(); self.render(False)
             return
 
         if self.tool_mode == "text":
@@ -1645,7 +1663,7 @@ class ChartWidget(QtWidgets.QWidget):
                         "box": {"width": box_w, "height": box_h},
                         "style": style,
                     })
-                    self.case.touch(); self.dirty.emit(); self.rebuild_drawings(); self.render(False)
+                    self.case.touch(); self.dirty.emit(); self.history_committed.emit("Add Drawing"); self.rebuild_drawings(); self.render(False)
             self.tool_mode = None
 
     def _drawing_by_id(self, did: str):
@@ -2024,7 +2042,7 @@ class ChartWidget(QtWidgets.QWidget):
             drawing.setdefault("box", {})["width"] = width
             drawing.setdefault("box", {})["height"] = height
             if emit:
-                self.case.touch(); self.dirty.emit()
+                self.case.touch(); self.dirty.emit(); self.history_committed.emit("Move/Resize Text Box")
         except Exception:
             pass
 
@@ -2405,13 +2423,14 @@ class ChartWidget(QtWidgets.QWidget):
         self.case.drawings = [d for d in self.case.drawings if d.get("id") != did]
         if self.selected_drawing_id == did:
             self.selected_drawing_id = None
-        self._commit_drawing_change()
+        self._commit_drawing_change("Delete Drawing")
 
-    def _commit_drawing_change(self):
+    def _commit_drawing_change(self, label: str = "Edit Drawing"):
         if self.case is None:
             return
         self.case.touch()
         self.dirty.emit()
+        self.history_committed.emit(label)
         self.render(reset_x=False)
 
     def rebuild_drawings(self):
@@ -2569,6 +2588,15 @@ class ChartWidget(QtWidgets.QWidget):
         finally:
             group["syncing"] = False
 
+    def _finish_fibo_change(self, did: str):
+        if self.case is None or self._drawing_by_id(did) is None:
+            return
+        # Domain values are updated live while dragging; only the finished signal
+        # becomes one undo transaction.
+        self.case.touch()
+        self.dirty.emit()
+        self.history_committed.emit("Move/Resize Fibonacci")
+
     def _render_fibonacci(self, drawing: dict):
         did = drawing.get("id")
         sx, sy, ex, ey, left, right, ymin, ymax, ys = self._fibo_geometry(drawing)
@@ -2628,6 +2656,9 @@ class ChartWidget(QtWidgets.QWidget):
         box.sigRegionChanged.connect(lambda _=None, d=did: self._sync_fibo_from_box(d))
         start_handle.sigRegionChanged.connect(lambda _=None, d=did: self._sync_fibo_from_handles(d))
         end_handle.sigRegionChanged.connect(lambda _=None, d=did: self._sync_fibo_from_handles(d))
+        box.sigRegionChangeFinished.connect(lambda _=None, d=did: self._finish_fibo_change(d))
+        start_handle.sigRegionChangeFinished.connect(lambda _=None, d=did: self._finish_fibo_change(d))
+        end_handle.sigRegionChangeFinished.connect(lambda _=None, d=did: self._finish_fibo_change(d))
 
     def _rectangle_geometry(self, drawing: dict):
         p1, p2 = drawing["points"]
@@ -2874,17 +2905,19 @@ class ChartWidget(QtWidgets.QWidget):
 
     def _sync_hline(self, item, drawing):
         drawing["price"] = float(item.value())
-        self.case.touch(); self.dirty.emit()
+        self.case.touch(); self.dirty.emit(); self.history_committed.emit("Move Drawing")
 
     def _sync_trend(self, item, drawing, emit=True):
         try:
-            pts = item.getState()["points"]
+            pts = self._line_state_points(item)
+            if len(pts) != 2:
+                return
             drawing["points"] = [
                 {"time": float(pts[0][0]), "price": float(pts[0][1])},
                 {"time": float(pts[1][0]), "price": float(pts[1][1])},
             ]
             if emit:
-                self.case.touch(); self.dirty.emit()
+                self.case.touch(); self.dirty.emit(); self.history_committed.emit("Move/Resize Drawing")
         except Exception:
             pass
 
@@ -2901,7 +2934,7 @@ class ChartWidget(QtWidgets.QWidget):
             if isinstance(group, dict):
                 self._update_rectangle_fill(group)
             if emit:
-                self.case.touch(); self.dirty.emit()
+                self.case.touch(); self.dirty.emit(); self.history_committed.emit("Move/Resize Drawing")
         except Exception:
             pass
 
@@ -2910,7 +2943,7 @@ class ChartWidget(QtWidgets.QWidget):
             pos = item.pos()
             drawing["time"] = float(pos.x())
             drawing["price"] = float(pos.y())
-            self.case.touch(); self.dirty.emit()
+            self.case.touch(); self.dirty.emit(); self.history_committed.emit("Move Text")
         except Exception:
             pass
 
@@ -2954,6 +2987,7 @@ class ChartWidget(QtWidgets.QWidget):
         self.selected_drawing_id = str(clone.get("id"))
         self.case.touch()
         self.dirty.emit()
+        self.history_committed.emit("Paste Drawing")
         self.render(reset_x=False)
         try:
             self.graphics.setFocus(QtCore.Qt.MouseFocusReason)
