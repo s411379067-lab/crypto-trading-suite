@@ -9,6 +9,7 @@ class ResearchPanel(QtWidgets.QWidget):
     changed = QtCore.Signal()
     reference_levels_changed = QtCore.Signal(bool)
     history_committed = QtCore.Signal(str)
+    note_selection_changed = QtCore.Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -68,17 +69,24 @@ class ResearchPanel(QtWidgets.QWidget):
         self.btn_add_note.clicked.connect(self.add_note)
         self.btn_delete_note.clicked.connect(self.delete_note)
         self.note_list.itemDoubleClicked.connect(self._begin_note_edit)
+        self.note_list.itemSelectionChanged.connect(self._emit_note_selection)
         self.rth_checkbox.toggled.connect(self._rth_toggled)
 
     def set_case(self, case, replay_time_provider):
         self.case = case
         self.replay_time_provider = replay_time_provider
-        self.refresh()
+        self.refresh(preserve_note_selection=False)
 
-    def refresh(self):
+    def refresh(self, preserve_note_selection=True):
+        selected_note_id = None
+        if preserve_note_selection:
+            current = self.note_list.currentItem()
+            if current is not None:
+                selected_note_id = current.data(QtCore.Qt.UserRole)
         self._editing_note_id = None
         self._note_editor = None
         self.pattern_list.clear()
+        self.note_list.blockSignals(True)
         self.note_list.clear()
         if self.case is None:
             self.rth_checkbox.blockSignals(True)
@@ -86,18 +94,27 @@ class ResearchPanel(QtWidgets.QWidget):
             self.rth_checkbox.setEnabled(False)
             self.rth_checkbox.blockSignals(False)
             self.rth_status.setText("[無資料]")
+            self.note_list.blockSignals(False)
+            self.note_selection_changed.emit(None)
             return
 
         for item in self.case.patterns:
             widget_item = QtWidgets.QListWidgetItem(item.get("text", ""))
             widget_item.setData(QtCore.Qt.UserRole, item.get("id"))
             self.pattern_list.addItem(widget_item)
+        selected_row = -1
         for item in self.case.intraday_notes:
             stamp = item.get("replay_time", "")
             text = item.get("text", "")
             widget_item = QtWidgets.QListWidgetItem(f"{stamp}\n{text}")
             widget_item.setData(QtCore.Qt.UserRole, item.get("id"))
             self.note_list.addItem(widget_item)
+            if selected_note_id is not None and item.get("id") == selected_note_id:
+                selected_row = self.note_list.count() - 1
+        if selected_row >= 0:
+            self.note_list.setCurrentRow(selected_row)
+        self.note_list.blockSignals(False)
+        self._emit_note_selection()
 
         rth = self.case.reference_levels.get("previous_rth") if hasattr(self.case, "reference_levels") else None
         available = isinstance(rth, dict) and rth.get("high") is not None and rth.get("low") is not None and rth.get("close") is not None
@@ -172,6 +189,17 @@ class ResearchPanel(QtWidgets.QWidget):
         self.refresh()
         self.changed.emit()
         self.history_committed.emit("Delete Note")
+
+    def _emit_note_selection(self):
+        if self.case is None:
+            self.note_selection_changed.emit(None)
+            return
+        item = self.note_list.currentItem()
+        if item is None:
+            self.note_selection_changed.emit(None)
+            return
+        note = self._note_by_id(item.data(QtCore.Qt.UserRole))
+        self.note_selection_changed.emit(dict(note) if note is not None else None)
 
     def _note_by_id(self, note_id):
         if self.case is None:

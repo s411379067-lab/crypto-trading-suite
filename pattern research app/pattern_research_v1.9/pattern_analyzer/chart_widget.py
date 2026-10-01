@@ -11,6 +11,7 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 from shared_core.aggregation import aggregate_visible_bars, timeframe_seconds
 from shared_core.drawing_clipboard import clone_drawing_with_offset
+from shared_core.note_callout import find_m1_close, resolve_note_timestamp, wrap_note_text
 from pattern_analyzer.drawing_templates import DrawingTemplateRepository
 
 
@@ -676,6 +677,7 @@ class ChartWidget(QtWidgets.QWidget):
         self._syncing_auto_all = False
         self.order_events: list[dict] = []
         self.show_previous_rth = False
+        self.selected_intraday_note: dict | None = None
 
         # Transient measure mode. Nothing here is persisted to Case JSON.
         self.measure_mode = False
@@ -786,6 +788,22 @@ class ChartWidget(QtWidgets.QWidget):
         self.measure_line.hide()
         self.measure_label.hide()
 
+        # Selected intraday-note callout.  This is a transient chart overlay, not
+        # a Drawing Domain object and never persists to Case JSON.
+        self.note_callout_line = pg.PlotDataItem(
+            pen=pg.mkPen((255, 220, 40, 235), width=1.5)
+        )
+        self.note_callout_label = pg.TextItem(
+            text="", color=(245, 247, 250), anchor=(0, 0),
+            fill=pg.mkBrush(15, 20, 30, 235), border=pg.mkPen(255, 220, 40, 210),
+        )
+        self.note_callout_line.setZValue(70)
+        self.note_callout_label.setZValue(71)
+        self.plot.addItem(self.note_callout_line, ignoreBounds=True)
+        self.plot.addItem(self.note_callout_label, ignoreBounds=True)
+        self.note_callout_line.hide()
+        self.note_callout_label.hide()
+
         coord_style = (
             "background-color:#0d1420; border:1px solid #6b7fa1; border-radius:2px; "
             "color:#e6edf7; padding:2px 6px; font-size:10pt;"
@@ -851,6 +869,8 @@ class ChartWidget(QtWidgets.QWidget):
         self.replay = replay
         self.current_case_path = case_path
         self.selected_drawing_id = None
+        self.selected_intraday_note = None
+        self._clear_note_callout_overlay()
         self.symbol_label.setText(f"{case.case.get('symbol', '')}   {case.case.get('research_date', '')}")
 
         self.timeframe_combo.blockSignals(True)
@@ -929,6 +949,8 @@ class ChartWidget(QtWidgets.QWidget):
         self.plot.addItem(self.hline, ignoreBounds=True)
         self.plot.addItem(self.measure_line, ignoreBounds=True)
         self.plot.addItem(self.measure_label, ignoreBounds=True)
+        self.plot.addItem(self.note_callout_line, ignoreBounds=True)
+        self.plot.addItem(self.note_callout_label, ignoreBounds=True)
         self.vline.hide(); self.hline.hide()
         if not self._measure_dragging:
             self.measure_line.hide(); self.measure_label.hide()
@@ -966,6 +988,73 @@ class ChartWidget(QtWidgets.QWidget):
         if self.auto_all_mode:
             self.auto_all()
 
+        self._update_note_callout_overlay()
+
+
+    def set_selected_intraday_note(self, note):
+        self.selected_intraday_note = dict(note) if isinstance(note, dict) else None
+        self._update_note_callout_overlay()
+
+    def _clear_note_callout_overlay(self):
+        try:
+            self.note_callout_line.setData([], [])
+            self.note_callout_line.hide()
+            self.note_callout_label.setText("")
+            self.note_callout_label.hide()
+        except Exception:
+            pass
+
+    def _update_note_callout_overlay(self):
+        if self.case is None or self.replay is None or self.selected_intraday_note is None:
+            self._clear_note_callout_overlay()
+            return
+
+        fallback_tz = self.case.time_context.get("case_timezone", self.case.display.get("timezone", "UTC"))
+        note_ts = resolve_note_timestamp(self.selected_intraday_note, fallback_timezone=fallback_tz)
+        if note_ts is None or float(note_ts) > float(self.replay.current_ts) + 0.5:
+            self._clear_note_callout_overlay()
+            return
+
+        anchor = find_m1_close(self.raw_df, float(note_ts))
+        if anchor is None:
+            self._clear_note_callout_overlay()
+            return
+        anchor_x, anchor_y = anchor
+
+        try:
+            x_range, y_range = self.plot.viewRange()
+            x_min, x_max = float(x_range[0]), float(x_range[1])
+            y_min, y_max = float(y_range[0]), float(y_range[1])
+        except Exception:
+            self._clear_note_callout_overlay()
+            return
+
+        # The callout is meaningful only while its M1 anchor is actually visible.
+        if anchor_x < x_min or anchor_x > x_max:
+            self._clear_note_callout_overlay()
+            return
+
+        x_span = max(x_max - x_min, 1.0)
+        y_span = max(y_max - y_min, max(abs(y_max), abs(y_min), 1.0) * 0.001)
+
+        # V1 safe area: fixed upper-left position inside the plot.  The text box
+        # stays away from the candle body area as much as possible while the line
+        # points back to the exact M1 close anchor.
+        label_x = x_min + x_span * 0.035
+        label_y = y_max - y_span * 0.035
+        line_end_x = label_x + x_span * 0.10
+        line_end_y = label_y - y_span * 0.035
+
+        text = wrap_note_text(self.selected_intraday_note.get("text", ""), width=26)
+        if not text:
+            self._clear_note_callout_overlay()
+            return
+
+        self.note_callout_line.setData([anchor_x, line_end_x], [anchor_y, line_end_y])
+        self.note_callout_line.show()
+        self.note_callout_label.setText(text)
+        self.note_callout_label.setPos(label_x, label_y)
+        self.note_callout_label.show()
 
     def set_previous_rth_visible(self, enabled: bool):
         self.show_previous_rth = bool(enabled)
@@ -1116,6 +1205,8 @@ class ChartWidget(QtWidgets.QWidget):
             elif isinstance(group, dict) and group.get("type") == "text":
                 # Text wrapping is based on the box width in screen pixels, so refresh it after zoom/pan.
                 self._update_text_box_view(did, update_roi=False)
+
+        self._update_note_callout_overlay()
 
     def export_screenshot(self):
         path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "匯出圖表", "chart.png", "PNG (*.png)")

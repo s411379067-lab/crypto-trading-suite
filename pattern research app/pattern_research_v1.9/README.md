@@ -1,3 +1,13 @@
+# Pattern Research v1.9
+
+## v1.9 Selected Intraday Note Callout
+- 單擊一筆盤中紀錄後，以該紀錄時間對應的原始 M1 Close 作為 Anchor。
+- 從 Anchor 拉出高 z-order 黃色斜線，連到圖表上方固定安全區。
+- 上方顯示深色背景／白字的盤中紀錄文字；一次只顯示目前選取的一筆。
+- 切換 Note、取消選取、切換 Case 時同步更新／清除。
+- Callout 為 transient overlay，不寫入 drawings[]、不進 Template、也不加入 Undo/Redo。
+- 新增 Note 額外保存 replay_time_utc；舊 Note 仍可由既有 replay_time 相容解析。
+
 # Pattern Research v1.5
 
 ## v1.5 Previous RTH workflow
