@@ -1,8 +1,30 @@
-# Pattern Research v1.20
+# Pattern Research v2.1
 
 
 
 
+
+
+
+## v2.1 — Read-only Pattern Viewer + Pattern-filtered Case Library
+
+- Added a fourth independent program: `run_pattern_viewer.py`.
+- Pattern Viewer recursively scans a selected Case folder and reads Case JSON metadata without modifying files.
+- The left Pattern Library automatically collects every unique `patterns[].text` tag found in valid Case JSON files.
+- Pattern filters support multi-select with:
+  - `ANY`: show a Case when it contains at least one selected Pattern.
+  - `ALL`: show a Case only when it contains every selected Pattern.
+- Selecting a Case immediately loads its market data and reveals the complete research window from `data_start` through `default_end`; there is no Replay stepping in Viewer.
+- Viewer reuses the existing chart rendering for candles, saved Drawings, Previous RTH H/L/C, intraday-note callouts, filled order markers, and N-day volatility summary.
+- Viewer is structurally read-only:
+  - no Drawing creation tools;
+  - no Drawing selection/context menus;
+  - no move/resize;
+  - no Drawing clipboard;
+  - no Note/Pattern/Order editors;
+  - no Case autosave or `CaseRepository.save()` path.
+- View-only operations remain available: pan/zoom, timeframe, X-axis interval, timezone, Auto/AutoAll, screenshot, Drawing visibility, Note-callout visibility, RTH visibility, and volatility N.
+- Added `READ ONLY` status badge so Viewer is visually distinct from Pattern Analyzer.
 
 
 ## v1.20 — Alternating Note Callouts + Analyzer N-day volatility summary

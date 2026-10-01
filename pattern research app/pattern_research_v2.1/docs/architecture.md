@@ -4,7 +4,7 @@
 
 本系統的核心用途不是交易下單，也不是策略自動回測，而是針對歷史市場資料進行「逐步時間回放、圖表標註、盤中紀錄與 Pattern 研究」。
 
-整體工作流程分成兩個獨立程式：
+整體工作流程目前分成四個獨立程式：
 
 **Program A — Case Generator**
 
@@ -14,7 +14,15 @@
 
 負責讀取 Case JSON 與原始歷史行情資料，渲染交易圖，進行多週期 K 線回放、Drawing、盤中紀錄與 Pattern 標記，並將研究結果持續寫回原 Case JSON。
 
-兩個程式彼此獨立，但必須共用相同的 `shared-core`，避免 JSON 格式、時間處理、行情解析與資料驗證邏輯各自發展。
+**Program C — Case Enricher**
+
+負責從原始行情計算 Previous RTH、20D 日內波動等衍生／參考資料並寫回 Case JSON。Analyzer 不應在顯示時偷偷重算同一份研究衍生資料。
+
+**Program D — Pattern Viewer**
+
+負責以唯讀方式批次瀏覽已完成 Case。它直接顯示 `data_start → default_end` 的完整研究視窗，支援依 `patterns[]` 篩選 Case Library，但不提供 Drawing、Note、Pattern、Order 的新增、修改、刪除或 Case 儲存能力。
+
+四個程式彼此獨立，但必須共用相同的 `shared-core`，避免 JSON 格式、時間處理、行情解析與資料驗證邏輯各自發展。
 
 ---
 
@@ -138,9 +146,9 @@ pattern-research/
    └─ architecture.md
 ```
 
-Program A 與 Program B 不應直接引用彼此。
+Program A / B / C / D 不應以彼此的 UI 或持久化副作用作為必要依賴。
 
-兩者只依賴共同的 `shared-core` 與必要 Adapter。
+四者只應共用 `shared-core` 與必要 Adapter；Viewer 可以重用純渲染元件，但必須封鎖所有 Case 寫入路徑。
 
 ---
 
