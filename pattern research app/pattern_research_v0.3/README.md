@@ -96,3 +96,48 @@ Replay Step = 1 minute 時，原始資料必須至少是 M1。若輸入 M5 raw d
   - Tick positions are aligned to exact local-time boundaries.
   - The choice is persisted as `display.x_tick_interval` in Case JSON.
   - This setting does not change chart timeframe or Replay step.
+
+### v0.1.3 Rectangle / Order update
+
+- Added **Rectangle drawing**:
+  - Two-click creation.
+  - Move and resize after creation.
+  - Right-click `長方形設定` to change border color, fill color, fill opacity, and border width.
+  - Rectangle geometry/style persist in `drawings[]` inside Case JSON.
+  - Border defaults to white; all color pickers continue using the fixed legacy TradingView palette.
+- Left side is now split vertically:
+  - Top: **Order** module.
+  - Bottom: **Case Library** / folder selection.
+  - The splitter can be resized by dragging.
+- Restored legacy-style Order simulation:
+  - market / limit / stop market.
+  - quantity, 1/3 P, 1/2 P, full P.
+  - Place Order / Close Position.
+  - Pending Orders and Cancel Selected.
+  - Position, realized/unrealized PnL and R-PnL (`R=60`, matching legacy prototype).
+  - Long/Short triangle fill markers on the chart.
+  - Legacy S/L buttons beside the crosshair price to prefill side/type/price.
+  - Export order records to CSV and Clean Records.
+- Every Place Order / Close Position action is stored as one entry in Case JSON `orders[]`.
+- A single order record can be deleted with `Delete Selected Record`; position/PnL are recomputed from the remaining filled order records.
+- Cancelling a pending order preserves the order record and changes its status to `cancelled` rather than silently deleting it.
+
+Example order record:
+
+```json
+{
+  "id": "order-...",
+  "created_ts": 0,
+  "replay_time": "...",
+  "side": "long",
+  "order_type": "limit",
+  "requested_price": 25000.0,
+  "qty": 1.0,
+  "status": "filled",
+  "fill_ts": 0,
+  "fill_price": 25000.0,
+  "computed_action": "OPEN",
+  "realized_pnl": 0.0,
+  "realized_r_pnl": 0.0
+}
+```

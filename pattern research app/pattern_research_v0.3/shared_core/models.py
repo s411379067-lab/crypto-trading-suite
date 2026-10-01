@@ -25,6 +25,7 @@ class ResearchCase:
     patterns: list[dict[str, Any]] = field(default_factory=list)
     intraday_notes: list[dict[str, Any]] = field(default_factory=list)
     drawings: list[dict[str, Any]] = field(default_factory=list)
+    orders: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -44,6 +45,7 @@ class ResearchCase:
             patterns=list(data.get("patterns", [])),
             intraday_notes=list(data.get("intraday_notes", [])),
             drawings=list(data.get("drawings", [])),
+            orders=list(data.get("orders", [])),
             metadata=dict(data.get("metadata", {})),
         )
         case._apply_defaults()
@@ -88,6 +90,7 @@ class ResearchCase:
             "patterns": self.patterns,
             "intraday_notes": self.intraday_notes,
             "drawings": self.drawings,
+            "orders": self.orders,
             "metadata": self.metadata,
         }
 

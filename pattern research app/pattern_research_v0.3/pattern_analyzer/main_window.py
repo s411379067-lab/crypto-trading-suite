@@ -11,6 +11,7 @@ from shared_core.replay import ReplayEngine, ts_to_iso
 from .case_library import CaseLibraryWidget
 from .chart_widget import ChartWidget
 from .research_panel import ResearchPanel
+from .order_panel import OrderPanel
 
 
 APP_STYLE = """
@@ -48,13 +49,22 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.setSpacing(4)
 
         self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+
+        # Left side is intentionally split into two independently resizable blocks:
+        # Order on top, Case Library on bottom.
+        self.left_splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        self.order = OrderPanel()
         self.library = CaseLibraryWidget(case_root)
+        self.left_splitter.addWidget(self.order)
+        self.left_splitter.addWidget(self.library)
+        self.left_splitter.setSizes([560, 300])
+
         self.chart = ChartWidget()
         self.research = ResearchPanel()
-        self.splitter.addWidget(self.library)
+        self.splitter.addWidget(self.left_splitter)
         self.splitter.addWidget(self.chart)
         self.splitter.addWidget(self.research)
-        self.splitter.setSizes([230, 980, 330])
+        self.splitter.setSizes([390, 900, 330])
         layout.addWidget(self.splitter, 1)
 
         replay_bar = QtWidgets.QWidget()
@@ -80,6 +90,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.library.case_open_requested.connect(self.open_case)
         self.chart.dirty.connect(self.mark_dirty)
         self.research.changed.connect(self.mark_dirty)
+        self.order.changed.connect(self.mark_dirty)
+        self.order.fills_changed.connect(self._refresh_order_markers)
+        self.chart.order_prefill_requested.connect(self.order.prefill_from_chart)
         self.btn_forward.clicked.connect(self.step_forward)
         self.btn_back.clicked.connect(self.step_backward)
         self.btn_reset.clicked.connect(self.reset_replay)
@@ -116,6 +129,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.raw_df = raw
         self.replay = replay
         self.dirty = False
+        self.order.set_context(case, raw, replay)
+        self.chart.set_order_events(self.order.visible_fill_events(), render=False)
         self.chart.set_context(case, raw, replay, path)
         self.research.set_case(case, self.current_replay_time_text)
         self.update_status()
@@ -131,9 +146,13 @@ class MainWindow(QtWidgets.QMainWindow):
     def step_forward(self):
         if self.replay is None:
             return
+        previous_ts = float(self.replay.current_ts)
         self.replay.forward()
+        self.order.process_replay_advance(previous_ts, float(self.replay.current_ts))
         self._sync_replay_to_case()
+        self.chart.set_order_events(self.order.visible_fill_events(), render=False)
         self.chart.render(reset_x=False)
+        self.order.refresh()
         self.mark_dirty()
         self.update_status()
 
@@ -142,6 +161,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.replay.backward()
         self._sync_replay_to_case()
+        self.order.refresh()
+        self.chart.set_order_events(self.order.visible_fill_events(), render=False)
         self.chart.render(reset_x=False)
         self.mark_dirty()
         self.update_status()
@@ -151,9 +172,17 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.replay.reset()
         self._sync_replay_to_case()
+        self.order.refresh()
+        self.chart.set_order_events(self.order.visible_fill_events(), render=False)
         self.chart.render(reset_x=True)
         self.mark_dirty()
         self.update_status()
+
+    def _refresh_order_markers(self):
+        if self.case is None:
+            return
+        self.chart.set_order_events(self.order.visible_fill_events(), render=False)
+        self.chart.render(reset_x=False)
 
     def _sync_replay_to_case(self):
         if self.case is None or self.replay is None:
