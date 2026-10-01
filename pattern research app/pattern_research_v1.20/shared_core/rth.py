@@ -295,3 +295,42 @@ def intraday_volatility_is_current(
     except Exception:
         return False
     return True
+
+
+def summarize_intraday_volatility_payload(payload: dict | None, session_count: int) -> dict | None:
+    """Summarize the most recent N enriched sessions without touching raw data.
+
+    This is intentionally an Analyzer-level summary over the Enricher's stored
+    daily ``range_pct`` values.  It never redefines sessions or recalculates OHLC.
+    Sample standard deviation (ddof=1) matches the Enricher definition.
+    """
+    if not isinstance(payload, dict):
+        return None
+    try:
+        n = int(session_count)
+    except Exception:
+        return None
+    if n < 2 or n > 20:
+        return None
+    sessions = payload.get("sessions")
+    if not isinstance(sessions, list) or len(sessions) < n:
+        return None
+    recent = sessions[-n:]
+    try:
+        values = pd.Series([float(row["range_pct"]) for row in recent], dtype="float64")
+    except Exception:
+        return None
+    if len(values) != n or values.isna().any():
+        return None
+    median = float(values.median())
+    std = float(values.std(ddof=1))
+    return {
+        "session_count": n,
+        "median_range_pct": median,
+        "std_range_pct": std,
+        "std_1x_range_pct": std,
+        "std_2x_range_pct": std * 2.0,
+        "std_3x_range_pct": std * 3.0,
+        "start_date": str(recent[0].get("date", "")),
+        "end_date": str(recent[-1].get("date", "")),
+    }

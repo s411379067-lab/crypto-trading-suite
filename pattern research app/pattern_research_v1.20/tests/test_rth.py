@@ -174,3 +174,32 @@ def test_intraday_volatility_currentness_checks_source_and_version():
         end_hhmm="16:00",
         data_source_id="nas100-primary",
     )
+
+
+def test_analyzer_n_day_summary_uses_latest_n_enriched_sessions():
+    from shared_core.rth import summarize_intraday_volatility_payload
+
+    sessions = [
+        {"date": f"2026-09-{i:02d}", "range_pct": float(i)}
+        for i in range(1, 21)
+    ]
+    payload = {"sessions": sessions}
+    out = summarize_intraday_volatility_payload(payload, 5)
+    assert out is not None
+    # latest five are 16,17,18,19,20
+    assert out["session_count"] == 5
+    assert out["median_range_pct"] == 18.0
+    expected_std = pd.Series([16.0, 17.0, 18.0, 19.0, 20.0]).std(ddof=1)
+    assert abs(out["std_1x_range_pct"] - expected_std) < 1e-12
+    assert abs(out["std_2x_range_pct"] - expected_std * 2.0) < 1e-12
+    assert abs(out["std_3x_range_pct"] - expected_std * 3.0) < 1e-12
+    assert out["start_date"] == "2026-09-16"
+    assert out["end_date"] == "2026-09-20"
+
+
+def test_analyzer_n_day_summary_rejects_outside_2_to_20():
+    from shared_core.rth import summarize_intraday_volatility_payload
+
+    payload = {"sessions": [{"date": str(i), "range_pct": float(i)} for i in range(1, 21)]}
+    assert summarize_intraday_volatility_payload(payload, 1) is None
+    assert summarize_intraday_volatility_payload(payload, 21) is None

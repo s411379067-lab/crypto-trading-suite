@@ -51,7 +51,7 @@ def _weekend_target(path: Path, is_weekend: bool) -> Path:
 class EnricherWindow(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Case Enricher v1.19 — RTH + 20D Intraday Volatility")
+        self.setWindowTitle("Case Enricher v1.20 — RTH + 20D Intraday Volatility")
         self.resize(860, 760)
         self.setStyleSheet(STYLE)
         self.repo = CaseRepository()

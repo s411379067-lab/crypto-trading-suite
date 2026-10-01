@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from shared_core.note_callout import align_note_x_to_timeframe, find_m1_close, layout_note_callouts, resolve_note_timestamp, wrap_note_text
+from shared_core.note_callout import align_note_x_to_timeframe, find_m1_close, layout_note_callouts, layout_alternating_note_callouts, resolve_note_timestamp, wrap_note_text
 
 
 def test_resolve_new_note_utc_time():
@@ -87,3 +87,29 @@ def test_bulk_callout_can_shift_x_before_forcing_overlap():
     assert len(result) == len(items)
     assert all(0.0 <= r["center_x_norm"] <= 1.0 for r in result)
     assert any(abs(r["center_x_norm"] - items[i]["x_norm"]) > 1e-6 for i, r in enumerate(result))
+
+
+def test_v120_bulk_callout_alternates_top_bottom_by_time():
+    items = [
+        {"x_norm": 0.70, "y_norm": 0.20, "width_norm": 0.18},
+        {"x_norm": 0.10, "y_norm": 0.80, "width_norm": 0.18},
+        {"x_norm": 0.40, "y_norm": 0.50, "width_norm": 0.18},
+        {"x_norm": 0.90, "y_norm": 0.30, "width_norm": 0.18},
+    ]
+    result = layout_alternating_note_callouts(items)
+    # Time/X order is indices 1,2,0,3 => top,bottom,top,bottom.
+    assert result[1]["side"] == "top"
+    assert result[2]["side"] == "bottom"
+    assert result[0]["side"] == "top"
+    assert result[3]["side"] == "bottom"
+
+
+def test_v120_bulk_callout_distributes_each_side_left_to_right():
+    items = [{"x_norm": i / 5.0, "y_norm": 0.5, "width_norm": 0.18} for i in range(6)]
+    result = layout_alternating_note_callouts(items, edge_margin=0.07)
+    top_x = [result[i]["center_x_norm"] for i in (0, 2, 4)]
+    bottom_x = [result[i]["center_x_norm"] for i in (1, 3, 5)]
+    assert top_x == sorted(top_x)
+    assert bottom_x == sorted(bottom_x)
+    assert min(top_x + bottom_x) >= 0.07
+    assert max(top_x + bottom_x) <= 0.93

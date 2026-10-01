@@ -226,3 +226,41 @@ def layout_note_callouts(items: list[dict], max_lanes: int = 4, gap_norm: float 
     for idx in range(len(items)):
         out.append(placements[idx])
     return out
+
+
+def layout_alternating_note_callouts(items: list[dict], edge_margin: float = 0.08) -> list[dict]:
+    """Deterministic bulk-note layout used by v1.20.
+
+    Notes are ordered by X/time, then assigned Top / Bottom / Top / Bottom.
+    Within each side, labels are distributed from left to right in the same
+    chronological order.  This keeps leader lines slanted and avoids same-side
+    crossings while leaving the candle area mostly unobstructed.
+    """
+    if not items:
+        return []
+    margin = min(max(float(edge_margin), 0.0), 0.45)
+    ordered = sorted(enumerate(items), key=lambda pair: float(pair[1].get("x_norm", 0.0)))
+    top: list[tuple[int, dict]] = []
+    bottom: list[tuple[int, dict]] = []
+    for sequence_idx, pair in enumerate(ordered):
+        (top if sequence_idx % 2 == 0 else bottom).append(pair)
+
+    placements: dict[int, dict] = {}
+
+    def assign(group: list[tuple[int, dict]], side: str) -> None:
+        count = len(group)
+        if not count:
+            return
+        if count == 1:
+            original_idx, item = group[0]
+            x = min(max(float(item.get("x_norm", 0.5)), margin), 1.0 - margin)
+            placements[original_idx] = {"side": side, "center_x_norm": x}
+            return
+        usable = max(0.0, 1.0 - 2.0 * margin)
+        for rank, (original_idx, _item) in enumerate(group):
+            x = margin + usable * (rank / (count - 1))
+            placements[original_idx] = {"side": side, "center_x_norm": x}
+
+    assign(top, "top")
+    assign(bottom, "bottom")
+    return [placements[i] for i in range(len(items))]

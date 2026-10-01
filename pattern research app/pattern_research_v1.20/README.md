@@ -1,8 +1,18 @@
-# Pattern Research v1.19
+# Pattern Research v1.20
 
 
 
 
+
+
+## v1.20 — Alternating Note Callouts + Analyzer N-day volatility summary
+
+- **顯示全部紀錄** now sorts visible notes by time and places them deterministically Top / Bottom / Top / Bottom.
+- Each bulk Note callout keeps a slanted leader line and adds a visible yellow/white anchor dot at the exact M1-close anchor.
+- Bulk labels stay in the upper/lower outer safe zones instead of occupying the candle area.
+- Pattern Analyzer toolbar adds **波動 N** with N restricted to 2–20.
+- N-day statistics use only the 20 enriched session rows already stored in `reference_statistics.intraday_volatility_20d.sessions`; Analyzer does not rescan raw M1 data or redefine RTH sessions.
+- Displays: `Median Range %`, `1× Std Range %`, `2× Std Range %`, and `3× Std Range %`. Std remains sample standard deviation (`ddof=1`).
 
 ## v1.19 — Enricher 20D RTH intraday volatility statistics
 

@@ -12,7 +12,8 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 from shared_core.geometry_picker import point_to_rect_distance, point_to_segment_distance
 from shared_core.aggregation import aggregate_visible_bars, timeframe_seconds
 from shared_core.drawing_clipboard import clone_drawing_with_offset
-from shared_core.note_callout import align_note_x_to_timeframe, find_m1_close, layout_note_callouts, resolve_note_timestamp, wrap_note_text
+from shared_core.note_callout import align_note_x_to_timeframe, find_m1_close, layout_alternating_note_callouts, resolve_note_timestamp, wrap_note_text
+from shared_core.rth import summarize_intraday_volatility_payload
 from pattern_analyzer.drawing_templates import DrawingTemplateRepository
 
 
@@ -768,6 +769,16 @@ class ChartWidget(QtWidgets.QWidget):
         self.timezone_combo.addItems(["Asia/Taipei", "America/New_York", "UTC", "Europe/London"])
         self.timezone_combo.setFixedWidth(170)
 
+        self.vol_n_label = QtWidgets.QLabel("波動N")
+        self.vol_n_spin = QtWidgets.QSpinBox()
+        self.vol_n_spin.setRange(2, 20)
+        self.vol_n_spin.setValue(20)
+        self.vol_n_spin.setFixedWidth(58)
+        self.vol_n_spin.setToolTip("使用 Enricher 已寫入 Case JSON 的最近 N 個完整 RTH Session；不重新讀取 raw data")
+        self.vol_stats_label = QtWidgets.QLabel("Med -- | σ -- | 2σ -- | 3σ --")
+        self.vol_stats_label.setStyleSheet("color:#d7deea; font-weight:600; padding-left:4px;")
+        self.vol_stats_label.setToolTip("Range % = (RTH High - RTH Low) / RTH Open × 100；σ 使用樣本標準差 ddof=1")
+
         for w in (self.btn_h, self.btn_l, self.btn_t, self.btn_rect, self.btn_fibo):
             tb.addWidget(w)
         tb.addWidget(self.show_drawings_checkbox)
@@ -776,6 +787,10 @@ class ChartWidget(QtWidgets.QWidget):
         tb.addWidget(QtWidgets.QLabel("X刻度"))
         tb.addWidget(self.x_tick_combo)
         tb.addWidget(self.timezone_combo)
+        tb.addSpacing(8)
+        tb.addWidget(self.vol_n_label)
+        tb.addWidget(self.vol_n_spin)
+        tb.addWidget(self.vol_stats_label)
         self.measure_status = QtWidgets.QLabel("MEASURE")
         self.measure_status.setStyleSheet(
             "background-color:#2a3952; border:1px solid #ffcc80; border-radius:3px; "
@@ -886,6 +901,7 @@ class ChartWidget(QtWidgets.QWidget):
         self.timeframe_combo.currentTextChanged.connect(self._tf_changed)
         self.x_tick_combo.currentTextChanged.connect(self._x_tick_changed)
         self.timezone_combo.currentTextChanged.connect(self._tz_changed)
+        self.vol_n_spin.valueChanged.connect(self._update_volatility_stats)
         self.plot.scene().sigMouseClicked.connect(self._scene_clicked)
         self.plot.sigRangeChanged.connect(self._on_view_range_changed)
         self._mouse_proxy = pg.SignalProxy(self.graphics.scene().sigMouseMoved, rateLimit=60, slot=self._mouse_moved)
@@ -933,6 +949,7 @@ class ChartWidget(QtWidgets.QWidget):
         self.axis.set_timezone(self.timezone_combo.currentText())
         self.axis.set_tick_interval(self.x_tick_combo.currentText())
         self.show_previous_rth = bool(case.display.get("show_previous_rth", False))
+        self._update_volatility_stats()
 
         self.rebuild_drawings()
         self.render(reset_x=True)
@@ -972,6 +989,30 @@ class ChartWidget(QtWidgets.QWidget):
             self.case.touch()
             self.dirty.emit()
         self.timezone_changed.emit(tz)
+
+    def _update_volatility_stats(self, *_args):
+        """Refresh N-day range summary from Enricher data already stored in Case JSON."""
+        if self.case is None:
+            self.vol_stats_label.setText("Med -- | σ -- | 2σ -- | 3σ --")
+            self.vol_stats_label.setToolTip("尚未載入 Case")
+            return
+        payload = getattr(self.case, "reference_statistics", {}).get("intraday_volatility_20d")
+        summary = summarize_intraday_volatility_payload(payload, int(self.vol_n_spin.value()))
+        if summary is None:
+            self.vol_stats_label.setText("Med -- | σ -- | 2σ -- | 3σ --")
+            self.vol_stats_label.setToolTip("此 Case 沒有足夠的 Enricher 日內波動資料；請先執行 Case Enricher")
+            return
+        self.vol_stats_label.setText(
+            f"Med {summary['median_range_pct']:.3f}% | "
+            f"σ {summary['std_1x_range_pct']:.3f}% | "
+            f"2σ {summary['std_2x_range_pct']:.3f}% | "
+            f"3σ {summary['std_3x_range_pct']:.3f}%"
+        )
+        self.vol_stats_label.setToolTip(
+            f"最近 {summary['session_count']} 個完整 RTH Session："
+            f"{summary['start_date']} → {summary['end_date']}\n"
+            "Range % = (High-Low)/RTH Open × 100；σ 為樣本標準差 ddof=1"
+        )
 
     def set_order_events(self, events: list[dict], render: bool = True):
         self.order_events = list(events or [])
@@ -1144,41 +1185,48 @@ class ChartWidget(QtWidgets.QWidget):
         if not visible:
             return
 
-        placements = layout_note_callouts(layout_inputs, max_lanes=4, gap_norm=0.010)
-        # Four lanes on each side use roughly the outer third of the chart, leaving
-        # the central candle area readable.  Side choice is opposite the anchor's
-        # vertical half unless collision avoidance needs the other side.
-        lane_step = 0.085
-        edge_margin = 0.025
+        placements = layout_alternating_note_callouts(layout_inputs, edge_margin=0.07)
+        # v1.20: deterministic Top / Bottom / Top / Bottom layout.  Labels stay
+        # in the outer safe zones and a visible anchor dot marks the exact M1-close
+        # point used by the note.  This intentionally favors readability over the
+        # shortest possible leader line.
+        edge_margin_y = 0.020
 
         for (anchor_x, anchor_y, text), placement in zip(visible, placements):
             side = placement["side"]
-            lane = int(placement["lane"])
             label_x = x_min + float(placement["center_x_norm"]) * x_span
 
             if side == "top":
-                label_y = y_max - y_span * (edge_margin + lane * lane_step)
+                label_y = y_max - y_span * edge_margin_y
                 label_anchor = (0.5, 0.0)
-                line_end_y = label_y - y_span * 0.018
+                line_end_y = label_y - y_span * 0.012
             else:
-                label_y = y_min + y_span * (edge_margin + lane * lane_step)
+                label_y = y_min + y_span * edge_margin_y
                 label_anchor = (0.5, 1.0)
-                line_end_y = label_y + y_span * 0.018
+                line_end_y = label_y + y_span * 0.012
 
             line = pg.PlotDataItem(
                 x=[anchor_x, label_x], y=[anchor_y, line_end_y],
-                pen=pg.mkPen((255, 220, 40, 225), width=1.15),
+                pen=pg.mkPen((255, 220, 40, 235), width=1.25),
+            )
+            point = pg.ScatterPlotItem(
+                x=[anchor_x], y=[anchor_y], size=8,
+                symbol="o",
+                pen=pg.mkPen((255, 255, 255, 245), width=1.0),
+                brush=pg.mkBrush(255, 220, 40, 245),
             )
             label = pg.TextItem(
                 text=text, color=(245, 247, 250), anchor=label_anchor,
-                fill=pg.mkBrush(15, 20, 30, 235), border=pg.mkPen(255, 220, 40, 205),
+                fill=pg.mkBrush(15, 20, 30, 238), border=pg.mkPen(255, 220, 40, 215),
             )
             line.setZValue(70)
+            point.setZValue(72)
             label.setZValue(71)
             label.setPos(label_x, label_y)
             self.plot.addItem(line, ignoreBounds=True)
+            self.plot.addItem(point, ignoreBounds=True)
             self.plot.addItem(label, ignoreBounds=True)
-            self._all_note_callout_items.extend([line, label])
+            self._all_note_callout_items.extend([line, point, label])
 
     def _update_note_callout_overlay(self):
         if self.show_all_intraday_notes:
