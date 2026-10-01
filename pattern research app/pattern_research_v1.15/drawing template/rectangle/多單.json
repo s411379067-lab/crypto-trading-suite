@@ -1,0 +1,11 @@
+{
+  "template_version": "1.0",
+  "name": "多單",
+  "drawing_type": "rectangle",
+  "style": {
+    "border_color": "#089981",
+    "fill_color": "#089981",
+    "opacity": 50,
+    "width": 1
+  }
+}

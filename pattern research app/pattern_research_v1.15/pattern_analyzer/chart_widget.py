@@ -2020,6 +2020,85 @@ class ChartWidget(QtWidgets.QWidget):
         except Exception:
             pass
 
+    def _make_standard_adjustment_marker(self, x: float, y: float, visible: bool = False):
+        """Create the shared circular adjustment-point visual used by FIBO and ROI handles."""
+        marker = pg.ScatterPlotItem(
+            [float(x)], [float(y)],
+            symbol="o",
+            size=12,
+            pen=pg.mkPen("#2d7cff", width=2),
+            brush=pg.mkBrush(18, 24, 35, 230),
+            pxMode=True,
+        )
+        try:
+            marker.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        except Exception:
+            pass
+        marker.setZValue(31)
+        marker.setVisible(bool(visible))
+        self.plot.addItem(marker)
+        return marker
+
+    @staticmethod
+    def _roi_handle_absolute_position(roi, handle):
+        """Return an unrotated ROI handle position in plot/view coordinates."""
+        try:
+            rp = roi.pos()
+            hp = handle.pos()
+            return float(rp.x() + hp.x()), float(rp.y() + hp.y())
+        except Exception:
+            return None
+
+    def _install_standard_roi_handle_markers(self, roi, selected: bool = False):
+        """Hide native PyQtGraph handle artwork and overlay the shared FIBO-style markers.
+
+        Native handles remain present and interactive, so resize/move behaviour is unchanged;
+        only their visual representation is replaced.
+        """
+        old_markers = list(getattr(roi, "_standard_handle_markers", []) or [])
+        for marker in old_markers:
+            try:
+                self.plot.removeItem(marker)
+            except Exception:
+                pass
+        markers = []
+        try:
+            handles = list(roi.getHandles())
+        except Exception:
+            handles = []
+        for handle in handles:
+            try:
+                handle.setOpacity(0.0)
+            except Exception:
+                pass
+            pos = self._roi_handle_absolute_position(roi, handle)
+            if pos is None:
+                continue
+            markers.append(self._make_standard_adjustment_marker(pos[0], pos[1], visible=selected))
+        roi._standard_handle_markers = markers
+        self._update_standard_roi_handle_markers(roi, selected=selected)
+
+    def _update_standard_roi_handle_markers(self, roi, selected: bool | None = None):
+        markers = list(getattr(roi, "_standard_handle_markers", []) or [])
+        try:
+            handles = list(roi.getHandles())
+        except Exception:
+            handles = []
+        if selected is None:
+            selected = bool(getattr(roi, "_standard_handles_selected", False))
+        roi._standard_handles_selected = bool(selected)
+        for marker, handle in zip(markers, handles):
+            pos = self._roi_handle_absolute_position(roi, handle)
+            if pos is not None:
+                try:
+                    marker.setData([pos[0]], [pos[1]])
+                except Exception:
+                    pass
+            try:
+                marker.setVisible(bool(selected))
+            except Exception:
+                pass
+
     @staticmethod
     def _configure_right_bottom_resize_handles(roi):
         """Text-box handles: right-middle adjusts width; bottom-middle adjusts height."""
@@ -2322,6 +2401,7 @@ class ChartWidget(QtWidgets.QWidget):
         roi._magnet_guard = False
         roi._magnet_prev_rect = (left, bottom, right, top)
         self.plot.addItem(roi)
+        self._install_standard_roi_handle_markers(roi, selected=False)
 
         group = {"type": "text", "roi": roi, "text": text_item, "border": border, "selection": selection, "background": background}
         self.drawing_items[did] = group
@@ -2331,6 +2411,7 @@ class ChartWidget(QtWidgets.QWidget):
             except Exception: pass
 
         roi.sigRegionChanged.connect(lambda _=None, d=did: self._text_region_changed(d))
+        roi.sigRegionChanged.connect(lambda _=None, obj=roi: self._update_standard_roi_handle_markers(obj))
         roi.sigRegionChangeFinished.connect(lambda obj=roi, d=drawing: self._sync_text_box(obj, d))
         self._update_text_box_view(did, update_roi=False)
 
@@ -2360,6 +2441,12 @@ class ChartWidget(QtWidgets.QWidget):
                     item.setPen(self._pen_from_style(drawing.get("style", {}), selected=selected))
                 except Exception:
                     pass
+                if dtype == "trend_line":
+                    try:
+                        self._set_roi_handles_visible(item, selected)
+                        self._update_standard_roi_handle_markers(item, selected=selected)
+                    except Exception:
+                        pass
             elif dtype == "text" and isinstance(item, dict):
                 roi = item.get("roi")
                 if roi is not None:
@@ -2367,6 +2454,7 @@ class ChartWidget(QtWidgets.QWidget):
                         roi.setAcceptedMouseButtons(QtCore.Qt.LeftButton if selected else QtCore.Qt.NoButton)
                         roi.setPen(pg.mkPen((255, 255, 0, 0), width=1))
                         self._set_roi_handles_visible(roi, selected)
+                        self._update_standard_roi_handle_markers(roi, selected=selected)
                     except Exception:
                         pass
                 # Selection is represented by the yellow resize box, never by changing text color.
@@ -2378,6 +2466,7 @@ class ChartWidget(QtWidgets.QWidget):
                         roi.setAcceptedMouseButtons(QtCore.Qt.LeftButton if selected else QtCore.Qt.NoButton)
                         roi.setPen(pg.mkPen((255, 255, 255, 0), width=1))
                         self._set_roi_handles_visible(roi, selected)
+                        self._update_standard_roi_handle_markers(roi, selected=selected)
                     except Exception:
                         pass
                 self._update_rectangle_fill(item)
@@ -2811,9 +2900,6 @@ class ChartWidget(QtWidgets.QWidget):
         anchors = []
         markers = []
         transparent_pen = pg.mkPen((255, 255, 255, 0), width=1)
-        marker_pen = pg.mkPen("#2d7cff", width=2)
-        marker_brush = pg.mkBrush(18, 24, 35, 230)
-
         for idx, (x, y) in enumerate(((sx, sy), (ex, ey))):
             anchor = pg.ROI(
                 [x - anchor_w * 0.5, y - anchor_h * 0.5],
@@ -2834,21 +2920,8 @@ class ChartWidget(QtWidgets.QWidget):
             self.plot.addItem(anchor)
             anchors.append(anchor)
 
-            marker = pg.ScatterPlotItem(
-                [x], [y],
-                symbol="o",
-                size=12,
-                pen=marker_pen,
-                brush=marker_brush,
-                pxMode=True,
-            )
-            try:
-                marker.setAcceptedMouseButtons(QtCore.Qt.NoButton)
-            except Exception:
-                pass
+            marker = self._make_standard_adjustment_marker(x, y, visible=selected)
             marker.setZValue(26)
-            marker.setVisible(bool(selected))
-            self.plot.addItem(marker)
             markers.append(marker)
 
         group = {
@@ -2962,6 +3035,7 @@ class ChartWidget(QtWidgets.QWidget):
         self._set_roi_handles_visible(roi, False)
         roi.setZValue(6)
         self.plot.addItem(roi)
+        self._install_standard_roi_handle_markers(roi, selected=False)
         group = {"type": "rectangle", "roi": roi, "fill": fill_item, "outline": outline, "selection": selection, "drawing": drawing}
         self.drawing_items[did] = group
         self._register_drawing_hit_item(did, roi)
@@ -2971,6 +3045,7 @@ class ChartWidget(QtWidgets.QWidget):
         roi._magnet_guard = False
         roi._magnet_prev_rect = (left, bottom, right, top)
         roi.sigRegionChanged.connect(lambda _=None, d=did: self._rectangle_region_changed(d))
+        roi.sigRegionChanged.connect(lambda _=None, obj=roi: self._update_standard_roi_handle_markers(obj))
         roi.sigRegionChangeFinished.connect(lambda obj=roi, d=drawing: self._sync_rectangle(obj, d))
 
     def _render_drawing_items(self):
@@ -3001,8 +3076,11 @@ class ChartWidget(QtWidgets.QWidget):
                 item._shift_prev_points = [(float(p1["time"]), float(p1["price"])), (float(p2["time"]), float(p2["price"]))]
                 item._shift_constraint_guard = False
                 item.sigRegionChanged.connect(lambda _=None, obj=item: self._enforce_trend_shift_constraint(obj))
+                item.sigRegionChanged.connect(lambda _=None, obj=item: self._update_standard_roi_handle_markers(obj))
                 item.sigRegionChangeFinished.connect(lambda obj=item, d=drawing: self._sync_trend(obj, d))
                 self.plot.addItem(item)
+                self._set_roi_handles_visible(item, False)
+                self._install_standard_roi_handle_markers(item, selected=False)
             elif dtype == "text":
                 self._render_text_box(drawing)
                 continue

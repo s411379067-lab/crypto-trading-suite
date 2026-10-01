@@ -1,0 +1,11 @@
+{
+  "template_version": "1.0",
+  "name": "空單",
+  "drawing_type": "rectangle",
+  "style": {
+    "border_color": "#f23645",
+    "fill_color": "#f23645",
+    "opacity": 50,
+    "width": 1
+  }
+}

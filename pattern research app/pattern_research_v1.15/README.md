@@ -1,4 +1,13 @@
-# Pattern Research v1.14
+# Pattern Research v1.15
+
+
+## v1.15 — Unified adjustment-point style
+
+- Trend Line endpoint handles, Rectangle side resize handles, and Text Box resize handles now use the same visible style as Fibonacci anchors.
+- Shared style: circular 12 px marker, dark fill, blue 2 px outline.
+- Native PyQtGraph ROI handles remain as invisible interactive hit targets, so existing drag/resize behaviour is preserved.
+- Adjustment markers are visible only while the drawing is selected.
+- Horizontal Line is unchanged because it has no separate resize anchor.
 
 ## v1.14 Fibonacci two-anchor editing
 
