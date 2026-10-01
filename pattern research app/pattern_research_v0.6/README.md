@@ -150,3 +150,22 @@ Example order record:
 - `orders[]` now stores **filled orders only**. A limit/stop order is appended to JSON only at the moment it fills.
 - Cancelling an unfilled pending order simply removes it from the in-memory pending list and creates no history record.
 - Existing v0.1.3 Case files are cleaned on load so open/cancelled order rows are removed from `orders[]`; filled records are retained.
+
+### v0.1.5 Order table readability
+
+- Pending Orders / Order Records table headers use a dark high-contrast style with bold light text.
+
+### v0.1.6 Drawing Template Library
+
+- Added a filesystem-backed `drawing template/` library. Templates are stored outside Case JSON and contain appearance/configuration only, never coordinates.
+- Template categories:
+  - `drawing template/line/` — shared by horizontal lines and trend lines.
+  - `drawing template/rectangle/`
+  - `drawing template/fibonacci/`
+  - `drawing template/text/`
+- Every supported drawing right-click menu now includes `模板 >` and only shows templates compatible with that drawing type.
+- Drawing settings dialogs now include `存為模板...` and allow a custom template name.
+- Reusing an existing template name asks before overwriting.
+- Applying a template changes style/configuration only; geometry, price/time coordinates, and text content remain unchanged.
+- Fibo templates store both levels (multiplier + color) and Fibo style.
+- Right-click `刪除` is now always the final menu action for every drawing type.

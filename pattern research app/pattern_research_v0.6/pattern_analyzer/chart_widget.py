@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import math
 import uuid
+from copy import deepcopy
+from typing import Callable
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 from shared_core.aggregation import aggregate_visible_bars, timeframe_seconds
+from pattern_analyzer.drawing_templates import DrawingTemplateRepository
 
 
 TRADINGVIEW_BASIC_COLORS = [
@@ -134,11 +137,13 @@ class LineSettingsDialog(QtWidgets.QDialog):
         ("點線", "dotted"),
     ]
 
-    def __init__(self, color: str, style_name: str, width_value: int, parent=None):
+    def __init__(self, color: str, style_name: str, width_value: int,
+                 save_template_callback: Callable[[dict], None] | None = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("線條設定")
-        self.resize(350, 205)
+        self.resize(365, 220)
         self._color = QtGui.QColor(color if color else "#ffffff")
+        self._save_template_callback = save_template_callback
 
         layout = QtWidgets.QVBoxLayout(self)
 
@@ -172,10 +177,14 @@ class LineSettingsDialog(QtWidgets.QDialog):
         layout.addLayout(width_row)
 
         buttons = QtWidgets.QHBoxLayout()
+        save_btn = QtWidgets.QPushButton("存為模板...")
+        save_btn.setEnabled(self._save_template_callback is not None)
+        save_btn.clicked.connect(self._save_template)
         ok_btn = QtWidgets.QPushButton("套用")
         cancel_btn = QtWidgets.QPushButton("取消")
         ok_btn.clicked.connect(self.accept)
         cancel_btn.clicked.connect(self.reject)
+        buttons.addWidget(save_btn)
         buttons.addStretch(1)
         buttons.addWidget(ok_btn)
         buttons.addWidget(cancel_btn)
@@ -190,21 +199,31 @@ class LineSettingsDialog(QtWidgets.QDialog):
 
     def _refresh_color_button(self):
         self.color_btn.setText(self._color.name().upper())
+        brightness = self._color.red() * 0.299 + self._color.green() * 0.587 + self._color.blue() * 0.114
+        fg = "#000000" if brightness > 165 else "#ffffff"
         self.color_btn.setStyleSheet(
-            f"background-color:{self._color.name()}; border:1px solid #666; color:#ffffff;"
+            f"background-color:{self._color.name()}; border:1px solid #666; color:{fg};"
         )
 
     def values(self):
         return self._color.name(), str(self.style_combo.currentData()), int(self.width_spin.value())
 
+    def _save_template(self):
+        if self._save_template_callback is None:
+            return
+        color, line_style, width = self.values()
+        self._save_template_callback({"style": {"color": color, "line_style": line_style, "width": width}})
+
 
 class RectangleSettingsDialog(QtWidgets.QDialog):
-    def __init__(self, border_color: str, fill_color: str, opacity: int, width: int, parent=None):
+    def __init__(self, border_color: str, fill_color: str, opacity: int, width: int,
+                 save_template_callback: Callable[[dict], None] | None = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("長方形設定")
-        self.resize(380, 245)
+        self.resize(395, 265)
         self._border = QtGui.QColor(border_color or "#ffffff")
         self._fill = QtGui.QColor(fill_color or "#ffffff")
+        self._save_template_callback = save_template_callback
 
         layout = QtWidgets.QVBoxLayout(self)
 
@@ -242,9 +261,13 @@ class RectangleSettingsDialog(QtWidgets.QDialog):
         layout.addLayout(width_row)
 
         buttons = QtWidgets.QHBoxLayout()
+        save_btn = QtWidgets.QPushButton("存為模板...")
+        save_btn.setEnabled(self._save_template_callback is not None)
+        save_btn.clicked.connect(self._save_template)
         ok_btn = QtWidgets.QPushButton("套用")
         cancel_btn = QtWidgets.QPushButton("取消")
         ok_btn.clicked.connect(self.accept); cancel_btn.clicked.connect(self.reject)
+        buttons.addWidget(save_btn)
         buttons.addStretch(1); buttons.addWidget(ok_btn); buttons.addWidget(cancel_btn)
         layout.addLayout(buttons)
         self._refresh_buttons()
@@ -273,12 +296,87 @@ class RectangleSettingsDialog(QtWidgets.QDialog):
     def values(self):
         return self._border.name(), self._fill.name(), int(self.opacity_spin.value()), int(self.width_spin.value())
 
+    def _save_template(self):
+        if self._save_template_callback is None:
+            return
+        border, fill, opacity, width = self.values()
+        self._save_template_callback({
+            "style": {
+                "border_color": border,
+                "fill_color": fill,
+                "opacity": opacity,
+                "width": width,
+            }
+        })
+
+
+class TextSettingsDialog(QtWidgets.QDialog):
+    def __init__(self, color: str, font_size: int,
+                 save_template_callback: Callable[[dict], None] | None = None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("文字設定")
+        self.resize(350, 180)
+        self._color = QtGui.QColor(color if color else "#ffffff")
+        self._save_template_callback = save_template_callback
+
+        layout = QtWidgets.QVBoxLayout(self)
+        color_row = QtWidgets.QHBoxLayout()
+        color_row.addWidget(QtWidgets.QLabel("顏色:"))
+        self.color_btn = QtWidgets.QPushButton()
+        self.color_btn.setFixedWidth(125)
+        self.color_btn.clicked.connect(self._pick_color)
+        color_row.addWidget(self.color_btn); color_row.addStretch(1)
+        layout.addLayout(color_row)
+
+        size_row = QtWidgets.QHBoxLayout()
+        size_row.addWidget(QtWidgets.QLabel("字體大小:"))
+        self.size_spin = QtWidgets.QSpinBox()
+        self.size_spin.setRange(6, 64)
+        self.size_spin.setValue(max(6, min(64, int(font_size))))
+        size_row.addWidget(self.size_spin); size_row.addStretch(1)
+        layout.addLayout(size_row)
+
+        buttons = QtWidgets.QHBoxLayout()
+        save_btn = QtWidgets.QPushButton("存為模板...")
+        save_btn.setEnabled(self._save_template_callback is not None)
+        save_btn.clicked.connect(self._save_template)
+        ok_btn = QtWidgets.QPushButton("套用")
+        cancel_btn = QtWidgets.QPushButton("取消")
+        ok_btn.clicked.connect(self.accept); cancel_btn.clicked.connect(self.reject)
+        buttons.addWidget(save_btn); buttons.addStretch(1); buttons.addWidget(ok_btn); buttons.addWidget(cancel_btn)
+        layout.addLayout(buttons)
+        self._refresh_color_button()
+
+    def _pick_color(self):
+        color = get_tradingview_color(self._color, self, "選擇文字顏色")
+        if color is not None and color.isValid():
+            self._color = color
+            self._refresh_color_button()
+
+    def _refresh_color_button(self):
+        self.color_btn.setText(self._color.name().upper())
+        brightness = self._color.red() * 0.299 + self._color.green() * 0.587 + self._color.blue() * 0.114
+        fg = "#000000" if brightness > 165 else "#ffffff"
+        self.color_btn.setStyleSheet(f"background-color:{self._color.name()}; color:{fg}; border:1px solid #666;")
+
+    def values(self):
+        return self._color.name(), int(self.size_spin.value())
+
+    def _save_template(self):
+        if self._save_template_callback is None:
+            return
+        color, font_size = self.values()
+        self._save_template_callback({"style": {"color": color, "font_size": font_size}})
+
 
 class FiboSettingsDialog(QtWidgets.QDialog):
-    def __init__(self, levels: list[dict], parent=None):
+    def __init__(self, levels: list[dict], style: dict | None = None,
+                 save_template_callback: Callable[[dict], None] | None = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Fibo 設定")
-        self.resize(430, 330)
+        self.resize(445, 360)
+        self._save_template_callback = save_template_callback
+        self._style = deepcopy(style or {"width": 2, "line_style": "solid"})
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(QtWidgets.QLabel("每列設定倍率與顏色；操作方式沿用舊版 FIBO。"))
 
@@ -299,10 +397,14 @@ class FiboSettingsDialog(QtWidgets.QDialog):
         layout.addLayout(row_controls)
 
         buttons = QtWidgets.QHBoxLayout()
+        save_btn = QtWidgets.QPushButton("存為模板...")
+        save_btn.setEnabled(self._save_template_callback is not None)
+        save_btn.clicked.connect(self._save_template)
         ok_btn = QtWidgets.QPushButton("套用")
         cancel_btn = QtWidgets.QPushButton("取消")
         ok_btn.clicked.connect(self.accept)
         cancel_btn.clicked.connect(self.reject)
+        buttons.addWidget(save_btn)
         buttons.addStretch(1)
         buttons.addWidget(ok_btn)
         buttons.addWidget(cancel_btn)
@@ -322,7 +424,6 @@ class FiboSettingsDialog(QtWidgets.QDialog):
         qcolor = QtGui.QColor(color if color else "#ffffff")
         button.setProperty("color_hex", qcolor.name())
         button.setText(qcolor.name().upper())
-        # readable text on light palette cells
         brightness = qcolor.red() * 0.299 + qcolor.green() * 0.587 + qcolor.blue() * 0.114
         fg = "#000000" if brightness > 165 else "#ffffff"
         button.setStyleSheet(f"background-color:{qcolor.name()}; color:{fg}; border:1px solid #666;")
@@ -366,6 +467,16 @@ class FiboSettingsDialog(QtWidgets.QDialog):
             raise ValueError("請至少保留一個 Fibo level")
         return levels
 
+    def _save_template(self):
+        if self._save_template_callback is None:
+            return
+        try:
+            levels = self.values()
+        except ValueError as exc:
+            QtWidgets.QMessageBox.warning(self, "Fibo 設定", str(exc))
+            return
+        self._save_template_callback({"levels": levels, "style": deepcopy(self._style)})
+
 
 class ChartWidget(QtWidgets.QWidget):
     dirty = QtCore.Signal()
@@ -386,6 +497,7 @@ class ChartWidget(QtWidgets.QWidget):
         self.pending_point = None
         self._last_bars = pd.DataFrame()
         self.selected_drawing_id: str | None = None
+        self.template_repo = DrawingTemplateRepository()
         self.auto_all_mode = False
         self._syncing_auto_all = False
         self.order_events: list[dict] = []
@@ -1007,34 +1119,88 @@ class ChartWidget(QtWidgets.QWidget):
         dtype = drawing.get("type")
         menu = QtWidgets.QMenu(self)
 
+        # Settings / quick edit actions first.
         if dtype == "text":
-            delete_action = menu.addAction("刪除")
-            color_action = menu.addAction("改顏色")
-            size_action = menu.addAction("改大小")
-            delete_action.triggered.connect(lambda: self._delete_drawing_by_id(did))
-            color_action.triggered.connect(lambda: self._change_text_color(did))
-            size_action.triggered.connect(lambda: self._change_text_size(did))
+            settings_action = menu.addAction("文字設定")
+            settings_action.triggered.connect(lambda: self._open_text_settings(did))
         elif dtype == "rectangle":
             settings_action = menu.addAction("長方形設定")
-            delete_action = menu.addAction("刪除")
             settings_action.triggered.connect(lambda: self._open_rectangle_settings(did))
-            delete_action.triggered.connect(lambda: self._delete_drawing_by_id(did))
         elif dtype == "fibonacci":
             settings_action = menu.addAction("Fibo 設定")
-            delete_action = menu.addAction("刪除")
-            color_action = menu.addAction("改顏色")
             settings_action.triggered.connect(lambda: self._open_fibo_settings(did))
-            delete_action.triggered.connect(lambda: self._delete_drawing_by_id(did))
+            color_action = menu.addAction("改顏色")
             color_action.triggered.connect(lambda: self._change_fibo_color(did))
         else:
             settings_action = menu.addAction("線條設定")
-            delete_action = menu.addAction("刪除")
-            color_action = menu.addAction("改顏色")
             settings_action.triggered.connect(lambda: self._open_line_settings(did))
-            delete_action.triggered.connect(lambda: self._delete_drawing_by_id(did))
+            color_action = menu.addAction("改顏色")
             color_action.triggered.connect(lambda: self._change_line_color(did))
 
+        # Template submenu is available for every supported drawing type.
+        template_menu = menu.addMenu("模板")
+        self._populate_template_menu(template_menu, did, dtype)
+
+        # Delete is intentionally always the last item for every drawing type.
+        menu.addSeparator()
+        delete_action = menu.addAction("刪除")
+        delete_action.triggered.connect(lambda: self._delete_drawing_by_id(did))
         menu.exec(QtGui.QCursor.pos())
+
+    def _populate_template_menu(self, submenu: QtWidgets.QMenu, did: str, dtype: str):
+        category = self.template_repo.category_for_drawing_type(dtype)
+        templates = self.template_repo.list(category)
+        if not templates:
+            empty = submenu.addAction("（尚無模板）")
+            empty.setEnabled(False)
+            return
+        for template in templates:
+            name = str(template.get("name", "未命名模板"))
+            action = submenu.addAction(name)
+            action.triggered.connect(
+                lambda _checked=False, d=did, t=deepcopy(template): self._apply_drawing_template(d, t)
+            )
+
+    def _save_template_interactive(self, category: str, payload: dict):
+        name, ok = QtWidgets.QInputDialog.getText(self, "存為模板", "模板名稱:")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        if self.template_repo.exists(category, name):
+            answer = QtWidgets.QMessageBox.question(
+                self,
+                "覆蓋模板",
+                f'模板「{name}」已存在，是否覆蓋？',
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No,
+            )
+            if answer != QtWidgets.QMessageBox.Yes:
+                return
+        try:
+            path = self.template_repo.save(category, name, payload)
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "模板儲存失敗", str(exc))
+            return
+        QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), f"已儲存模板：{name}\n{path}")
+
+    def _apply_drawing_template(self, did: str, template: dict):
+        drawing = self._drawing_by_id(did)
+        if drawing is None:
+            return
+        dtype = drawing.get("type")
+        category = self.template_repo.category_for_drawing_type(dtype)
+        if str(template.get("drawing_type", category)) != category:
+            return
+
+        if dtype in {"horizontal_line", "trend_line", "rectangle", "text"}:
+            if isinstance(template.get("style"), dict):
+                drawing["style"] = deepcopy(template["style"])
+        elif dtype == "fibonacci":
+            if isinstance(template.get("levels"), list):
+                drawing["levels"] = deepcopy(template["levels"])
+            if isinstance(template.get("style"), dict):
+                drawing["style"] = deepcopy(template["style"])
+        self._commit_drawing_change()
 
     def _open_line_settings(self, did: str):
         drawing = self._drawing_by_id(did)
@@ -1045,7 +1211,8 @@ class ChartWidget(QtWidgets.QWidget):
             style.get("color", "#ffffff"),
             style.get("line_style", "solid"),
             int(style.get("width", 2)),
-            self,
+            save_template_callback=lambda payload: self._save_template_interactive("line", payload),
+            parent=self,
         )
         if dialog.exec() != QtWidgets.QDialog.Accepted:
             return
@@ -1065,6 +1232,24 @@ class ChartWidget(QtWidgets.QWidget):
         if color is None or not color.isValid():
             return
         style["color"] = color.name()
+        self._commit_drawing_change()
+
+    def _open_text_settings(self, did: str):
+        drawing = self._drawing_by_id(did)
+        if drawing is None:
+            return
+        style = drawing.setdefault("style", {})
+        dialog = TextSettingsDialog(
+            style.get("color", "#ffffff"),
+            int(style.get("font_size", 12)),
+            save_template_callback=lambda payload: self._save_template_interactive("text", payload),
+            parent=self,
+        )
+        if dialog.exec() != QtWidgets.QDialog.Accepted:
+            return
+        color, font_size = dialog.values()
+        style["color"] = color
+        style["font_size"] = int(font_size)
         self._commit_drawing_change()
 
     def _change_text_color(self, did: str):
@@ -1089,7 +1274,8 @@ class ChartWidget(QtWidgets.QWidget):
             style.get("fill_color", "#ffffff"),
             int(style.get("opacity", 12)),
             int(style.get("width", 2)),
-            self,
+            save_template_callback=lambda payload: self._save_template_interactive("rectangle", payload),
+            parent=self,
         )
         if dialog.exec() != QtWidgets.QDialog.Accepted:
             return
@@ -1104,7 +1290,12 @@ class ChartWidget(QtWidgets.QWidget):
         drawing = self._drawing_by_id(did)
         if drawing is None:
             return
-        dialog = FiboSettingsDialog(drawing.get("levels", []), self)
+        dialog = FiboSettingsDialog(
+            drawing.get("levels", []),
+            drawing.get("style", {}),
+            save_template_callback=lambda payload: self._save_template_interactive("fibonacci", payload),
+            parent=self,
+        )
         if dialog.exec() != QtWidgets.QDialog.Accepted:
             return
         try:
