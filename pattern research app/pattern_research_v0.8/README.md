@@ -169,3 +169,9 @@ Example order record:
 - Applying a template changes style/configuration only; geometry, price/time coordinates, and text content remain unchanged.
 - Fibo templates store both levels (multiplier + color) and Fibo style.
 - Right-click `刪除` is now always the final menu action for every drawing type.
+
+### v0.1.8
+- 以 v0.1.7 為基礎加入 **Ctrl Magnet**。
+- 按住 Ctrl 時，十字游標會吸附到最近已揭露 K 棒的 O/H/L/C。
+- 建立 Drawing、Line 端點 resize / 整體拖曳、Horizontal Line、Rectangle 拖曳/縮放、Fibo 控制與 Text 拖曳均接入磁鐵約束。
+- Magnet 只使用 Replay 已揭露資料，不讀取未來 K 棒。

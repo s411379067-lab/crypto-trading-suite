@@ -122,8 +122,23 @@ class TimeAxis(pg.AxisItem):
 
 
 class MovableTextItem(pg.TextItem):
-    """Text item that notifies the domain layer after a drag finishes."""
+    """Text item that notifies the domain layer after a drag finishes and supports Ctrl magnet snapping."""
     movementFinished = QtCore.Signal()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.magnet_callback = None
+
+    def mouseMoveEvent(self, ev):
+        super().mouseMoveEvent(ev)
+        try:
+            ctrl = bool(QtWidgets.QApplication.keyboardModifiers() & QtCore.Qt.ControlModifier)
+            if ctrl and callable(self.magnet_callback):
+                pos = self.pos()
+                sx, sy = self.magnet_callback(float(pos.x()), float(pos.y()))
+                self.setPos(float(sx), float(sy))
+        except Exception:
+            pass
 
     def mouseReleaseEvent(self, ev):
         super().mouseReleaseEvent(ev)
@@ -852,10 +867,12 @@ class ChartWidget(QtWidgets.QWidget):
         x = float(p.x())
         y = float(p.y())
 
-        # TradingView-like crosshair: X snaps to the nearest revealed candle; Y follows price.
+        # TradingView-like crosshair: X snaps to nearest revealed candle. Holding Ctrl also snaps Y to nearest OHLC.
         if not self._last_bars.empty:
             ts = self._last_bars["timestamp"].to_numpy(dtype=float)
             x = float(ts[int(np.argmin(np.abs(ts - x)))])
+        if self._ctrl_pressed():
+            x, y = self._magnet_snap_point(x, y)
         self.vline.setPos(x)
         self.hline.setPos(y)
         self.vline.show(); self.hline.show()
@@ -940,6 +957,162 @@ class ChartWidget(QtWidgets.QWidget):
                 continue
         return None
 
+    def _shift_axis_locked_point(self, anchor: tuple[float, float], moving: tuple[float, float]) -> tuple[float, float]:
+        """Lock a moving line endpoint horizontally/vertically relative to anchor using screen-space direction."""
+        ax, ay = float(anchor[0]), float(anchor[1])
+        mx, my = float(moving[0]), float(moving[1])
+        try:
+            a_scene = self.plot.vb.mapViewToScene(QtCore.QPointF(ax, ay))
+            m_scene = self.plot.vb.mapViewToScene(QtCore.QPointF(mx, my))
+            dx = abs(float(m_scene.x() - a_scene.x()))
+            dy = abs(float(m_scene.y() - a_scene.y()))
+        except Exception:
+            # Screen mapping is preferred because X=time and Y=price use different units.
+            dx = abs(mx - ax)
+            dy = abs(my - ay)
+        if dx >= dy:
+            return mx, ay
+        return ax, my
+
+    @staticmethod
+    def _shift_pressed() -> bool:
+        try:
+            return bool(QtWidgets.QApplication.keyboardModifiers() & QtCore.Qt.ShiftModifier)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _ctrl_pressed() -> bool:
+        try:
+            return bool(QtWidgets.QApplication.keyboardModifiers() & QtCore.Qt.ControlModifier)
+        except Exception:
+            return False
+
+    def _magnet_snap_point(self, x: float, y: float) -> tuple[float, float]:
+        """Snap to the nearest revealed candle and its nearest OHLC price. Never reads future bars."""
+        if self._last_bars is None or self._last_bars.empty:
+            return float(x), float(y)
+        try:
+            bars = self._last_bars
+            ts = bars["timestamp"].to_numpy(dtype=float)
+            idx = int(np.argmin(np.abs(ts - float(x))))
+            row = bars.iloc[idx]
+            snap_x = float(row["timestamp"])
+            candidates = [float(row[k]) for k in ("open", "high", "low", "close") if k in row and pd.notna(row[k])]
+            if not candidates:
+                return snap_x, float(y)
+
+            # Compare candidate prices in screen space so the choice remains natural at any zoom.
+            try:
+                cursor_scene = self.plot.vb.mapViewToScene(QtCore.QPointF(snap_x, float(y)))
+                best = min(
+                    candidates,
+                    key=lambda price: abs(float(self.plot.vb.mapViewToScene(QtCore.QPointF(snap_x, price)).y() - cursor_scene.y())),
+                )
+            except Exception:
+                best = min(candidates, key=lambda price: abs(price - float(y)))
+            return snap_x, float(best)
+        except Exception:
+            return float(x), float(y)
+
+    def _cursor_view_position(self) -> tuple[float, float] | None:
+        try:
+            widget_pos = self.graphics.mapFromGlobal(QtGui.QCursor.pos())
+            scene_pos = self.graphics.mapToScene(widget_pos)
+            point = self.plot.vb.mapSceneToView(scene_pos)
+            return float(point.x()), float(point.y())
+        except Exception:
+            return None
+
+    def _magnet_cursor_delta(self) -> tuple[float, float]:
+        pos = self._cursor_view_position()
+        if pos is None:
+            return 0.0, 0.0
+        x, y = pos
+        sx, sy = self._magnet_snap_point(x, y)
+        return float(sx - x), float(sy - y)
+
+    @staticmethod
+    def _line_state_points(item) -> list[tuple[float, float]]:
+        try:
+            pts = item.getState().get("points", [])
+            if len(pts) >= 2:
+                return [(float(pts[0][0]), float(pts[0][1])), (float(pts[1][0]), float(pts[1][1]))]
+        except Exception:
+            pass
+        return []
+
+    def _set_line_roi_points(self, item, points: list[tuple[float, float]]):
+        """Best-effort point setter compatible with pyqtgraph LineSegmentROI/PolyLineROI."""
+        qpts = [QtCore.QPointF(float(x), float(y)) for x, y in points]
+        try:
+            item.setPoints(qpts)
+            return
+        except Exception:
+            pass
+        try:
+            handles = item.getHandles()
+            for handle, point in zip(handles, qpts):
+                handle.setPos(point)
+        except Exception:
+            pass
+
+    def _enforce_trend_shift_constraint(self, item):
+        """Apply live Ctrl magnet and Shift horizontal/vertical constraints to a trend line."""
+        if getattr(item, "_shift_constraint_guard", False):
+            return
+        current = self._line_state_points(item)
+        if len(current) != 2:
+            return
+        previous = getattr(item, "_shift_prev_points", None)
+        if previous is None or len(previous) != 2:
+            item._shift_prev_points = current
+            return
+
+        shift = self._shift_pressed()
+        ctrl = self._ctrl_pressed()
+        if not shift and not ctrl:
+            item._shift_prev_points = current
+            return
+
+        def screen_dist(a, b):
+            try:
+                sa = self.plot.vb.mapViewToScene(QtCore.QPointF(float(a[0]), float(a[1])))
+                sb = self.plot.vb.mapViewToScene(QtCore.QPointF(float(b[0]), float(b[1])))
+                return ((float(sa.x()-sb.x()))**2 + (float(sa.y()-sb.y()))**2) ** 0.5
+            except Exception:
+                return ((float(a[0]-b[0]))**2 + (float(a[1]-b[1]))**2) ** 0.5
+
+        d0 = screen_dist(current[0], previous[0])
+        d1 = screen_dist(current[1], previous[1])
+        whole_move = min(d0, d1) > 1.5 and max(d0, d1) < min(d0, d1) * 1.6
+        adjusted = list(current)
+
+        if whole_move:
+            if ctrl:
+                dx, dy = self._magnet_cursor_delta()
+                adjusted = [(p[0] + dx, p[1] + dy) for p in current]
+            # Shift does not alter a whole-line translation; it only constrains endpoint resizing.
+        else:
+            moved = 0 if d0 >= d1 else 1
+            anchor = current[1 - moved]
+            moving = current[moved]
+            if ctrl:
+                moving = self._magnet_snap_point(moving[0], moving[1])
+            if shift:
+                moving = self._shift_axis_locked_point(anchor, moving)
+            adjusted[moved] = moving
+
+        if adjusted == current:
+            item._shift_prev_points = current
+            return
+        item._shift_constraint_guard = True
+        try:
+            self._set_line_roi_points(item, adjusted)
+            item._shift_prev_points = adjusted
+        finally:
+            item._shift_constraint_guard = False
+
     def _scene_clicked(self, evt):
         if self.case is None:
             return
@@ -966,6 +1139,8 @@ class ChartWidget(QtWidgets.QWidget):
 
         p = self.plot.vb.mapSceneToView(pos)
         x, y = float(p.x()), float(p.y())
+        if self._ctrl_pressed():
+            x, y = self._magnet_snap_point(x, y)
 
         if self.tool_mode == "horizontal_line":
             self.case.drawings.append({
@@ -983,6 +1158,8 @@ class ChartWidget(QtWidgets.QWidget):
                 self.pending_point = (x, y)
                 return
             x1, y1 = self.pending_point
+            if self._shift_pressed():
+                x, y = self._shift_axis_locked_point((x1, y1), (x, y))
             self.case.drawings.append({
                 "id": f"drawing-{uuid.uuid4().hex[:12]}",
                 "type": "trend_line",
@@ -1454,6 +1631,28 @@ class ChartWidget(QtWidgets.QWidget):
             dy = curr_ymin - float(last_ymin)
             drawing["start"]["price"] = float(drawing["start"]["price"]) + dy
             drawing["end"]["price"] = float(drawing["end"]["price"]) + dy
+            if self._ctrl_pressed():
+                width_changed = abs((curr_right-curr_left) - (float(last_right)-float(last_left))) > 1e-9
+                if width_changed:
+                    cursor = self._cursor_view_position()
+                    if cursor is not None:
+                        sx, _sy = self._magnet_snap_point(*cursor)
+                        if abs(curr_left-float(last_left)) >= abs(curr_right-float(last_right)):
+                            if start_is_left:
+                                drawing["start"]["time"] = sx
+                            else:
+                                drawing["end"]["time"] = sx
+                        else:
+                            if start_is_left:
+                                drawing["end"]["time"] = sx
+                            else:
+                                drawing["start"]["time"] = sx
+                else:
+                    dx, mdy = self._magnet_cursor_delta()
+                    drawing["start"]["time"] = float(drawing["start"]["time"]) + dx
+                    drawing["end"]["time"] = float(drawing["end"]["time"]) + dx
+                    drawing["start"]["price"] = float(drawing["start"]["price"]) + mdy
+                    drawing["end"]["price"] = float(drawing["end"]["price"]) + mdy
             self._update_fibo_view_geometry(did, update_box=True)
             self.case.touch(); self.dirty.emit()
         finally:
@@ -1468,8 +1667,20 @@ class ChartWidget(QtWidgets.QWidget):
         try:
             sh = group.get("start_handle"); eh = group.get("end_handle")
             sp, ss = sh.pos(), sh.size(); ep, es = eh.pos(), eh.size()
-            drawing["start"]["price"] = float(sp.y() + ss.y() * 0.5)
-            drawing["end"]["price"] = float(ep.y() + es.y() * 0.5)
+            new_start = float(sp.y() + ss.y() * 0.5)
+            new_end = float(ep.y() + es.y() * 0.5)
+            old_start = float(drawing["start"]["price"])
+            old_end = float(drawing["end"]["price"])
+            if self._ctrl_pressed():
+                cursor = self._cursor_view_position()
+                if cursor is not None:
+                    _sx, sy = self._magnet_snap_point(*cursor)
+                    if abs(new_start-old_start) >= abs(new_end-old_end):
+                        new_start = sy
+                    else:
+                        new_end = sy
+            drawing["start"]["price"] = new_start
+            drawing["end"]["price"] = new_end
             self._update_fibo_view_geometry(did, update_box=True)
             self.case.touch(); self.dirty.emit()
         finally:
@@ -1583,7 +1794,9 @@ class ChartWidget(QtWidgets.QWidget):
         self.drawing_items[did] = group
         self._register_drawing_hit_item(did, roi)
         self._register_drawing_hit_item(did, fill_item)
-        roi.sigRegionChanged.connect(lambda _=None, d=did: self._update_rectangle_fill(self.drawing_items.get(d, {})))
+        roi._magnet_guard = False
+        roi._magnet_prev_rect = (left, bottom, right, top)
+        roi.sigRegionChanged.connect(lambda _=None, d=did: self._rectangle_region_changed(d))
         roi.sigRegionChangeFinished.connect(lambda obj=roi, d=drawing: self._sync_rectangle(obj, d))
 
     def _render_drawing_items(self):
@@ -1601,6 +1814,8 @@ class ChartWidget(QtWidgets.QWidget):
                     pos=float(drawing["price"]), angle=0, movable=True,
                     pen=self._pen_from_style(style, selected=False),
                 )
+                item._magnet_guard = False
+                item.sigPositionChanged.connect(lambda _=None, obj=item: self._magnetize_hline(obj))
                 item.sigPositionChangeFinished.connect(lambda obj=item, d=drawing: self._sync_hline(obj, d))
                 self.plot.addItem(item)
             elif dtype == "trend_line":
@@ -1609,6 +1824,9 @@ class ChartWidget(QtWidgets.QWidget):
                     [(p1["time"], p1["price"]), (p2["time"], p2["price"])],
                     pen=self._pen_from_style(style, selected=False),
                 )
+                item._shift_prev_points = [(float(p1["time"]), float(p1["price"])), (float(p2["time"]), float(p2["price"]))]
+                item._shift_constraint_guard = False
+                item.sigRegionChanged.connect(lambda _=None, obj=item: self._enforce_trend_shift_constraint(obj))
                 item.sigRegionChangeFinished.connect(lambda obj=item, d=drawing: self._sync_trend(obj, d))
                 self.plot.addItem(item)
             elif dtype == "text":
@@ -1624,6 +1842,7 @@ class ChartWidget(QtWidgets.QWidget):
                     pass
                 item.setPos(float(drawing["time"]), float(drawing["price"]))
                 item.setFlag(QtWidgets.QGraphicsItem.ItemIsMovable, True)
+                item.magnet_callback = self._magnet_snap_point
                 item.movementFinished.connect(lambda obj=item, d=drawing: self._sync_text(obj, d))
                 self.plot.addItem(item)
             elif dtype == "rectangle":
@@ -1665,6 +1884,75 @@ class ChartWidget(QtWidgets.QWidget):
             elif d.get("type") == "fibonacci":
                 # Fibo domain data is updated live from the box/0x/1x handles.
                 pass
+
+    def _magnetize_hline(self, item):
+        if not self._ctrl_pressed() or getattr(item, "_magnet_guard", False):
+            return
+        cursor = self._cursor_view_position()
+        if cursor is None:
+            return
+        try:
+            _sx, sy = self._magnet_snap_point(cursor[0], float(item.value()))
+            if abs(float(item.value()) - sy) < 1e-12:
+                return
+            item._magnet_guard = True
+            item.setValue(float(sy))
+        finally:
+            item._magnet_guard = False
+
+    def _rectangle_region_changed(self, did: str):
+        group = self.drawing_items.get(did)
+        if not isinstance(group, dict):
+            return
+        roi = group.get("roi")
+        if roi is None:
+            return
+        self._update_rectangle_fill(group)
+        try:
+            pos = roi.pos(); size = roi.size()
+            current = (float(pos.x()), float(pos.y()), float(pos.x()+size.x()), float(pos.y()+size.y()))
+        except Exception:
+            return
+        previous = getattr(roi, "_magnet_prev_rect", current)
+        if not self._ctrl_pressed() or getattr(roi, "_magnet_guard", False):
+            roi._magnet_prev_rect = current
+            return
+
+        left, bottom, right, top = current
+        pl, pb, pr, pt = previous
+        width_changed = abs((right-left) - (pr-pl)) > 1e-9
+        height_changed = abs((top-bottom) - (pt-pb)) > 1e-9
+        roi._magnet_guard = True
+        try:
+            if width_changed or height_changed:
+                cursor = self._cursor_view_position()
+                if cursor is not None:
+                    sx, sy = self._magnet_snap_point(*cursor)
+                    if width_changed:
+                        if abs(left-pl) >= abs(right-pr):
+                            left = sx
+                        else:
+                            right = sx
+                    if height_changed:
+                        if abs(bottom-pb) >= abs(top-pt):
+                            bottom = sy
+                        else:
+                            top = sy
+                    if right < left:
+                        left, right = right, left
+                    if top < bottom:
+                        bottom, top = top, bottom
+                    roi.setPos([left, bottom])
+                    roi.setSize([max(right-left, 1e-6), max(top-bottom, 1e-9)])
+            else:
+                dx, dy = self._magnet_cursor_delta()
+                if abs(dx) > 0 or abs(dy) > 0:
+                    roi.setPos([left + dx, bottom + dy])
+            pos = roi.pos(); size = roi.size()
+            roi._magnet_prev_rect = (float(pos.x()), float(pos.y()), float(pos.x()+size.x()), float(pos.y()+size.y()))
+            self._update_rectangle_fill(group)
+        finally:
+            roi._magnet_guard = False
 
     def _sync_hline(self, item, drawing):
         drawing["price"] = float(item.value())
