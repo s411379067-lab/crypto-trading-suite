@@ -176,8 +176,11 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.selected_path_label.setWordWrap(True)
         self.selected_patterns_label = QtWidgets.QLabel("Pattern: --")
         self.selected_patterns_label.setWordWrap(True)
+        self.selected_pnl_label = QtWidgets.QLabel("Realized PnL: --")
+        self.selected_pnl_label.setStyleSheet("color:#cfd7e6; font-weight:700;")
         dl.addWidget(self.selected_path_label)
         dl.addWidget(self.selected_patterns_label)
+        dl.addWidget(self.selected_pnl_label)
         layout.addWidget(detail_box)
 
         self.pattern_edit_box = QtWidgets.QGroupBox("Case Pattern 編輯")
@@ -455,6 +458,7 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.current_replay = replay
 
         order_events, order_segments = build_order_overlay(case.orders, replay.current_ts)
+        realized_pnl = sum(float(segment["pnl"]) for segment in order_segments)
         self.chart.set_order_events(order_events, order_segments, render=False)
         self.chart.set_context(case, raw, replay, str(path))
         self._update_rth_availability()
@@ -467,6 +471,7 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.selected_path_label.setText(path.name)
         self.selected_path_label.setToolTip(str(path))
         self.selected_patterns_label.setText("Pattern: " + (" / ".join(patterns) if patterns else "無"))
+        self._set_selected_realized_pnl(realized_pnl)
         self._refresh_case_pattern_editor()
         self.case_status.setText(f"{case.case.get('symbol', '')}   {case.case.get('research_date', '')}")
         self.range_status.setText(
@@ -496,6 +501,16 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         if self.current_case is not None:
             self.chart.set_all_orders_visible(bool(checked))
 
+    def _set_selected_realized_pnl(self, realized_pnl: float):
+        if realized_pnl > 1e-12:
+            color, value = "#7bd88f", f"+{realized_pnl:.3f}"
+        elif realized_pnl < -1e-12:
+            color, value = "#ff6b6b", f"{realized_pnl:.3f}"
+        else:
+            color, value = "#cfd7e6", "0.000"
+        self.selected_pnl_label.setText(f"Realized PnL: {value}")
+        self.selected_pnl_label.setStyleSheet(f"color:{color}; font-weight:700;")
+
     def _clear_current_case_display(self):
         self.current_case = None
         self.current_case_path = None
@@ -503,6 +518,8 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.current_raw = pd.DataFrame()
         self.selected_path_label.setText("--")
         self.selected_patterns_label.setText("Pattern: --")
+        self.selected_pnl_label.setText("Realized PnL: --")
+        self.selected_pnl_label.setStyleSheet("color:#cfd7e6; font-weight:700;")
         self._refresh_case_pattern_editor()
         self.case_status.setText("沒有符合條件的 Case")
         self.range_status.setText("")

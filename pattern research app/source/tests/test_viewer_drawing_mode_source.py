@@ -33,3 +33,10 @@ def test_viewer_order_toggle_lives_in_overlay_and_not_chart_toolbar():
     assert 'self.show_orders_checkbox = QtWidgets.QCheckBox("全部 Order")' in VIEWER_WINDOW
     assert "self.show_orders_checkbox.toggled.connect(self._update_order_visibility)" in VIEWER_WINDOW
     assert "self.show_orders_checkbox.hide()" in VIEWER
+
+
+def test_viewer_selected_case_shows_realized_pnl():
+    assert 'self.selected_pnl_label = QtWidgets.QLabel("Realized PnL: --")' in VIEWER_WINDOW
+    assert "self._set_selected_realized_pnl(realized_pnl)" in VIEWER_WINDOW
+    assert 'color, value = "#7bd88f"' in VIEWER_WINDOW
+    assert 'color, value = "#ff6b6b"' in VIEWER_WINDOW
