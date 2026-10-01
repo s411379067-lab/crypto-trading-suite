@@ -1,6 +1,14 @@
-# Pattern Research v1.16
+# Pattern Research v1.17
 
 
+
+
+## v1.17 — Global Drawing / Intraday Note visibility
+
+- Added a chart-toolbar **顯示圖形** checkbox. Unchecking it hides every Drawing view object without deleting or mutating `drawings[]`; re-checking restores them.
+- Added a **顯示全部紀錄** checkbox in the intraday-note panel. When enabled, all revealed notes whose M1 anchors are inside the current X viewport are drawn together as callouts; when disabled, bulk callouts are removed and the note selection is cleared.
+- Existing single-note click Callout behavior remains available after bulk mode is turned off.
+- Both visibility controls are transient UI state and are not written to Case JSON / Undo history.
 
 ## v1.16 — Adjustment handle interaction fix
 

@@ -710,7 +710,10 @@ class ChartWidget(QtWidgets.QWidget):
         self._syncing_auto_all = False
         self.order_events: list[dict] = []
         self.show_previous_rth = False
+        self.show_all_drawings = True
+        self.show_all_intraday_notes = False
         self.selected_intraday_note: dict | None = None
+        self._all_note_callout_items: list[object] = []
 
         # Transient measure mode. Nothing here is persisted to Case JSON.
         self.measure_mode = False
@@ -737,6 +740,9 @@ class ChartWidget(QtWidgets.QWidget):
         self.btn_rect = QtWidgets.QPushButton("□")
         self.btn_rect.setToolTip("畫長方形")
         self.btn_fibo = QtWidgets.QPushButton("Fibo")
+        self.show_drawings_checkbox = QtWidgets.QCheckBox("顯示全部圖形")
+        self.show_drawings_checkbox.setChecked(True)
+        self.show_drawings_checkbox.setToolTip("一次顯示 / 隱藏所有 Drawing；不刪除也不修改 Case JSON")
         self.btn_shot = QtWidgets.QPushButton("Shot")
         self.btn_auto = QtWidgets.QPushButton("Auto")
         self.btn_auto_all = QtWidgets.QPushButton("AutoAll")
@@ -762,8 +768,10 @@ class ChartWidget(QtWidgets.QWidget):
         self.timezone_combo.addItems(["Asia/Taipei", "America/New_York", "UTC", "Europe/London"])
         self.timezone_combo.setFixedWidth(170)
 
-        for w in (self.btn_h, self.btn_l, self.btn_t, self.btn_rect, self.btn_fibo, self.btn_shot, self.btn_auto, self.btn_auto_all,
-                  self.timeframe_combo):
+        for w in (self.btn_h, self.btn_l, self.btn_t, self.btn_rect, self.btn_fibo):
+            tb.addWidget(w)
+        tb.addWidget(self.show_drawings_checkbox)
+        for w in (self.btn_shot, self.btn_auto, self.btn_auto_all, self.timeframe_combo):
             tb.addWidget(w)
         tb.addWidget(QtWidgets.QLabel("X刻度"))
         tb.addWidget(self.x_tick_combo)
@@ -871,6 +879,7 @@ class ChartWidget(QtWidgets.QWidget):
         self.btn_t.clicked.connect(lambda: self.set_tool("text"))
         self.btn_rect.clicked.connect(lambda: self.set_tool("rectangle"))
         self.btn_fibo.clicked.connect(lambda: self.set_tool("fibonacci"))
+        self.show_drawings_checkbox.toggled.connect(self.set_all_drawings_visible)
         self.btn_auto.clicked.connect(self.auto_scale)
         self.btn_auto_all.clicked.connect(self.auto_all)
         self.btn_shot.clicked.connect(self.export_screenshot)
@@ -903,7 +912,13 @@ class ChartWidget(QtWidgets.QWidget):
         self.current_case_path = case_path
         self.selected_drawing_id = None
         self.selected_intraday_note = None
+        self.show_all_intraday_notes = False
+        self.show_all_drawings = True
+        self.show_drawings_checkbox.blockSignals(True)
+        self.show_drawings_checkbox.setChecked(True)
+        self.show_drawings_checkbox.blockSignals(False)
         self._clear_note_callout_overlay()
+        self._clear_all_note_callout_overlays()
         self.symbol_label.setText(f"{case.case.get('symbol', '')}   {case.case.get('research_date', '')}")
 
         self.timeframe_combo.blockSignals(True)
@@ -978,6 +993,8 @@ class ChartWidget(QtWidgets.QWidget):
             return
         old_range = self.plot.viewRange()[0]
         self.plot.clear()
+        # Dynamic all-note callouts were removed by plot.clear(); drop stale refs.
+        self._all_note_callout_items = []
         self.plot.addItem(self.vline, ignoreBounds=True)
         self.plot.addItem(self.hline, ignoreBounds=True)
         self.plot.addItem(self.measure_line, ignoreBounds=True)
@@ -1024,6 +1041,19 @@ class ChartWidget(QtWidgets.QWidget):
         self._update_note_callout_overlay()
 
 
+    def set_all_drawings_visible(self, enabled: bool):
+        """Transient visibility toggle for all Drawing view objects."""
+        self.show_all_drawings = bool(enabled)
+        if not self.show_all_drawings:
+            self.selected_drawing_id = None
+        if self.replay is not None:
+            self.render(reset_x=False)
+
+    def set_all_intraday_notes_visible(self, enabled: bool):
+        """Show every visible/revealed note callout, or return to no bulk overlay."""
+        self.show_all_intraday_notes = bool(enabled)
+        self._update_note_callout_overlay()
+
     def set_selected_intraday_note(self, note):
         self.selected_intraday_note = dict(note) if isinstance(note, dict) else None
         self._update_note_callout_overlay()
@@ -1037,33 +1067,103 @@ class ChartWidget(QtWidgets.QWidget):
         except Exception:
             pass
 
-    def _update_note_callout_overlay(self):
-        if self.case is None or self.replay is None or self.selected_intraday_note is None:
-            self._clear_note_callout_overlay()
-            return
+    def _clear_all_note_callout_overlays(self):
+        for item in list(getattr(self, "_all_note_callout_items", [])):
+            try:
+                self.plot.removeItem(item)
+            except Exception:
+                pass
+        self._all_note_callout_items = []
 
+    def _resolve_note_anchor(self, note):
+        """Return displayed-candle X + exact M1-close Y for a revealed note."""
+        if self.case is None or self.replay is None or not isinstance(note, dict):
+            return None
         fallback_tz = self.case.time_context.get("case_timezone", self.case.display.get("timezone", "UTC"))
-        note_ts = resolve_note_timestamp(self.selected_intraday_note, fallback_timezone=fallback_tz)
+        note_ts = resolve_note_timestamp(note, fallback_timezone=fallback_tz)
         if note_ts is None or float(note_ts) > float(self.replay.current_ts) + 0.5:
-            self._clear_note_callout_overlay()
-            return
-
+            return None
         anchor = find_m1_close(self.raw_df, float(note_ts))
         if anchor is None:
-            self._clear_note_callout_overlay()
-            return
+            return None
         m1_x, anchor_y = anchor
-
-        # The price always comes from the exact M1 close at the note time, but
-        # the X coordinate must belong to the candle that contains that minute
-        # in the CURRENT view timeframe.  Example: a 12:59 note belongs to the
-        # 12:55 candle on M5, while it remains at 12:59 on M1.  This mirrors the
-        # same epoch-floor bucket convention used by aggregate_visible_bars().
         try:
             tf_sec = float(timeframe_seconds(self.timeframe_combo.currentText()))
             anchor_x = align_note_x_to_timeframe(float(m1_x), tf_sec)
         except Exception:
             anchor_x = float(m1_x)
+        return float(anchor_x), float(anchor_y)
+
+    def _render_all_note_callouts(self):
+        self._clear_note_callout_overlay()
+        self._clear_all_note_callout_overlays()
+        if self.case is None or self.replay is None:
+            return
+        try:
+            x_range, y_range = self.plot.viewRange()
+            x_min, x_max = float(x_range[0]), float(x_range[1])
+            y_min, y_max = float(y_range[0]), float(y_range[1])
+        except Exception:
+            return
+        x_span = max(x_max - x_min, 1.0)
+        y_span = max(y_max - y_min, max(abs(y_max), abs(y_min), 1.0) * 0.001)
+
+        visible = []
+        for note in list(getattr(self.case, "intraday_notes", []) or []):
+            anchor = self._resolve_note_anchor(note)
+            if anchor is None:
+                continue
+            anchor_x, anchor_y = anchor
+            if anchor_x < x_min or anchor_x > x_max:
+                continue
+            text = wrap_note_text(note.get("text", ""), width=22)
+            if text:
+                visible.append((anchor_x, anchor_y, text))
+        visible.sort(key=lambda x: x[0])
+        if not visible:
+            return
+
+        # Stagger labels across four upper safe-area rows.  This is a transient
+        # display layout; note timestamps/prices are unchanged.
+        rows = 4
+        for idx, (anchor_x, anchor_y, text) in enumerate(visible):
+            row = idx % rows
+            label_y = y_max - y_span * (0.035 + row * 0.105)
+            # Keep label near its anchor but inside the plot's safe margins.
+            label_x = min(max(anchor_x - x_span * 0.035, x_min + x_span * 0.02), x_max - x_span * 0.25)
+            line_end_x = label_x + x_span * 0.06
+            line_end_y = label_y - y_span * 0.025
+
+            line = pg.PlotDataItem(
+                x=[anchor_x, line_end_x], y=[anchor_y, line_end_y],
+                pen=pg.mkPen((255, 220, 40, 225), width=1.25),
+            )
+            label = pg.TextItem(
+                text=text, color=(245, 247, 250), anchor=(0, 0),
+                fill=pg.mkBrush(15, 20, 30, 235), border=pg.mkPen(255, 220, 40, 205),
+            )
+            line.setZValue(70)
+            label.setZValue(71)
+            label.setPos(label_x, label_y)
+            self.plot.addItem(line, ignoreBounds=True)
+            self.plot.addItem(label, ignoreBounds=True)
+            self._all_note_callout_items.extend([line, label])
+
+    def _update_note_callout_overlay(self):
+        if self.show_all_intraday_notes:
+            self._render_all_note_callouts()
+            return
+
+        self._clear_all_note_callout_overlays()
+        if self.case is None or self.replay is None or self.selected_intraday_note is None:
+            self._clear_note_callout_overlay()
+            return
+
+        anchor = self._resolve_note_anchor(self.selected_intraday_note)
+        if anchor is None:
+            self._clear_note_callout_overlay()
+            return
+        anchor_x, anchor_y = anchor
 
         try:
             x_range, y_range = self.plot.viewRange()
@@ -1073,17 +1173,12 @@ class ChartWidget(QtWidgets.QWidget):
             self._clear_note_callout_overlay()
             return
 
-        # The callout is meaningful only while its M1 anchor is actually visible.
         if anchor_x < x_min or anchor_x > x_max:
             self._clear_note_callout_overlay()
             return
 
         x_span = max(x_max - x_min, 1.0)
         y_span = max(y_max - y_min, max(abs(y_max), abs(y_min), 1.0) * 0.001)
-
-        # V1 safe area: fixed upper-left position inside the plot.  The text box
-        # stays away from the candle body area as much as possible while the line
-        # points back to the exact M1 close anchor.
         label_x = x_min + x_span * 0.035
         label_y = y_max - y_span * 0.035
         line_end_x = label_x + x_span * 0.10
@@ -3049,11 +3144,11 @@ class ChartWidget(QtWidgets.QWidget):
         roi.sigRegionChangeFinished.connect(lambda obj=roi, d=drawing: self._sync_rectangle(obj, d))
 
     def _render_drawing_items(self):
-        if self.case is None:
-            return
         self.drawing_items.clear()
         self.drawing_hit_items.clear()
         self._drawing_hit_objects.clear()
+        if self.case is None or not self.show_all_drawings:
+            return
         for drawing in self.case.drawings:
             dtype = drawing.get("type")
             did = drawing.get("id")

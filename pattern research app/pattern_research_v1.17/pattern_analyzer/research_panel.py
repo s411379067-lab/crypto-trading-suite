@@ -68,6 +68,7 @@ class ResearchPanel(QtWidgets.QWidget):
     reference_levels_changed = QtCore.Signal(bool)
     history_committed = QtCore.Signal(str)
     note_selection_changed = QtCore.Signal(object)
+    all_notes_visibility_changed = QtCore.Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -109,6 +110,13 @@ class ResearchPanel(QtWidgets.QWidget):
 
         notes_box = QtWidgets.QGroupBox("盤中紀錄")
         n_layout = QtWidgets.QVBoxLayout(notes_box)
+        notes_header = QtWidgets.QHBoxLayout()
+        self.show_all_notes_checkbox = QtWidgets.QCheckBox("顯示全部紀錄")
+        self.show_all_notes_checkbox.setChecked(False)
+        self.show_all_notes_checkbox.setToolTip("勾選後顯示目前可見範圍內的所有盤中紀錄 Callout；取消後全部隱藏")
+        notes_header.addWidget(self.show_all_notes_checkbox)
+        notes_header.addStretch(1)
+        n_layout.addLayout(notes_header)
         self.note_input = QtWidgets.QTextEdit()
         self.note_input.setPlaceholderText("記錄目前 Replay 時點看到的結構與想法…")
         self.note_input.setMaximumHeight(100)
@@ -128,11 +136,16 @@ class ResearchPanel(QtWidgets.QWidget):
         self.btn_delete_note.clicked.connect(self.delete_note)
         self.note_list.itemDoubleClicked.connect(self._begin_note_edit)
         self.note_list.itemSelectionChanged.connect(self._emit_note_selection)
+        self.show_all_notes_checkbox.toggled.connect(self._all_notes_toggled)
         self.rth_checkbox.toggled.connect(self._rth_toggled)
 
     def set_case(self, case, replay_time_provider):
         self.case = case
         self.replay_time_provider = replay_time_provider
+        self.show_all_notes_checkbox.blockSignals(True)
+        self.show_all_notes_checkbox.setChecked(False)
+        self.show_all_notes_checkbox.blockSignals(False)
+        self.all_notes_visibility_changed.emit(False)
         self.refresh(preserve_note_selection=False)
 
     def refresh(self, preserve_note_selection=True):
@@ -173,6 +186,8 @@ class ResearchPanel(QtWidgets.QWidget):
             self.note_list.setCurrentRow(selected_row)
         self.note_list.blockSignals(False)
         self._emit_note_selection()
+        if self.show_all_notes_checkbox.isChecked():
+            self.all_notes_visibility_changed.emit(True)
 
         rth = self.case.reference_levels.get("previous_rth") if hasattr(self.case, "reference_levels") else None
         available = isinstance(rth, dict) and rth.get("high") is not None and rth.get("low") is not None and rth.get("close") is not None
@@ -189,6 +204,14 @@ class ResearchPanel(QtWidgets.QWidget):
             is_weekend = bool(getattr(self.case, "calendar", {}).get("is_weekend", False))
             self.rth_status.setText("[週末 / 無資料]" if is_weekend else "[無資料]")
             self.rth_status.setStyleSheet("color:#8f9bad; font-size:9.5pt;")
+
+    def _all_notes_toggled(self, checked: bool):
+        # This is a transient chart-display control only; it does not modify Case JSON.
+        # Turning it off means "hide all", so disable bulk mode first and then
+        # clear any single-note selection without briefly re-rendering all notes.
+        self.all_notes_visibility_changed.emit(bool(checked))
+        if not checked:
+            self.clear_note_selection()
 
     def _rth_toggled(self, checked: bool):
         if self.case is None:

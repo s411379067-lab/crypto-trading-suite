@@ -56,7 +56,7 @@ QSplitter::handle { background:#252c3b; }
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, case_root: str | Path):
         super().__init__()
-        self.setWindowTitle("Pattern Analyzer v1.16")
+        self.setWindowTitle("Pattern Analyzer v1.17")
         self.resize(1550, 900)
         self.setStyleSheet(APP_STYLE)
 
@@ -121,6 +121,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.research.history_committed.connect(self._record_history)
         self.research.reference_levels_changed.connect(self.chart.set_previous_rth_visible)
         self.research.note_selection_changed.connect(self.chart.set_selected_intraday_note)
+        self.research.all_notes_visibility_changed.connect(self.chart.set_all_intraday_notes_visible)
         self.order.changed.connect(self.mark_dirty)
         self.order.fills_changed.connect(self._refresh_order_markers)
         self.chart.order_prefill_requested.connect(self.order.prefill_from_chart)
@@ -179,7 +180,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Rendering can normalize legacy Drawing fields; start history from the normalized state.
         self.undo_manager.reset(case)
         self.update_status()
-        self.setWindowTitle(f"Pattern Analyzer v1.16 — {case.case.get('symbol')} — {self.case_path.name}")
+        self.setWindowTitle(f"Pattern Analyzer v1.17 — {case.case.get('symbol')} — {self.case_path.name}")
 
     def _record_history(self, label: str):
         if self.case is None:
