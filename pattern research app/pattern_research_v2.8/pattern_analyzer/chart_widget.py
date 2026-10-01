@@ -15,6 +15,7 @@ from shared_core.drawing_clipboard import clone_drawing_with_offset
 from shared_core.note_callout import align_note_x_to_timeframe, find_m1_close, layout_alternating_note_callouts, resolve_note_timestamp, wrap_note_text
 from shared_core.rth import summarize_intraday_volatility_payload
 from shared_core.replay_stats import summarize_current_replay_range
+from shared_core.ohlc import format_ohlc_text
 from pattern_analyzer.drawing_templates import DrawingTemplateRepository
 
 
@@ -819,7 +820,7 @@ class ChartWidget(QtWidgets.QWidget):
         il.setContentsMargins(10, 5, 10, 5)
         self.symbol_label = QtWidgets.QLabel("No Case")
         self.symbol_label.setStyleSheet("font-size:12pt; font-weight:700; color:#f5f7fa;")
-        self.ohlc_label = QtWidgets.QLabel("開=--  高=--  低=--  收=--")
+        self.ohlc_label = QtWidgets.QLabel("開=--  高=--  低=--  收=--  漲跌=--")
         self.ohlc_label.setStyleSheet("font-size:11pt; font-weight:700; color:#cfd7e6;")
         il.addWidget(self.symbol_label)
         il.addWidget(self.ohlc_label)
@@ -1085,13 +1086,9 @@ class ChartWidget(QtWidgets.QWidget):
         self._last_bars = bars
         if not bars.empty:
             self._draw_bars(bars)
-            last = bars.iloc[-1]
-            self.ohlc_label.setText(
-                f"開={last['open']:.2f}   高={last['high']:.2f}   低={last['low']:.2f}   收={last['close']:.2f}"
-                + ("   [forming]" if bool(last.get("is_partial", False)) else "")
-            )
+            self._set_ohlc_row(bars.iloc[-1])
         else:
-            self.ohlc_label.setText("開=--  高=--  低=--  收=--")
+            self._set_ohlc_row(None)
 
         self._render_reference_levels()
         self._render_drawing_items()
@@ -1601,23 +1598,43 @@ class ChartWidget(QtWidgets.QWidget):
 
         return super().eventFilter(watched, event)
 
+    def _set_ohlc_row(self, row):
+        """Show OHLC for one rendered candle. None resets the information row."""
+        self.ohlc_label.setText(format_ohlc_text(row))
+
+    def _restore_latest_ohlc(self):
+        if self._last_bars.empty:
+            self._set_ohlc_row(None)
+        else:
+            self._set_ohlc_row(self._last_bars.iloc[-1])
+
     def _mouse_moved(self, evt):
         pos = evt[0]
         if not self.plot.sceneBoundingRect().contains(pos):
             self.vline.hide(); self.hline.hide()
             self.price_coord_label.hide(); self.time_coord_label.hide()
             self.btn_short_axis.hide(); self.btn_long_axis.hide()
+            self._restore_latest_ohlc()
             return
         p = self.plot.vb.mapSceneToView(pos)
         x = float(p.x())
         y = float(p.y())
+        hovered_row = None
 
-        # TradingView-like crosshair: X snaps to nearest revealed candle. Holding Ctrl also snaps Y to nearest OHLC.
+        # TradingView-like crosshair: X snaps to nearest revealed candle.
+        # The OHLC information row follows that exact displayed candle instead of the latest candle.
         if not self._last_bars.empty:
             ts = self._last_bars["timestamp"].to_numpy(dtype=float)
-            x = float(ts[int(np.argmin(np.abs(ts - x)))])
+            idx = int(np.argmin(np.abs(ts - x)))
+            x = float(ts[idx])
+            hovered_row = self._last_bars.iloc[idx]
         if self._ctrl_pressed():
             x, y = self._magnet_snap_point(x, y)
+            if not self._last_bars.empty:
+                ts = self._last_bars["timestamp"].to_numpy(dtype=float)
+                idx = int(np.argmin(np.abs(ts - x)))
+                hovered_row = self._last_bars.iloc[idx]
+        self._set_ohlc_row(hovered_row)
         self.vline.setPos(x)
         self.hline.setPos(y)
         self.vline.show(); self.hline.show()

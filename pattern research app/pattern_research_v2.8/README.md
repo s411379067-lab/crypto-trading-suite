@@ -1,4 +1,14 @@
-# Pattern Research v2.7
+# Pattern Research v2.8
+
+
+## v2.8 — Cursor-following OHLC + candle change %
+
+- Analyzer and Pattern Viewer OHLC information now follows the candle currently under the crosshair instead of always showing the latest rendered candle.
+- Crosshair X continues to snap to the nearest revealed candle, so OHLC never reads unrevealed future data during Replay.
+- Added candle `漲跌` to the right of OHLC, calculated as `(Close - Open) / Open × 100`, displayed with an explicit `+` / `-` sign.
+- The displayed candle follows the active view timeframe (M1 / M5 / M15 / H1); a currently-forming aggregated candle keeps the existing `[forming]` marker.
+- When the cursor leaves the chart, the OHLC row returns to the latest rendered/revealed candle.
+- No Case JSON, Drawing, Replay persistence, Pattern, Note, Order, Enricher, or Viewer drawing-interaction schema changes.
 
 
 ## v2.7 — Structural Viewer Drawing non-interactive mode

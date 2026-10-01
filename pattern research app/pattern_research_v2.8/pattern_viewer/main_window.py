@@ -32,7 +32,7 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
 
     def __init__(self, case_root: str | Path = "."):
         super().__init__()
-        self.setWindowTitle("Pattern Viewer v2.7")
+        self.setWindowTitle("Pattern Viewer v2.8")
         self.resize(1600, 920)
         self.setStyleSheet(APP_STYLE)
 
@@ -485,7 +485,7 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.range_status.setText(
             f"Full: {case.time_range.get('data_start', '')}  →  {case.time_range.get('default_end', '')}"
         )
-        self.setWindowTitle(f"Pattern Viewer v2.7 — {case.case.get('symbol', '')} — {path.name}")
+        self.setWindowTitle(f"Pattern Viewer v2.8 — {case.case.get('symbol', '')} — {path.name}")
 
     def _update_rth_availability(self):
         case = self.current_case
@@ -515,4 +515,4 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self._refresh_case_pattern_editor()
         self.case_status.setText("沒有符合條件的 Case")
         self.range_status.setText("")
-        self.setWindowTitle("Pattern Viewer v2.7")
+        self.setWindowTitle("Pattern Viewer v2.8")
