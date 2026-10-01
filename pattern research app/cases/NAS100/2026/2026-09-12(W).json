@@ -1,0 +1,331 @@
+{
+  "schema_version": "0.1",
+  "case": {
+    "id": "case-a3f2653daddf",
+    "symbol": "NAS100",
+    "research_date": "2026-09-12"
+  },
+  "market_data": {
+    "source_id": "nas100-primary",
+    "source_type": "txt",
+    "source_path": "C:\\Users\\User\\Desktop\\JJproject\\propfirm\\歷史數據\\NAS100_M1.txt",
+    "resolution": "M1"
+  },
+  "time_range": {
+    "data_start": "2026-09-12T08:00:00-04:00",
+    "replay_start": "2026-09-12T09:30:00-04:00",
+    "default_end": "2026-09-12T04:30:00-04:00"
+  },
+  "time_context": {
+    "case_timezone": "America/New_York",
+    "canonical_timezone": "UTC"
+  },
+  "display": {
+    "view_timeframe": "M5",
+    "timezone": "America/New_York",
+    "x_tick_interval": "15m"
+  },
+  "replay": {
+    "step_minutes": 1,
+    "current_time": "2026-09-12T13:30:00+00:00"
+  },
+  "calendar": {
+    "case_date": "2026-09-12",
+    "weekday": "Saturday",
+    "is_weekend": true
+  },
+  "reference_levels": {},
+  "reference_statistics": {
+    "intraday_volatility_20d": {
+      "session_timezone": "America/New_York",
+      "session_start": "09:30",
+      "session_end": "16:00",
+      "min_coverage": 0.95,
+      "max_tail_gap_minutes": 15.0,
+      "lookback_sessions": 20,
+      "observations": 20,
+      "range_definition": "high_minus_low",
+      "range_pct_definition": "(high-low)/rth_open*100",
+      "std_method": "sample_ddof_1",
+      "median_range_points": 256.78999999999724,
+      "std_range_points": 62.2560415563271,
+      "median_range_pct": 0.8731706992576922,
+      "std_range_pct": 0.21215718584792892,
+      "sessions": [
+        {
+          "date": "2026-08-14",
+          "open": 30140.06,
+          "high": 30179.71,
+          "low": 29931.93,
+          "close": 30049.22,
+          "range_points": 247.77999999999884,
+          "range_pct": 0.8220952446677241,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-08-17",
+          "open": 30122.69,
+          "high": 30191.54,
+          "low": 29975.27,
+          "close": 29998.37,
+          "range_points": 216.27000000000044,
+          "range_pct": 0.7179637675121326,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-08-18",
+          "open": 29601.71,
+          "high": 29681.12,
+          "low": 29425.47,
+          "close": 29495.03,
+          "range_points": 255.64999999999782,
+          "range_pct": 0.8636325401471665,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-08-19",
+          "open": 29606.08,
+          "high": 29651.78,
+          "low": 29286.33,
+          "close": 29430.37,
+          "range_points": 365.4499999999971,
+          "range_pct": 1.234374831115761,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-08-20",
+          "open": 29260.0,
+          "high": 29378.6,
+          "low": 29111.55,
+          "close": 29213.22,
+          "range_points": 267.0499999999993,
+          "range_pct": 0.9126794258373181,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-08-21",
+          "open": 29385.32,
+          "high": 29403.68,
+          "low": 29135.75,
+          "close": 29315.61,
+          "range_points": 267.9300000000003,
+          "range_pct": 0.9117818012531438,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-08-24",
+          "open": 29158.71,
+          "high": 29165.4,
+          "low": 28870.82,
+          "close": 29022.23,
+          "range_points": 294.58000000000175,
+          "range_pct": 1.0102641714945613,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-08-25",
+          "open": 29220.28,
+          "high": 29340.17,
+          "low": 29082.24,
+          "close": 29198.11,
+          "range_points": 257.92999999999665,
+          "range_pct": 0.8827088583682178,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-08-26",
+          "open": 29104.58,
+          "high": 29299.85,
+          "low": 29087.69,
+          "close": 29229.08,
+          "range_points": 212.15999999999985,
+          "range_pct": 0.7289574355651236,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-08-27",
+          "open": 29458.51,
+          "high": 29638.64,
+          "low": 29358.84,
+          "close": 29625.29,
+          "range_points": 279.7999999999993,
+          "range_pct": 0.949810428293893,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-08-28",
+          "open": 29569.98,
+          "high": 29753.86,
+          "low": 29379.29,
+          "close": 29438.3,
+          "range_points": 374.5699999999997,
+          "range_pct": 1.2667238868609303,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-08-31",
+          "open": 29382.72,
+          "high": 29482.52,
+          "low": 29299.61,
+          "close": 29451.4,
+          "range_points": 182.90999999999985,
+          "range_pct": 0.6225087398307572,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-09-01",
+          "open": 29058.53,
+          "high": 29263.27,
+          "low": 28949.99,
+          "close": 29074.25,
+          "range_points": 313.27999999999884,
+          "range_pct": 1.0780999589449254,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-09-02",
+          "open": 29050.41,
+          "high": 29162.22,
+          "low": 28968.24,
+          "close": 29140.5,
+          "range_points": 193.97999999999956,
+          "range_pct": 0.6677358426266602,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-09-03",
+          "open": 29201.77,
+          "high": 29536.0,
+          "low": 29150.59,
+          "close": 29482.74,
+          "range_points": 385.40999999999985,
+          "range_pct": 1.3198172576525322,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-09-04",
+          "open": 29537.69,
+          "high": 29641.09,
+          "low": 29435.32,
+          "close": 29537.37,
+          "range_points": 205.77000000000044,
+          "range_pct": 0.6966353834710854,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-09-08",
+          "open": 29616.47,
+          "high": 29659.05,
+          "low": 29396.99,
+          "close": 29515.6,
+          "range_points": 262.0599999999977,
+          "range_pct": 0.8848454930651682,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-09-09",
+          "open": 29430.58,
+          "high": 29568.08,
+          "low": 29334.35,
+          "close": 29430.75,
+          "range_points": 233.7300000000032,
+          "range_pct": 0.7941739510400515,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-09-10",
+          "open": 29062.32,
+          "high": 29248.05,
+          "low": 29030.9,
+          "close": 29111.94,
+          "range_points": 217.14999999999782,
+          "range_pct": 0.7471874234403786,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-09-11",
+          "open": 29392.68,
+          "high": 29474.42,
+          "low": 29309.19,
+          "close": 29361.69,
+          "range_points": 165.22999999999956,
+          "range_pct": 0.5621467657933865,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        }
+      ],
+      "calculator_version": "1.1",
+      "calculated_at": "2026-09-27T10:03:23.218835+00:00",
+      "data_source_id": "nas100-primary"
+    }
+  },
+  "patterns": [],
+  "intraday_notes": [],
+  "drawings": [],
+  "orders": [],
+  "metadata": {
+    "created_at": "2026-09-21T04:42:11.963750+00:00",
+    "updated_at": "2026-09-27T10:03:23.226062+00:00",
+    "rth_enriched_at": "2026-09-22T08:11:20.720920+00:00",
+    "intraday_volatility_20d_enriched_at": "2026-09-27T10:03:23.218835+00:00"
+  }
+}

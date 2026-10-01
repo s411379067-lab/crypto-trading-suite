@@ -1,0 +1,196 @@
+from __future__ import annotations
+
+from pathlib import Path
+import pandas as pd
+import pyqtgraph as pg
+from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
+
+from shared_core.repository import CaseRepository
+from shared_core.market_data import MarketDataService
+from shared_core.replay import ReplayEngine, ts_to_iso
+from .case_library import CaseLibraryWidget
+from .chart_widget import ChartWidget
+from .research_panel import ResearchPanel
+
+
+APP_STYLE = """
+QWidget { background-color:#0f131c; color:#d7deea; }
+QPushButton { background-color:#192131; border:1px solid #4d5a73; border-radius:3px; padding:5px 8px; font-weight:600; }
+QPushButton:hover { background-color:#253249; }
+QLineEdit, QTextEdit, QComboBox, QListWidget, QTreeView {
+    background-color:#0d1420; border:1px solid #36445d; border-radius:3px; color:#e6edf7; padding:4px;
+}
+QGroupBox { border:1px solid #2a3142; border-radius:4px; margin-top:8px; padding-top:8px; font-weight:700; }
+QGroupBox::title { subcontrol-origin:margin; left:8px; padding:0 4px; }
+QSplitter::handle { background:#252c3b; }
+"""
+
+
+class MainWindow(QtWidgets.QMainWindow):
+    def __init__(self, case_root: str | Path):
+        super().__init__()
+        self.setWindowTitle("Pattern Analyzer v0.1")
+        self.resize(1550, 900)
+        self.setStyleSheet(APP_STYLE)
+
+        self.repo = CaseRepository()
+        self.market = MarketDataService()
+        self.case = None
+        self.case_path: Path | None = None
+        self.raw_df = pd.DataFrame()
+        self.replay = None
+        self.dirty = False
+
+        central = QtWidgets.QWidget()
+        self.setCentralWidget(central)
+        layout = QtWidgets.QVBoxLayout(central)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
+
+        self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        self.library = CaseLibraryWidget(case_root)
+        self.chart = ChartWidget()
+        self.research = ResearchPanel()
+        self.splitter.addWidget(self.library)
+        self.splitter.addWidget(self.chart)
+        self.splitter.addWidget(self.research)
+        self.splitter.setSizes([230, 980, 330])
+        layout.addWidget(self.splitter, 1)
+
+        replay_bar = QtWidgets.QWidget()
+        rb = QtWidgets.QHBoxLayout(replay_bar)
+        rb.setContentsMargins(4, 2, 4, 2)
+        self.btn_back = QtWidgets.QPushButton("◀")
+        self.btn_forward = QtWidgets.QPushButton("▶")
+        self.btn_reset = QtWidgets.QPushButton("Reset B")
+        self.replay_label = QtWidgets.QLabel("Replay: --")
+        self.range_label = QtWidgets.QLabel("A -- / B -- / C --")
+        self.save_label = QtWidgets.QLabel("Saved")
+        self.save_label.setStyleSheet("color:#7bd88f;")
+        rb.addWidget(self.btn_back)
+        rb.addWidget(self.btn_forward)
+        rb.addWidget(self.btn_reset)
+        rb.addWidget(self.replay_label)
+        rb.addSpacing(20)
+        rb.addWidget(self.range_label)
+        rb.addStretch(1)
+        rb.addWidget(self.save_label)
+        layout.addWidget(replay_bar)
+
+        self.library.case_open_requested.connect(self.open_case)
+        self.chart.dirty.connect(self.mark_dirty)
+        self.research.changed.connect(self.mark_dirty)
+        self.btn_forward.clicked.connect(self.step_forward)
+        self.btn_back.clicked.connect(self.step_backward)
+        self.btn_reset.clicked.connect(self.reset_replay)
+
+        self.shortcut_forward = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Right), self)
+        self.shortcut_forward.setContext(QtCore.Qt.ApplicationShortcut)
+        self.shortcut_forward.activated.connect(self.step_forward)
+        self.shortcut_back = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Left), self)
+        self.shortcut_back.setContext(QtCore.Qt.ApplicationShortcut)
+        self.shortcut_back.activated.connect(self.step_backward)
+        self.shortcut_delete = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Delete), self)
+        self.shortcut_delete.setContext(QtCore.Qt.ApplicationShortcut)
+        self.shortcut_delete.activated.connect(self.chart.delete_selected_drawing)
+
+        self.autosave = QtCore.QTimer(self)
+        self.autosave.setInterval(1000)
+        self.autosave.timeout.connect(self.save_if_dirty)
+        self.autosave.start()
+
+    def open_case(self, path: str):
+        self.save_if_dirty(force=True)
+        try:
+            case = self.repo.load(path)
+            raw = self.market.load_for_case(path, case.market_data)
+            if raw.empty:
+                raise ValueError("Market data has no rows")
+            replay = ReplayEngine.from_case(case, float(raw["timestamp"].max()))
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Open Case Error", str(e))
+            return
+
+        self.case = case
+        self.case_path = Path(path)
+        self.raw_df = raw
+        self.replay = replay
+        self.dirty = False
+        self.chart.set_context(case, raw, replay, path)
+        self.research.set_case(case, self.current_replay_time_text)
+        self.update_status()
+        self.setWindowTitle(f"Pattern Analyzer v0.1 — {case.case.get('symbol')} — {self.case_path.name}")
+
+    def current_replay_time_text(self) -> str:
+        if self.replay is None or self.case is None:
+            return ""
+        tz = self.case.display.get("timezone", "Asia/Taipei")
+        dt = pd.Timestamp(self.replay.current_ts, unit="s", tz="UTC").tz_convert(tz)
+        return dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+
+    def step_forward(self):
+        if self.replay is None:
+            return
+        self.replay.forward()
+        self._sync_replay_to_case()
+        self.chart.render(reset_x=False)
+        self.mark_dirty()
+        self.update_status()
+
+    def step_backward(self):
+        if self.replay is None:
+            return
+        self.replay.backward()
+        self._sync_replay_to_case()
+        self.chart.render(reset_x=False)
+        self.mark_dirty()
+        self.update_status()
+
+    def reset_replay(self):
+        if self.replay is None:
+            return
+        self.replay.reset()
+        self._sync_replay_to_case()
+        self.chart.render(reset_x=True)
+        self.mark_dirty()
+        self.update_status()
+
+    def _sync_replay_to_case(self):
+        if self.case is None or self.replay is None:
+            return
+        self.case.replay["current_time"] = ts_to_iso(self.replay.current_ts)
+        self.case.touch()
+
+    def mark_dirty(self):
+        self.dirty = True
+        self.save_label.setText("Unsaved")
+        self.save_label.setStyleSheet("color:#ffcc80;")
+
+    def save_if_dirty(self, force=False):
+        if self.case is None or self.case_path is None:
+            return
+        if not self.dirty and not force:
+            return
+        try:
+            self.chart.sync_all_drawings_from_view()
+            self._sync_replay_to_case()
+            self.repo.save(self.case_path, self.case)
+            self.dirty = False
+            self.save_label.setText("Saved")
+            self.save_label.setStyleSheet("color:#7bd88f;")
+        except Exception as e:
+            self.save_label.setText("Save Error")
+            self.save_label.setStyleSheet("color:#f7525f;")
+            if force:
+                QtWidgets.QMessageBox.warning(self, "Save Error", str(e))
+
+    def update_status(self):
+        if self.case is None or self.replay is None:
+            return
+        self.replay_label.setText(f"Replay: {self.current_replay_time_text()}")
+        tr = self.case.time_range
+        self.range_label.setText(f"A {tr['data_start']}   /   B {tr['replay_start']}   /   C {tr['default_end']}")
+
+    def closeEvent(self, event):
+        self.save_if_dirty(force=True)
+        super().closeEvent(event)

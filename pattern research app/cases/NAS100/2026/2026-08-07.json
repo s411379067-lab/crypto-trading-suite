@@ -1,0 +1,673 @@
+{
+  "schema_version": "0.1",
+  "case": {
+    "id": "case-64af275f9e6d",
+    "symbol": "NAS100",
+    "research_date": "2026-08-07"
+  },
+  "market_data": {
+    "source_id": "nas100-primary",
+    "source_type": "txt",
+    "source_path": "C:\\Users\\User\\Desktop\\JJproject\\Crypto app\\pattern research app\\NAS100_M1.txt",
+    "resolution": "M1"
+  },
+  "time_range": {
+    "data_start": "2026-08-07T08:00:00-04:00",
+    "replay_start": "2026-08-07T09:30:00-04:00",
+    "default_end": "2026-08-07T16:00:00-04:00"
+  },
+  "time_context": {
+    "case_timezone": "America/New_York",
+    "canonical_timezone": "UTC"
+  },
+  "display": {
+    "view_timeframe": "M5",
+    "timezone": "America/New_York",
+    "x_tick_interval": "15m",
+    "show_previous_rth": true
+  },
+  "replay": {
+    "step_minutes": 1,
+    "current_time": "2026-08-07T19:59:00+00:00"
+  },
+  "calendar": {
+    "case_date": "2026-08-07",
+    "weekday": "Friday",
+    "is_weekend": false
+  },
+  "reference_levels": {
+    "previous_rth": {
+      "session_date": "2026-08-06",
+      "session_timezone": "America/New_York",
+      "session_start": "09:30",
+      "session_end": "16:00",
+      "min_coverage": 0.95,
+      "max_tail_gap_minutes": 15.0,
+      "open": 29213.0,
+      "high": 29569.83,
+      "low": 29121.33,
+      "close": 29378.98,
+      "open_time": "2026-08-06T13:30:00Z",
+      "high_time": "2026-08-06T15:11:00Z",
+      "low_time": "2026-08-06T13:33:00Z",
+      "close_time": "2026-08-06T19:59:00Z",
+      "source_resolution_seconds": 60.0,
+      "bar_count": 390,
+      "expected_bar_count": 390,
+      "coverage_ratio": 1.0,
+      "tail_gap_minutes": 0.0,
+      "calculator_version": "1.2",
+      "calculated_at": "2026-09-27T10:03:17.387874+00:00",
+      "data_source_id": "nas100-primary"
+    }
+  },
+  "reference_statistics": {
+    "intraday_volatility_20d": {
+      "session_timezone": "America/New_York",
+      "session_start": "09:30",
+      "session_end": "16:00",
+      "min_coverage": 0.95,
+      "max_tail_gap_minutes": 15.0,
+      "lookback_sessions": 20,
+      "observations": 20,
+      "range_definition": "high_minus_low",
+      "range_pct_definition": "(high-low)/rth_open*100",
+      "std_method": "sample_ddof_1",
+      "median_range_points": 450.5799999999999,
+      "std_range_points": 147.19624974752824,
+      "median_range_pct": 1.558780261506437,
+      "std_range_pct": 0.5310172236274066,
+      "sessions": [
+        {
+          "date": "2026-07-09",
+          "open": 29527.02,
+          "high": 29775.55,
+          "low": 29397.18,
+          "close": 29730.27,
+          "range_points": 378.369999999999,
+          "range_pct": 1.2814364605706874,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-07-10",
+          "open": 29623.6,
+          "high": 29861.91,
+          "low": 29467.23,
+          "close": 29823.04,
+          "range_points": 394.6800000000003,
+          "range_pct": 1.3323161263317096,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-07-13",
+          "open": 29498.69,
+          "high": 29540.3,
+          "low": 29183.89,
+          "close": 29253.49,
+          "range_points": 356.40999999999985,
+          "range_pct": 1.2082231448243967,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-07-14",
+          "open": 29604.21,
+          "high": 29689.84,
+          "low": 29359.9,
+          "close": 29582.48,
+          "range_points": 329.9399999999987,
+          "range_pct": 1.1145036466097178,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-07-15",
+          "open": 29754.79,
+          "high": 29775.98,
+          "low": 29195.95,
+          "close": 29499.57,
+          "range_points": 580.0299999999988,
+          "range_pct": 1.949366807831609,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-07-16",
+          "open": 29264.98,
+          "high": 29331.76,
+          "low": 28880.12,
+          "close": 29017.68,
+          "range_points": 451.6399999999994,
+          "range_pct": 1.5432780066823877,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-07-17",
+          "open": 28410.79,
+          "high": 28850.94,
+          "low": 28213.03,
+          "close": 28578.34,
+          "range_points": 637.9099999999999,
+          "range_pct": 2.2453089125645564,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-07-20",
+          "open": 28868.15,
+          "high": 29015.72,
+          "low": 28591.78,
+          "close": 28608.64,
+          "range_points": 423.9400000000023,
+          "range_pct": 1.4685388568370412,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-07-21",
+          "open": 29049.96,
+          "high": 29190.59,
+          "low": 28890.08,
+          "close": 29139.53,
+          "range_points": 300.5099999999984,
+          "range_pct": 1.0344592557098131,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-07-22",
+          "open": 28921.79,
+          "high": 29174.58,
+          "low": 28920.94,
+          "close": 28990.44,
+          "range_points": 253.64000000000306,
+          "range_pct": 0.8769858297152529,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-07-23",
+          "open": 28553.96,
+          "high": 28717.29,
+          "low": 28267.77,
+          "close": 28443.28,
+          "range_points": 449.52000000000044,
+          "range_pct": 1.574282516330486,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-07-24",
+          "open": 28374.58,
+          "high": 28466.68,
+          "low": 28051.48,
+          "close": 28122.85,
+          "range_points": 415.2000000000007,
+          "range_pct": 1.4632815710399967,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-07-27",
+          "open": 28430.93,
+          "high": 28456.01,
+          "low": 27779.46,
+          "close": 28033.96,
+          "range_points": 676.5499999999993,
+          "range_pct": 2.379626695292765,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-07-28",
+          "open": 27794.39,
+          "high": 27923.63,
+          "low": 27447.87,
+          "close": 27764.37,
+          "range_points": 475.76000000000204,
+          "range_pct": 1.7117123275596335,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-07-29",
+          "open": 27766.13,
+          "high": 27949.18,
+          "low": 27168.68,
+          "close": 27187.98,
+          "range_points": 780.5,
+          "range_pct": 2.8109786995883113,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-07-30",
+          "open": 27729.02,
+          "high": 28164.24,
+          "low": 27666.77,
+          "close": 28096.1,
+          "range_points": 497.47000000000116,
+          "range_pct": 1.794041044364356,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-08-03",
+          "open": 28299.97,
+          "high": 28841.59,
+          "low": 28193.36,
+          "close": 28778.47,
+          "range_points": 648.2299999999996,
+          "range_pct": 2.2905677991884783,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-08-04",
+          "open": 29116.41,
+          "high": 29835.35,
+          "low": 29088.79,
+          "close": 29750.74,
+          "range_points": 746.5599999999977,
+          "range_pct": 2.564052367719776,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-08-05",
+          "open": 29855.08,
+          "high": 29952.71,
+          "low": 29470.6,
+          "close": 29484.71,
+          "range_points": 482.1100000000006,
+          "range_pct": 1.6148340583914047,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        },
+        {
+          "date": "2026-08-06",
+          "open": 29213.0,
+          "high": 29569.83,
+          "low": 29121.33,
+          "close": 29378.98,
+          "range_points": 448.5,
+          "range_pct": 1.5352753910930066,
+          "bar_count": 390,
+          "expected_bar_count": 390,
+          "coverage_ratio": 1.0,
+          "tail_gap_minutes": 0.0
+        }
+      ],
+      "calculator_version": "1.1",
+      "calculated_at": "2026-09-27T10:03:17.508128+00:00",
+      "data_source_id": "nas100-primary"
+    }
+  },
+  "patterns": [
+    {
+      "id": "pattern-b8dd9306a4cf",
+      "text": "開盤TR",
+      "created_at": "2026-09-22T08:13:34.504076+00:00",
+      "updated_at": "2026-09-22T08:13:34.504104+00:00"
+    },
+    {
+      "id": "pattern-c253ea76dad5",
+      "text": "12點反轉",
+      "created_at": "2026-09-22T08:34:41.632865+00:00",
+      "updated_at": "2026-09-22T08:34:41.632879+00:00"
+    },
+    {
+      "id": "pattern-1097726b11ab",
+      "text": "半區震盪",
+      "created_at": "2026-09-22T08:34:47.792317+00:00",
+      "updated_at": "2026-09-26T15:27:30.121585+00:00"
+    },
+    {
+      "id": "pattern-e6c9341e965d",
+      "text": "10點反轉",
+      "created_at": "2026-09-22T08:34:56.168527+00:00",
+      "updated_at": "2026-09-22T08:34:56.168540+00:00"
+    },
+    {
+      "id": "pattern-56f78f1e9b2f",
+      "text": "開盤TR BO",
+      "created_at": "2026-09-24T04:21:17.324266+00:00",
+      "updated_at": "2026-09-24T04:21:17.324266+00:00"
+    }
+  ],
+  "intraday_notes": [
+    {
+      "id": "note-414c00e09383",
+      "replay_time": "2026-08-07 09:35:00 EDT",
+      "text": "大Bull bar開盤",
+      "created_at": "2026-09-22T08:13:14.983298+00:00",
+      "updated_at": "2026-09-22T08:13:14.983309+00:00"
+    },
+    {
+      "id": "note-c9951b408024",
+      "replay_time": "2026-08-07 09:39:00 EDT",
+      "text": "開盤TR Long limit 沒成交",
+      "created_at": "2026-09-22T08:13:54.246070+00:00",
+      "updated_at": "2026-09-22T08:14:17.151341+00:00"
+    },
+    {
+      "id": "note-41fc8ea0132b",
+      "replay_time": "2026-08-07 09:56:00 EDT",
+      "text": "這邊看Bear Bo有沒有成功沒有的話可以做反向BO",
+      "created_at": "2026-09-22T08:15:14.046180+00:00",
+      "updated_at": "2026-09-22T08:15:14.046188+00:00"
+    },
+    {
+      "id": "note-4efd647d83fe",
+      "replay_time": "2026-08-07 10:04:00 EDT",
+      "text": "BO成功 先拿TR 1R",
+      "created_at": "2026-09-22T08:16:07.298629+00:00",
+      "updated_at": "2026-09-22T08:16:07.298638+00:00"
+    },
+    {
+      "id": "note-7b85bb582b17",
+      "replay_time": "2026-08-07 10:19:00 EDT",
+      "text": "1R 附近波幅其實有可能已經達到\n出現超大陽線反轉，可以用Long Limit 賭會拿到上半區\n差一點成交",
+      "created_at": "2026-09-22T08:17:35.980777+00:00",
+      "updated_at": "2026-09-22T08:19:31.961881+00:00"
+    },
+    {
+      "id": "note-021661e7031f",
+      "replay_time": "2026-08-07 11:09:00 EDT",
+      "text": "可能中半區整理等12點",
+      "created_at": "2026-09-22T08:19:18.878720+00:00",
+      "updated_at": "2026-09-22T08:19:18.878728+00:00"
+    },
+    {
+      "id": "note-3329309b5f55",
+      "replay_time": "2026-08-07 11:39:00 EDT",
+      "text": "多方很強 下半場應該上半區整理或是 緩步墊高",
+      "created_at": "2026-09-22T08:20:24.842853+00:00",
+      "updated_at": "2026-09-22T08:20:24.842862+00:00"
+    },
+    {
+      "id": "note-95faa429cb7b",
+      "replay_time": "2026-08-07 12:28:00 EDT",
+      "text": "下1/3或是前低Long Limit賭上半區整理",
+      "created_at": "2026-09-22T08:21:35.484431+00:00",
+      "updated_at": "2026-09-22T08:21:35.484440+00:00"
+    },
+    {
+      "id": "note-b94aebfbabfd",
+      "replay_time": "2026-08-07 15:05:00 EDT",
+      "text": "沒拿到前高或上1/3 快收盤在TTR高點附近小贏離場",
+      "created_at": "2026-09-22T08:24:14.828798+00:00",
+      "updated_at": "2026-09-22T08:24:14.828805+00:00"
+    },
+    {
+      "id": "note-307182a22e86",
+      "replay_time": "2026-08-07 15:59:00 EDT",
+      "text": "最後Long Limit還是有拿到上1/3",
+      "created_at": "2026-09-22T08:24:53.671448+00:00",
+      "updated_at": "2026-09-22T08:24:53.671456+00:00"
+    }
+  ],
+  "drawings": [
+    {
+      "id": "drawing-7b37e48bf3e8",
+      "type": "fibonacci",
+      "start": {
+        "time": 1786109400.0,
+        "price": 29698.76
+      },
+      "end": {
+        "time": 1786110483.4295704,
+        "price": 29570.042472744593
+      },
+      "levels": [
+        {
+          "multiplier": 0.0,
+          "color": "#ffffff"
+        },
+        {
+          "multiplier": 0.5,
+          "color": "#fff9c4"
+        },
+        {
+          "multiplier": 1.0,
+          "color": "#ffffff"
+        },
+        {
+          "multiplier": 2.0,
+          "color": "#ff9800"
+        },
+        {
+          "multiplier": 3.0,
+          "color": "#ffffff"
+        }
+      ],
+      "style": {
+        "width": 1,
+        "line_style": "dashed"
+      }
+    },
+    {
+      "id": "drawing-968fecf776c7",
+      "type": "rectangle",
+      "points": [
+        {
+          "time": 1786112906.2212875,
+          "price": 29530.159971101548
+        },
+        {
+          "time": 1786114141.476803,
+          "price": 29540.862972555282
+        }
+      ],
+      "style": {
+        "border_color": "#089981",
+        "fill_color": "#089981",
+        "opacity": 50,
+        "width": 1
+      }
+    },
+    {
+      "id": "drawing-3c3ebd553a8b",
+      "type": "rectangle",
+      "points": [
+        {
+          "time": 1786119281.988652,
+          "price": 29601.159499058067
+        },
+        {
+          "time": 1786120517.2441676,
+          "price": 29618.105918026482
+        }
+      ],
+      "style": {
+        "border_color": "#089981",
+        "fill_color": "#089981",
+        "opacity": 50,
+        "width": 1
+      }
+    },
+    {
+      "id": "drawing-2542446f91ff",
+      "type": "rectangle",
+      "points": [
+        {
+          "time": 1786120209.0462422,
+          "price": 29683.195913332973
+        },
+        {
+          "time": 1786130600.5966904,
+          "price": 29712.629167330742
+        }
+      ],
+      "style": {
+        "border_color": "#ff9800",
+        "fill_color": "#ffb74d",
+        "opacity": 50,
+        "width": 1
+      }
+    },
+    {
+      "id": "drawing-1ff695f4dd30",
+      "type": "fibonacci",
+      "start": {
+        "time": 1786116600.0,
+        "price": 29740.78
+      },
+      "end": {
+        "time": 1786117200.0,
+        "price": 29680.47
+      },
+      "levels": [
+        {
+          "multiplier": 0.0,
+          "color": "#ffffff"
+        },
+        {
+          "multiplier": 0.5,
+          "color": "#fff9c4"
+        },
+        {
+          "multiplier": 1.0,
+          "color": "#ffffff"
+        },
+        {
+          "multiplier": 2.0,
+          "color": "#ff9800"
+        },
+        {
+          "multiplier": 3.0,
+          "color": "#ffffff"
+        }
+      ],
+      "style": {
+        "width": 1,
+        "line_style": "dashed"
+      }
+    },
+    {
+      "id": "drawing-e2acc96f432a",
+      "type": "rectangle",
+      "points": [
+        {
+          "time": 1786128639.2775648,
+          "price": 29643.059657881466
+        },
+        {
+          "time": 1786129860.8008792,
+          "price": 29663.573744001125
+        }
+      ],
+      "style": {
+        "border_color": "#ff9800",
+        "fill_color": "#ffb74d",
+        "opacity": 50,
+        "width": 1
+      }
+    },
+    {
+      "id": "drawing-ff37f75edfc1",
+      "type": "fibonacci",
+      "start": {
+        "time": 1786114200.0,
+        "price": 29553.24
+      },
+      "end": {
+        "time": 1786114500.0,
+        "price": 29619.78
+      },
+      "levels": [
+        {
+          "multiplier": 0.0,
+          "color": "#ffffff"
+        },
+        {
+          "multiplier": 0.5,
+          "color": "#fff9c4"
+        },
+        {
+          "multiplier": 1.0,
+          "color": "#ffffff"
+        },
+        {
+          "multiplier": 2.0,
+          "color": "#ff9800"
+        },
+        {
+          "multiplier": 3.0,
+          "color": "#ffffff"
+        }
+      ],
+      "style": {
+        "width": 1,
+        "line_style": "dashed"
+      }
+    },
+    {
+      "id": "drawing-7293feaba930",
+      "type": "trend_line",
+      "points": [
+        {
+          "time": 1786111080.0,
+          "price": 29529.88
+        },
+        {
+          "time": 1786111920.0,
+          "price": 29451.28
+        }
+      ],
+      "style": {
+        "color": "#ffffff",
+        "width": 2,
+        "line_style": "solid"
+      }
+    }
+  ],
+  "orders": [],
+  "metadata": {
+    "created_at": "2026-09-22T08:11:08.042621+00:00",
+    "updated_at": "2026-09-27T10:03:17.517366+00:00",
+    "rth_enriched_at": "2026-09-27T10:03:17.387874+00:00",
+    "intraday_volatility_20d_enriched_at": "2026-09-27T10:03:17.508128+00:00"
+  }
+}
