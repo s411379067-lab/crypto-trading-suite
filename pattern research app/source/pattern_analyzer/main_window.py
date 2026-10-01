@@ -173,7 +173,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.replay = replay
         self.dirty = False
         self.order.set_context(case, raw, replay)
-        self.chart.set_order_events(self.order.visible_fill_events(), render=False)
+        self.chart.set_order_events(self.order.visible_fill_events(), self.order.visible_trade_segments(), render=False)
         self.chart.set_context(case, raw, replay, path)
         self.research.set_case(case, self.current_replay_time_text)
         self.chart.set_previous_rth_visible(self.research.rth_checkbox.isChecked())
@@ -251,7 +251,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.replay.forward()
         self.order.process_replay_advance(previous_ts, float(self.replay.current_ts))
         self._sync_replay_to_case()
-        self.chart.set_order_events(self.order.visible_fill_events(), render=False)
+        self.chart.set_order_events(self.order.visible_fill_events(), self.order.visible_trade_segments(), render=False)
         self.chart.render(reset_x=False)
         self.order.refresh()
         self.mark_dirty()
@@ -263,7 +263,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.replay.backward()
         self._sync_replay_to_case()
         self.order.refresh()
-        self.chart.set_order_events(self.order.visible_fill_events(), render=False)
+        self.chart.set_order_events(self.order.visible_fill_events(), self.order.visible_trade_segments(), render=False)
         self.chart.render(reset_x=False)
         self.mark_dirty()
         self.update_status()
@@ -274,7 +274,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.replay.reset()
         self._sync_replay_to_case()
         self.order.refresh()
-        self.chart.set_order_events(self.order.visible_fill_events(), render=False)
+        self.chart.set_order_events(self.order.visible_fill_events(), self.order.visible_trade_segments(), render=False)
         self.chart.render(reset_x=True)
         self.mark_dirty()
         self.update_status()
@@ -282,7 +282,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _refresh_order_markers(self):
         if self.case is None:
             return
-        self.chart.set_order_events(self.order.visible_fill_events(), render=False)
+        self.chart.set_order_events(self.order.visible_fill_events(), self.order.visible_trade_segments(), render=False)
         self.chart.render(reset_x=False)
 
     def _sync_replay_to_case(self):

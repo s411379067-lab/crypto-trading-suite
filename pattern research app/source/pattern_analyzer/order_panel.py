@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 import pandas as pd
 from pyqtgraph.Qt import QtCore, QtWidgets
+from shared_core.order_overlay import build_order_overlay
 
 
 def _utc_now_iso() -> str:
@@ -477,15 +478,12 @@ class OrderPanel(QtWidgets.QWidget):
         """Filled order points at or before current replay time, for chart markers."""
         if self.case is None:
             return []
-        current_ts = self._current_ts()
-        out = []
-        for o in self.case.orders:
-            if o.get("status") != "filled" or o.get("fill_ts") is None or o.get("fill_price") is None:
-                continue
-            if float(o["fill_ts"]) > current_ts:
-                continue
-            out.append({
-                "id": o.get("id"), "timestamp": float(o["fill_ts"]), "price": float(o["fill_price"]),
-                "side": o.get("side", "long"), "action": o.get("computed_action", ""),
-            })
-        return out
+        events, _ = build_order_overlay(self.case.orders, self._current_ts())
+        return events
+
+    def visible_trade_segments(self) -> list[dict]:
+        """Completed Open-to-Close segments at or before current replay time."""
+        if self.case is None:
+            return []
+        _, segments = build_order_overlay(self.case.orders, self._current_ts())
+        return segments

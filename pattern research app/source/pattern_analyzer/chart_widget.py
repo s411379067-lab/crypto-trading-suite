@@ -716,6 +716,8 @@ class ChartWidget(QtWidgets.QWidget):
         self.auto_all_mode = False
         self._syncing_auto_all = False
         self.order_events: list[dict] = []
+        self.order_segments: list[dict] = []
+        self.show_all_orders = False
         self.show_previous_rth = False
         self.show_all_drawings = True
         self.show_all_intraday_notes = False
@@ -750,6 +752,9 @@ class ChartWidget(QtWidgets.QWidget):
         self.show_drawings_checkbox = QtWidgets.QCheckBox("顯示全部圖形")
         self.show_drawings_checkbox.setChecked(True)
         self.show_drawings_checkbox.setToolTip("一次顯示 / 隱藏所有 Drawing；不刪除也不修改 Case JSON")
+        self.show_orders_checkbox = QtWidgets.QCheckBox("顯示全部 Order")
+        self.show_orders_checkbox.setChecked(False)
+        self.show_orders_checkbox.setToolTip("顯示已揭露成交的紅綠三角形，以及已完成交易的 Open → Close PnL 點線；不修改 Case JSON")
         self.btn_shot = QtWidgets.QPushButton("Shot")
         self.btn_auto = QtWidgets.QPushButton("Auto")
         self.btn_auto_all = QtWidgets.QPushButton("AutoAll")
@@ -794,6 +799,7 @@ class ChartWidget(QtWidgets.QWidget):
         for w in (self.btn_h, self.btn_l, self.btn_t, self.btn_rect, self.btn_fibo):
             tb.addWidget(w)
         tb.addWidget(self.show_drawings_checkbox)
+        tb.addWidget(self.show_orders_checkbox)
         for w in (self.btn_shot, self.btn_auto, self.btn_auto_all, self.timeframe_combo):
             tb.addWidget(w)
         tb.addWidget(QtWidgets.QLabel("X刻度"))
@@ -908,6 +914,7 @@ class ChartWidget(QtWidgets.QWidget):
         self.btn_rect.clicked.connect(lambda: self.set_tool("rectangle"))
         self.btn_fibo.clicked.connect(lambda: self.set_tool("fibonacci"))
         self.show_drawings_checkbox.toggled.connect(self.set_all_drawings_visible)
+        self.show_orders_checkbox.toggled.connect(self.set_all_orders_visible)
         self.btn_auto.clicked.connect(self.auto_scale)
         self.btn_auto_all.clicked.connect(self.auto_all)
         self.btn_shot.clicked.connect(self.export_screenshot)
@@ -1048,8 +1055,9 @@ class ChartWidget(QtWidgets.QWidget):
             f"Range {summary['range_points']:.2f} = {summary['range_pct']:.3f}% | bars {summary['bar_count']}"
         )
 
-    def set_order_events(self, events: list[dict], render: bool = True):
+    def set_order_events(self, events: list[dict], segments: list[dict] | None = None, render: bool = True):
         self.order_events = list(events or [])
+        self.order_segments = list(segments or [])
         if render and self.replay is not None:
             self.render(reset_x=False)
 
@@ -1092,7 +1100,7 @@ class ChartWidget(QtWidgets.QWidget):
 
         self._render_reference_levels()
         self._render_drawing_items()
-        self._render_order_markers()
+        self._render_order_overlay()
 
         if reset_x:
             left = self.replay.data_start_ts
@@ -1118,6 +1126,12 @@ class ChartWidget(QtWidgets.QWidget):
         self.show_all_drawings = bool(enabled)
         if not self.show_all_drawings:
             self.selected_drawing_id = None
+        if self.replay is not None:
+            self.render(reset_x=False)
+
+    def set_all_orders_visible(self, enabled: bool):
+        """Toggle transient order markers and completed trade segments."""
+        self.show_all_orders = bool(enabled)
         if self.replay is not None:
             self.render(reset_x=False)
 
@@ -1381,15 +1395,29 @@ class ChartWidget(QtWidgets.QWidget):
             self.plot.addItem(pg.BarGraphItem(x=t[~bull], y=center_y[~bull], height=body_h[~bull], width=width,
                                              brush=(247, 82, 95), pen=None))
 
-    def _render_order_markers(self):
-        if not self.order_events:
+    def _render_order_overlay(self):
+        if not self.show_all_orders:
             return
+        tf_sec = float(timeframe_seconds(self.timeframe_combo.currentText()))
+        def display_x(ts: float):
+            return math.floor(ts / tf_sec) * tf_sec if tf_sec > 60 else ts
+        for segment in self.order_segments:
+            pnl = float(segment.get("pnl") or 0.0)
+            if abs(pnl) <= 1e-12:
+                continue
+            color = (255, 230, 0) if pnl > 0 else (255, 64, 64)
+            item = pg.PlotDataItem(
+                x=[display_x(float(segment["entry_timestamp"])), display_x(float(segment["exit_timestamp"]))],
+                y=[float(segment["entry_price"]), float(segment["exit_price"])],
+                pen=pg.mkPen(color=color, width=1, style=QtCore.Qt.DotLine),
+            )
+            item.setZValue(20)
+            self.plot.addItem(item)
+
         longs = [e for e in self.order_events if str(e.get("side")) == "long"]
         shorts = [e for e in self.order_events if str(e.get("side")) == "short"]
-        tf_sec = float(timeframe_seconds(self.timeframe_combo.currentText()))
         def marker_x(event):
-            ts = float(event["timestamp"])
-            return math.floor(ts / tf_sec) * tf_sec if tf_sec > 60 else ts
+            return display_x(float(event["timestamp"]))
         if longs:
             item = pg.ScatterPlotItem(
                 x=[marker_x(e) for e in longs],
