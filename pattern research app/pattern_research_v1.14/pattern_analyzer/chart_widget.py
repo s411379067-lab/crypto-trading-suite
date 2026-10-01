@@ -9,6 +9,7 @@ import pandas as pd
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
+from shared_core.geometry_picker import point_to_rect_distance, point_to_segment_distance
 from shared_core.aggregation import aggregate_visible_bars, timeframe_seconds
 from shared_core.drawing_clipboard import clone_drawing_with_offset
 from shared_core.note_callout import align_note_x_to_timeframe, find_m1_close, resolve_note_timestamp, wrap_note_text
@@ -575,7 +576,7 @@ class FiboSettingsDialog(QtWidgets.QDialog):
         style_layout.addStretch(1)
         layout.addWidget(style_box)
 
-        layout.addWidget(QtWidgets.QLabel("每列設定倍率與顏色。0 / 1 線調整基準 Y；最高價格線調整 X 寬度。"))
+        layout.addWidget(QtWidgets.QLabel("每列設定倍率與顏色。選取 Fibo 後，0 / 1 兩個錨點可自由調整時間與價格。"))
 
         self.table = QtWidgets.QTableWidget(0, 2)
         self.table.setHorizontalHeaderLabels(["倍數", "顏色"])
@@ -1240,8 +1241,8 @@ class ChartWidget(QtWidgets.QWidget):
         if self.auto_all_mode and not self._syncing_auto_all:
             self.auto_all_mode = False
 
-        # Keep Fibonacci 0/1 drag hit-zones roughly constant in screen pixels.
-        # This prevents the controls from becoming nearly impossible to grab after zooming.
+        # Keep Fibonacci 0/1 anchor hit-zones roughly constant in screen pixels.
+        # This keeps the two selected anchor points easy to grab at any zoom level.
         for did, group in list(self.drawing_items.items()):
             if isinstance(group, dict) and group.get("type") == "fibonacci":
                 self._update_fibo_view_geometry(did, update_box=False)
@@ -1463,6 +1464,91 @@ class ChartWidget(QtWidgets.QWidget):
             return bool(evt.double())
         except Exception:
             return False
+
+    def _drawing_id_near_scene_pos(self, scene_pos, tolerance_px: float = 8.0) -> str | None:
+        """Pick the nearest Drawing by its *visible geometry* in screen pixels.
+
+        This is intentionally independent from QGraphicsItem hit-boxes / z-order.
+        In particular, Fibonacci is selectable only near one of its visible level
+        segments, never merely because the pointer is inside the Fibo's bounding
+        region. Rectangle selection uses its four edges; Text Box uses its body.
+        """
+        if self.case is None:
+            return None
+        try:
+            px = float(scene_pos.x())
+            py = float(scene_pos.y())
+        except Exception:
+            return None
+
+        def scene_xy(x: float, y: float) -> tuple[float, float]:
+            point = self.plot.vb.mapViewToScene(QtCore.QPointF(float(x), float(y)))
+            return float(point.x()), float(point.y())
+
+        candidates: list[tuple[float, int, str]] = []
+        drawings = list(getattr(self.case, "drawings", []) or [])
+        try:
+            view_x = self.plot.vb.mapSceneToView(scene_pos)
+            pointer_view_x = float(view_x.x())
+        except Exception:
+            pointer_view_x = 0.0
+
+        for order, drawing in enumerate(drawings):
+            did = drawing.get("id")
+            dtype = drawing.get("type")
+            if not did:
+                continue
+            distance = float("inf")
+            try:
+                if dtype == "horizontal_line":
+                    # Infinite horizontal line: distance is purely vertical in screen pixels.
+                    _sx, sy = scene_xy(pointer_view_x, float(drawing["price"]))
+                    distance = abs(py - sy)
+
+                elif dtype == "trend_line":
+                    p1, p2 = drawing["points"]
+                    ax, ay = scene_xy(float(p1["time"]), float(p1["price"]))
+                    bx, by = scene_xy(float(p2["time"]), float(p2["price"]))
+                    distance = point_to_segment_distance(px, py, ax, ay, bx, by)
+
+                elif dtype == "rectangle":
+                    left, right, bottom, top = self._rectangle_geometry(drawing)
+                    a = scene_xy(left, top)
+                    b = scene_xy(right, bottom)
+                    distance = point_to_rect_distance(
+                        px, py, a[0], a[1], b[0], b[1], interior_is_hit=False
+                    )
+
+                elif dtype == "text":
+                    left, right, bottom, top = self._text_box_geometry(drawing)
+                    a = scene_xy(left, top)
+                    b = scene_xy(right, bottom)
+                    distance = point_to_rect_distance(
+                        px, py, a[0], a[1], b[0], b[1], interior_is_hit=True
+                    )
+
+                elif dtype == "fibonacci":
+                    sx, _sy, ex, _ey, _left, _right, _ymin, _ymax, ys = self._fibo_geometry(drawing)
+                    # Crucial: only the rendered horizontal level segments count.
+                    # No Fibo bounding-box / ROI interior participates in selection.
+                    distances = []
+                    for y in ys:
+                        ax, ay = scene_xy(sx, y)
+                        bx, by = scene_xy(ex, y)
+                        distances.append(point_to_segment_distance(px, py, ax, ay, bx, by))
+                    if distances:
+                        distance = min(distances)
+            except Exception:
+                continue
+
+            if distance <= float(tolerance_px):
+                # Later drawings win only as a tie-breaker; geometric distance is primary.
+                candidates.append((float(distance), -int(order), str(did)))
+
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: (item[0], item[1]))
+        return candidates[0][2]
 
     def _drawing_id_at_scene_pos(self, scene_pos) -> str | None:
         """Return the top-most drawing id under the pointer."""
@@ -1691,7 +1777,7 @@ class ChartWidget(QtWidgets.QWidget):
         # Normal mode: only a left double-click selects a drawing. Single-click no longer selects.
         if self.tool_mode is None:
             if self._is_double_click(evt):
-                did = self._drawing_id_at_scene_pos(pos)
+                did = self._drawing_id_near_scene_pos(pos, tolerance_px=8.0)
                 self._select_drawing_id(did)
             return
 
@@ -2296,8 +2382,7 @@ class ChartWidget(QtWidgets.QWidget):
                         pass
                 self._update_rectangle_fill(item)
             elif dtype == "fibonacci" and isinstance(item, dict):
-                for i, line in enumerate(item.get("lines", [])):
-                    line.setPen(self._fibo_line_pen(drawing, i, selected=selected))
+                self._update_fibo_view_geometry(did, update_box=False)
 
     def _show_drawing_context_menu(self, did: str):
         drawing = self._drawing_by_id(did)
@@ -2591,64 +2676,38 @@ class ChartWidget(QtWidgets.QWidget):
             ymax = ymin + 1e-6
         return sx, sy, ex, ey, left, right, ymin, ymax, ys
 
-    def _fibo_handle_height(self, ymin: float, ymax: float) -> float:
-        """Return a stable ~16px vertical hit target in current view coordinates."""
+    def _fibo_anchor_size(self, ymin: float, ymax: float) -> tuple[float, float]:
+        """Return an approximately 16px square hit target in current view coordinates."""
         try:
-            _x_per_px, y_per_px = self.plot.vb.viewPixelSize()
-            px_height = abs(float(y_per_px)) * 16.0
-            if px_height > 0:
-                return px_height
+            x_per_px, y_per_px = self.plot.vb.viewPixelSize()
+            width = max(abs(float(x_per_px)) * 16.0, 1e-6)
+            height = max(abs(float(y_per_px)) * 16.0, 1e-9)
+            return width, height
         except Exception:
             pass
-        return max((float(ymax) - float(ymin)) * 0.03, max(abs(float(ymax)), 1.0) * 1e-5)
+        y_span = max(float(ymax) - float(ymin), max(abs(float(ymax)), 1.0) * 1e-5)
+        return max(float(timeframe_seconds(self.timeframe_combo.currentText())) * 0.25, 1e-6), max(y_span * 0.035, 1e-9)
 
     @staticmethod
-    def _fibo_control_roles(drawing: dict, ys: list[float]) -> dict[int, set[str]]:
-        """Return line-index -> control roles.
-
-        Fibonacci editing intentionally has no visible adjustment handles:
-        - level 0 line controls the start/base Y value;
-        - level 1 line controls the end/base Y value;
-        - the visually highest-price level controls the right X extent.
-
-        A line can own both a Y role and the X role. In that case the dominant
-        screen-space drag axis decides which value changes.
-        """
-        levels = drawing.get("levels", []) or []
-        roles: dict[int, set[str]] = {}
-        for i, level in enumerate(levels):
-            try:
-                multiplier = float(level.get("multiplier", 0.0))
-            except Exception:
-                continue
-            if abs(multiplier - 0.0) <= 1e-9:
-                roles.setdefault(i, set()).add("y0")
-            if abs(multiplier - 1.0) <= 1e-9:
-                roles.setdefault(i, set()).add("y1")
-        if ys:
-            max_idx = max(range(len(ys)), key=lambda i: float(ys[i]))
-            roles.setdefault(max_idx, set()).add("x")
-        return roles
-
-    @staticmethod
-    def _set_fibo_control_roi(roi, left: float, right: float, y: float, height: float):
+    def _set_fibo_anchor_roi(roi, x: float, y: float, width: float, height: float):
         roi.blockSignals(True)
         try:
-            roi.setPos([float(left), float(y) - float(height) * 0.5])
-            roi.setSize([max(float(right) - float(left), 1e-6), max(float(height), 1e-9)])
-            roi._fibo_expected_left = float(left)
+            roi.setPos([float(x) - float(width) * 0.5, float(y) - float(height) * 0.5])
+            roi.setSize([max(float(width), 1e-6), max(float(height), 1e-9)])
+            roi._fibo_expected_x = float(x)
             roi._fibo_expected_y = float(y)
         finally:
             roi.blockSignals(False)
 
     def _fibo_line_pen(self, drawing: dict, level_index: int, selected: bool = False):
+        # Selection is represented by the two 0/1 anchor points; keep the level
+        # colors/width unchanged so selecting a Fibo does not recolor the whole tool.
         levels = drawing.get("levels", []) or []
         style = drawing.get("style", {}) or {}
         base = levels[level_index].get("color", "#ffffff") if level_index < len(levels) else "#ffffff"
-        color = "#ffff00" if selected else base
-        width = max(1, int(style.get("width", 2)) + (1 if selected else 0))
+        width = max(1, int(style.get("width", 2)))
         qt_style = self._qt_line_style(str(style.get("line_style", "solid")))
-        return pg.mkPen(color, width=width, style=qt_style)
+        return pg.mkPen(base, width=width, style=qt_style)
 
     def _update_fibo_view_geometry(self, did: str, update_box: bool = True):
         del update_box  # kept for backward-compatible call sites
@@ -2656,91 +2715,58 @@ class ChartWidget(QtWidgets.QWidget):
         group = self.drawing_items.get(did)
         if drawing is None or not isinstance(group, dict):
             return
-        sx, sy, ex, ey, left, right, ymin, ymax, ys = self._fibo_geometry(drawing)
-        h = self._fibo_handle_height(ymin, ymax)
-        roles = self._fibo_control_roles(drawing, ys)
+        sx, sy, ex, ey, _left, _right, ymin, ymax, ys = self._fibo_geometry(drawing)
+        anchor_w, anchor_h = self._fibo_anchor_size(ymin, ymax)
         selected = did == self.selected_drawing_id
 
         lines = group.get("lines", [])
-        controls = group.get("controls", [])
+        hit_lines = group.get("hit_lines", [])
         for i, y in enumerate(ys):
             if i < len(lines):
                 lines[i].setData([sx, ex], [y, y])
                 lines[i].setPen(self._fibo_line_pen(drawing, i, selected=selected))
-            if i < len(controls):
-                control = controls[i]
-                self._set_fibo_control_roi(control, left, right, y, h)
-                control._fibo_roles = set(roles.get(i, set()))
-                control.setAcceptedMouseButtons(
-                    QtCore.Qt.LeftButton if control._fibo_roles else QtCore.Qt.NoButton
-                )
-                control.setZValue(22 if control._fibo_roles else 1)
+            if i < len(hit_lines):
+                hit_lines[i].setData([sx, ex], [y, y])
 
-        group["control_roles"] = roles
-        group["handle_height"] = h
+        anchors = group.get("anchors", [])
+        markers = group.get("anchor_markers", [])
+        points = ((sx, sy), (ex, ey))
+        for i, (x, y) in enumerate(points):
+            if i < len(anchors):
+                anchor = anchors[i]
+                self._set_fibo_anchor_roi(anchor, x, y, anchor_w, anchor_h)
+                anchor.setAcceptedMouseButtons(QtCore.Qt.LeftButton if selected else QtCore.Qt.NoButton)
+                anchor.setVisible(bool(selected))
+                anchor.setZValue(27)
+            if i < len(markers):
+                marker = markers[i]
+                marker.setData([x], [y])
+                marker.setVisible(bool(selected))
+                marker.setZValue(26)
 
-    def _sync_fibo_from_control(self, did: str, level_index: int):
+        group["anchor_size"] = (anchor_w, anchor_h)
+
+    def _sync_fibo_from_anchor(self, did: str, anchor_index: int):
         drawing = self._drawing_by_id(did)
         group = self.drawing_items.get(did)
         if drawing is None or not isinstance(group, dict) or group.get("syncing"):
             return
-        controls = group.get("controls", [])
-        if level_index < 0 or level_index >= len(controls):
+        anchors = group.get("anchors", [])
+        if anchor_index < 0 or anchor_index >= len(anchors):
             return
-        control = controls[level_index]
-        roles = set(getattr(control, "_fibo_roles", set()) or set())
-        if not roles:
-            return
+        anchor = anchors[anchor_index]
 
         group["syncing"] = True
         try:
-            pos = control.pos(); size = control.size()
-            current_left = float(pos.x())
-            current_y = float(pos.y() + size.y() * 0.5)
-            expected_left = float(getattr(control, "_fibo_expected_left", current_left))
-            expected_y = float(getattr(control, "_fibo_expected_y", current_y))
-            dx = current_left - expected_left
-            dy = current_y - expected_y
+            pos = anchor.pos(); size = anchor.size()
+            new_x = float(pos.x() + size.x() * 0.5)
+            new_y = float(pos.y() + size.y() * 0.5)
+            if self._ctrl_pressed():
+                new_x, new_y = self._magnet_snap_point(new_x, new_y)
 
-            use_x = False
-            if "x" in roles and not ({"y0", "y1"} & roles):
-                use_x = True
-            elif "x" in roles and ({"y0", "y1"} & roles):
-                try:
-                    x_per_px, y_per_px = self.plot.vb.viewPixelSize()
-                    px_dx = abs(dx / float(x_per_px)) if x_per_px else abs(dx)
-                    px_dy = abs(dy / float(y_per_px)) if y_per_px else abs(dy)
-                except Exception:
-                    px_dx, px_dy = abs(dx), abs(dy)
-                use_x = px_dx >= px_dy
-
-            if use_x:
-                sx, _sy, ex, _ey, left, right, _ymin, _ymax, _ys = self._fibo_geometry(drawing)
-                new_right = float(right + dx)
-                if self._ctrl_pressed():
-                    cursor = self._cursor_view_position()
-                    if cursor is not None:
-                        snap_x, _snap_y = self._magnet_snap_point(*cursor)
-                        new_right = float(snap_x)
-                min_width = max(float(timeframe_seconds(self.timeframe_combo.currentText())) * 0.20, 1e-6)
-                new_right = max(new_right, float(left) + min_width)
-                # X control always edits the visually right edge; whichever domain
-                # endpoint currently owns that edge is updated.
-                if float(drawing["start"]["time"]) >= float(drawing["end"]["time"]):
-                    drawing["start"]["time"] = new_right
-                else:
-                    drawing["end"]["time"] = new_right
-            else:
-                new_y = current_y
-                if self._ctrl_pressed():
-                    cursor = self._cursor_view_position()
-                    if cursor is not None:
-                        _snap_x, snap_y = self._magnet_snap_point(*cursor)
-                        new_y = float(snap_y)
-                if "y0" in roles:
-                    drawing["start"]["price"] = float(new_y)
-                elif "y1" in roles:
-                    drawing["end"]["price"] = float(new_y)
+            target = drawing["start"] if anchor_index == 0 else drawing["end"]
+            target["time"] = float(new_x)
+            target["price"] = float(new_y)
 
             self._update_fibo_view_geometry(did)
             self.case.touch(); self.dirty.emit()
@@ -2756,11 +2782,12 @@ class ChartWidget(QtWidgets.QWidget):
 
     def _render_fibonacci(self, drawing: dict):
         did = drawing.get("id")
-        sx, sy, ex, ey, left, right, ymin, ymax, ys = self._fibo_geometry(drawing)
-        handle_h = self._fibo_handle_height(ymin, ymax)
-        roles = self._fibo_control_roles(drawing, ys)
+        sx, sy, ex, ey, _left, _right, ymin, ymax, ys = self._fibo_geometry(drawing)
+        anchor_w, anchor_h = self._fibo_anchor_size(ymin, ymax)
+        selected = did == self.selected_drawing_id
 
         lines = []
+        hit_lines = []
         levels = drawing.get("levels", []) or []
         for i, y in enumerate(ys):
             line = pg.PlotDataItem(x=[sx, ex], y=[y, y], pen=self._fibo_line_pen(drawing, i, selected=False))
@@ -2769,51 +2796,82 @@ class ChartWidget(QtWidgets.QWidget):
             self.plot.addItem(line)
             lines.append(line)
 
-        # One invisible, handle-free hit strip is placed over every level line.
-        # Only the 0, 1 and highest-price level receive mouse input. Using bare
-        # pg.ROI (not RectROI / LineSegmentROI) guarantees there are no diamond
-        # adjustment points at any zoom or selection state.
-        controls = []
+            # Wider invisible hit line keeps double-click selection / right-click
+            # settings comfortable without adding any visible adjustment UI.
+            hit = pg.PlotDataItem(x=[sx, ex], y=[y, y], pen=pg.mkPen((255, 255, 255, 0), width=12))
+            hit.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+            hit.setZValue(11)
+            self.plot.addItem(hit)
+            hit_lines.append(hit)
+
+        # Exactly two draggable anchors define the Fibonacci geometry:
+        # anchor 0 = multiplier 0 / start point, anchor 1 = multiplier 1 / end point.
+        # The ROI itself is an invisible hit target; ScatterPlotItem supplies the
+        # visible circular control point. Both are shown only while the Fibo is selected.
+        anchors = []
+        markers = []
         transparent_pen = pg.mkPen((255, 255, 255, 0), width=1)
-        for i, y in enumerate(ys):
-            control = pg.ROI(
-                [left, y - handle_h * 0.5],
-                [max(right - left, 1e-6), handle_h],
+        marker_pen = pg.mkPen("#2d7cff", width=2)
+        marker_brush = pg.mkBrush(18, 24, 35, 230)
+
+        for idx, (x, y) in enumerate(((sx, sy), (ex, ey))):
+            anchor = pg.ROI(
+                [x - anchor_w * 0.5, y - anchor_h * 0.5],
+                [anchor_w, anchor_h],
                 pen=transparent_pen,
                 movable=True,
             )
-            control._fibo_roles = set(roles.get(i, set()))
-            control._fibo_expected_left = float(left)
-            control._fibo_expected_y = float(y)
-            control.setAcceptedMouseButtons(QtCore.Qt.LeftButton if control._fibo_roles else QtCore.Qt.NoButton)
-            control.setZValue(22 if control._fibo_roles else 1)
+            anchor._fibo_anchor_index = idx
+            anchor._fibo_expected_x = float(x)
+            anchor._fibo_expected_y = float(y)
+            anchor.setAcceptedMouseButtons(QtCore.Qt.LeftButton if selected else QtCore.Qt.NoButton)
+            anchor.setZValue(27)
+            anchor.setVisible(bool(selected))
             try:
-                control.setHoverPen(transparent_pen)
+                anchor.setHoverPen(transparent_pen)
             except Exception:
                 pass
-            self.plot.addItem(control)
-            controls.append(control)
+            self.plot.addItem(anchor)
+            anchors.append(anchor)
+
+            marker = pg.ScatterPlotItem(
+                [x], [y],
+                symbol="o",
+                size=12,
+                pen=marker_pen,
+                brush=marker_brush,
+                pxMode=True,
+            )
+            try:
+                marker.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+            except Exception:
+                pass
+            marker.setZValue(26)
+            marker.setVisible(bool(selected))
+            self.plot.addItem(marker)
+            markers.append(marker)
 
         group = {
             "type": "fibonacci",
             "lines": lines,
-            "controls": controls,
-            "control_roles": roles,
+            "hit_lines": hit_lines,
+            "anchors": anchors,
+            "anchor_markers": markers,
             "syncing": False,
-            "handle_height": handle_h,
+            "anchor_size": (anchor_w, anchor_h),
         }
         self.drawing_items[did] = group
 
-        for item in [*controls, *lines]:
+        for item in [*anchors, *markers, *hit_lines, *lines]:
             self._register_drawing_hit_item(did, item)
             try:
                 item.setToolTip(f"fibonacci / {did}")
             except Exception:
                 pass
 
-        for i, control in enumerate(controls):
-            control.sigRegionChanged.connect(lambda _=None, d=did, idx=i: self._sync_fibo_from_control(d, idx))
-            control.sigRegionChangeFinished.connect(lambda _=None, d=did: self._finish_fibo_change(d))
+        for i, anchor in enumerate(anchors):
+            anchor.sigRegionChanged.connect(lambda _=None, d=did, idx=i: self._sync_fibo_from_anchor(d, idx))
+            anchor.sigRegionChangeFinished.connect(lambda _=None, d=did: self._finish_fibo_change(d))
 
     def _rectangle_geometry(self, drawing: dict):
         p1, p2 = drawing["points"]

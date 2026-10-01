@@ -1,4 +1,17 @@
-# Pattern Research v1.12
+# Pattern Research v1.14
+
+## v1.14 Fibonacci two-anchor editing
+
+- FIBO 未選取時不顯示任何調整點。
+- 雙擊選取 FIBO 後，只顯示兩個圓形 Anchor：0 與 1。
+- 0 Anchor 直接控制 `start.time + start.price`；1 Anchor 直接控制 `end.time + end.price`。
+- 兩個 Anchor 都可自由上下左右拖曳，因此可同時修改 X（時間）與 Y（價格）。
+- Ctrl Magnet 保留，可在拖曳 Anchor 時吸附目前已揭露 K 棒的 OHLC。
+- FIBO levels 仍由 0/1 兩個基準自動重新計算。
+- v1.12 新增的整體線型與線粗設定保留。
+- 選取 FIBO 不再把整組線改成黃色；兩個 Anchor 本身就是選取提示。
+- 每條 level 額外保留不可見的寬 hit-zone，方便雙擊選取與右鍵設定，但不會顯示額外控制點。
+- 一次 Anchor 拖曳仍只建立一筆 Undo。
 
 ## v1.12 Fibonacci line controls + line style
 
@@ -312,3 +325,13 @@ Previous RTH now stores High / Low / Close plus their timestamps. The Enricher o
 - Click the currently selected intraday note again to clear its selection and hide the chart callout.
 - Press Esc in the analyzer window to clear the selected intraday note and hide the callout.
 - Double-click inline note editing remains available.
+
+
+## v1.14 — Geometry Picker
+- Drawing 雙擊選取改用統一的 screen-pixel Geometry Picker（8 px tolerance）。
+- Trend/Horizontal Line：只依實際線幾何判定。
+- Rectangle：只依四條邊判定，不以內部填滿區域搶選取。
+- Fibonacci：只依各條可見 level 線段判定，不再使用整個包覆區域。
+- Text Box：框內仍可直接選取。
+- 多物件靠近時以游標到實際圖形的 pixel distance 最近者優先；完全同距離才以較後建立者作 tie-break。
+- 右鍵選單、Fibo Anchor、Drawing 移動/Resize、Undo/Redo、Template 行為不變。
