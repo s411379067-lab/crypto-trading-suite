@@ -1,9 +1,18 @@
-# Pattern Research v2.1
+# Pattern Research v2.2
 
 
 
 
 
+
+
+## v2.2 — Pattern Viewer Case List readability fix
+
+- Fixed Pattern Viewer Case List rows becoming light/white under some Windows + Qt themes while retaining light text.
+- Case List now explicitly defines dark normal and alternate-row backgrounds.
+- Unselected case text is forced to high-contrast near-white.
+- Hover and selected rows now use explicit dark-blue backgrounds with white text.
+- Viewer filtering, read-only behavior, chart rendering, Pattern logic, and Case JSON remain unchanged.
 
 
 ## v2.1 — Read-only Pattern Viewer + Pattern-filtered Case Library

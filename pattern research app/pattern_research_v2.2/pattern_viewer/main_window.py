@@ -24,7 +24,7 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
 
     def __init__(self, case_root: str | Path = "."):
         super().__init__()
-        self.setWindowTitle("Pattern Viewer v2.1")
+        self.setWindowTitle("Pattern Viewer v2.2")
         self.resize(1600, 920)
         self.setStyleSheet(APP_STYLE)
 
@@ -138,6 +138,23 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
 
         self.case_list = QtWidgets.QListWidget()
         self.case_list.setAlternatingRowColors(True)
+        # Explicit dark palette prevents Windows/Qt native alternate rows from
+        # falling back to a light system color while the app still uses light text.
+        case_palette = self.case_list.palette()
+        case_palette.setColor(QtGui.QPalette.Base, QtGui.QColor("#0d1420"))
+        case_palette.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor("#141e2d"))
+        case_palette.setColor(QtGui.QPalette.Text, QtGui.QColor("#f3f6fb"))
+        case_palette.setColor(QtGui.QPalette.Highlight, QtGui.QColor("#2b4a73"))
+        case_palette.setColor(QtGui.QPalette.HighlightedText, QtGui.QColor("#ffffff"))
+        self.case_list.setPalette(case_palette)
+        self.case_list.setStyleSheet(
+            "QListWidget { background:#0d1420; alternate-background-color:#141e2d; "
+            "color:#f3f6fb; border:1px solid #36445d; }"
+            "QListWidget::item { color:#f3f6fb; padding:3px 5px; }"
+            "QListWidget::item:hover { background:#1d2a3e; color:#ffffff; }"
+            "QListWidget::item:selected { background:#2b4a73; color:#ffffff; }"
+            "QListWidget::item:selected:!active { background:#263f61; color:#ffffff; }"
+        )
         layout.addWidget(self.case_list, 1)
 
         detail_box = QtWidgets.QGroupBox("Selected Case")
@@ -229,6 +246,8 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
             item = QtWidgets.QListWidgetItem(entry.display_name)
             item.setData(QtCore.Qt.UserRole, str(entry.path))
             item.setToolTip(str(entry.path))
+            # Keep unselected text high-contrast regardless of host OS palette.
+            item.setForeground(QtGui.QBrush(QtGui.QColor("#f3f6fb")))
             self.case_list.addItem(item)
             if target_path is not None and entry.path == Path(target_path).resolve():
                 target_row = row
@@ -336,4 +355,4 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.selected_patterns_label.setText("Pattern: --")
         self.case_status.setText("沒有符合條件的 Case")
         self.range_status.setText("")
-        self.setWindowTitle("Pattern Viewer v2.1")
+        self.setWindowTitle("Pattern Viewer v2.2")
