@@ -1,4 +1,19 @@
-# Pattern Research v2.6
+# Pattern Research v2.7
+
+
+## v2.7 — Structural Viewer Drawing non-interactive mode
+
+- Reworked Viewer Drawing read-only behavior from the v2.6 post-render lock approach to a real `drawing_interaction_enabled=False` construction mode inside the shared `ChartWidget`.
+- Pattern Analyzer still uses `drawing_interaction_enabled=True`; its Drawing creation, selection, move, resize, templates, clipboard, Magnet, Shift constraints, context menus, and Undo/Redo behavior are unchanged.
+- Pattern Viewer now creates saved Drawings non-interactively from the outset:
+  - Horizontal Line is non-movable and does not accept mouse buttons.
+  - Trend Line is non-movable; native PyQtGraph handles are disabled/hidden and no custom adjustment markers are installed.
+  - Rectangle and Text Box keep their existing visual renderer but do not install resize handles or edit callbacks.
+  - Fibonacci displays its level lines only; Viewer does not create draggable anchor ROIs, anchor markers, or selection hit strips.
+- Viewer does not register Drawing hit-test targets, cannot select Drawings, cannot open Drawing context menus, and all Drawing mutation/sync/clipboard/delete paths have non-interactive guards.
+- Removed the v2.6 Viewer `_lock_all_drawing_items()` / `setEnabled(False)` post-render locking layer to avoid old ROI interaction state being reactivated later.
+- Permanent Viewer Measure remains unchanged: right-button drag measures directly without Drawing items competing for mouse events.
+- Added source-level regression checks for the Viewer non-interactive construction path.
 
 ## v2.6 — Viewer Drawing interaction hard-disable + Analyzer Current Range
 

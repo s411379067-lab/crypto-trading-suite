@@ -692,8 +692,12 @@ class ChartWidget(QtWidgets.QWidget):
     timezone_changed = QtCore.Signal(str)
     order_prefill_requested = QtCore.Signal(str, float)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, drawing_interaction_enabled: bool = True):
         super().__init__(parent)
+        # Analyzer uses the full editable Drawing system. Viewer passes False so
+        # Drawings are created as non-interactive view objects from the outset,
+        # rather than being editable ROI objects that are locked after render.
+        self.drawing_interaction_enabled = bool(drawing_interaction_enabled)
         self.raw_df = pd.DataFrame()
         self.replay = None
         self.case = None
@@ -964,6 +968,10 @@ class ChartWidget(QtWidgets.QWidget):
         self.render(reset_x=True)
 
     def set_tool(self, name: str | None):
+        if not self.drawing_interaction_enabled:
+            self.tool_mode = None
+            self.pending_point = None
+            return
         self.tool_mode = name
         self.pending_point = None
         QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), f"Drawing: {name}")
@@ -1955,6 +1963,8 @@ class ChartWidget(QtWidgets.QWidget):
     def _scene_clicked(self, evt):
         if self.case is None:
             return
+        if not self.drawing_interaction_enabled:
+            return
         pos = evt.scenePos()
         if not self.plot.sceneBoundingRect().contains(pos):
             return
@@ -2250,10 +2260,10 @@ class ChartWidget(QtWidgets.QWidget):
             return None
 
     def _install_standard_roi_handle_markers(self, roi, selected: bool = False):
-        """Overlay the shared FIBO-style markers while keeping native handles fully interactive.
+        """Overlay shared markers only for editable Analyzer Drawings.
 
-        Native PyQtGraph handles stay at full opacity so they remain reliable mouse hit targets.
-        The FIBO-style marker is drawn above them as the shared visual affordance.
+        In Viewer mode native ROI handles are made inert/invisible and no custom
+        adjustment markers are created at all.
         """
         old_markers = list(getattr(roi, "_standard_handle_markers", []) or [])
         for marker in old_markers:
@@ -2266,6 +2276,16 @@ class ChartWidget(QtWidgets.QWidget):
             handles = list(roi.getHandles())
         except Exception:
             handles = []
+        if not self.drawing_interaction_enabled:
+            for handle in handles:
+                try:
+                    handle.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+                    handle.setOpacity(0.0)
+                    handle.setVisible(False)
+                except Exception:
+                    pass
+            roi._standard_handle_markers = []
+            return
         for handle in handles:
             try:
                 handle.setOpacity(1.0)
@@ -2295,7 +2315,7 @@ class ChartWidget(QtWidgets.QWidget):
                 except Exception:
                     pass
             try:
-                marker.setVisible(bool(selected))
+                marker.setVisible(bool(self.drawing_interaction_enabled and selected))
             except Exception:
                 pass
 
@@ -2478,6 +2498,8 @@ class ChartWidget(QtWidgets.QWidget):
             pass
 
     def _text_region_changed(self, did: str):
+        if not self.drawing_interaction_enabled:
+            return
         group = self.drawing_items.get(did)
         drawing = self._drawing_by_id(did)
         if not isinstance(group, dict) or drawing is None:
@@ -2532,6 +2554,8 @@ class ChartWidget(QtWidgets.QWidget):
             pass
 
     def _sync_text_box(self, roi, drawing, emit=True):
+        if not self.drawing_interaction_enabled:
+            return
         try:
             pos = roi.pos(); size = roi.size()
             left = float(pos.x()); bottom = float(pos.y())
@@ -2580,28 +2604,39 @@ class ChartWidget(QtWidgets.QWidget):
         text_item.setZValue(7)
         text_item.setFlag(QtWidgets.QGraphicsItem.ItemIsMovable, False)
         try:
-            text_item.setAcceptedMouseButtons(QtCore.Qt.RightButton)
+            text_item.setAcceptedMouseButtons(
+                QtCore.Qt.RightButton if self.drawing_interaction_enabled else QtCore.Qt.NoButton
+            )
             text_item.textItem.setAcceptedMouseButtons(QtCore.Qt.NoButton)
         except Exception:
             pass
-        text_item.context_menu_callback = lambda d=did: self._show_drawing_context_menu(d)
+        text_item.context_menu_callback = (
+            (lambda d=did: self._show_drawing_context_menu(d))
+            if self.drawing_interaction_enabled else None
+        )
         self.plot.addItem(text_item)
 
         # Bare ROI has no default top-right handle; only our two midpoint
         # handles are installed below.
-        roi = pg.ROI([left, bottom], [width, height], pen=pg.mkPen((255,255,0,0), width=1), movable=True)
+        roi = pg.ROI(
+            [left, bottom], [width, height],
+            pen=pg.mkPen((255,255,0,0), width=1),
+            movable=self.drawing_interaction_enabled,
+        )
         try:
             roi.setHoverPen(pg.mkPen((255,255,0,0), width=1))
         except Exception:
             pass
-        self._configure_right_bottom_resize_handles(roi)
+        if self.drawing_interaction_enabled:
+            self._configure_right_bottom_resize_handles(roi)
         roi.setZValue(8)
         roi.setAcceptedMouseButtons(QtCore.Qt.NoButton)
         self._set_roi_handles_visible(roi, False)
         roi._magnet_guard = False
         roi._magnet_prev_rect = (left, bottom, right, top)
         self.plot.addItem(roi)
-        self._install_standard_roi_handle_markers(roi, selected=False)
+        if self.drawing_interaction_enabled:
+            self._install_standard_roi_handle_markers(roi, selected=False)
 
         group = {"type": "text", "roi": roi, "text": text_item, "border": border, "selection": selection, "background": background}
         self.drawing_items[did] = group
@@ -2610,12 +2645,17 @@ class ChartWidget(QtWidgets.QWidget):
             try: item.setToolTip(f"text / {did}")
             except Exception: pass
 
-        roi.sigRegionChanged.connect(lambda _=None, d=did: self._text_region_changed(d))
-        roi.sigRegionChanged.connect(lambda _=None, obj=roi: self._update_standard_roi_handle_markers(obj))
-        roi.sigRegionChangeFinished.connect(lambda obj=roi, d=drawing: self._sync_text_box(obj, d))
+        if self.drawing_interaction_enabled:
+            roi.sigRegionChanged.connect(lambda _=None, d=did: self._text_region_changed(d))
+            roi.sigRegionChanged.connect(lambda _=None, obj=roi: self._update_standard_roi_handle_markers(obj))
+            roi.sigRegionChangeFinished.connect(lambda obj=roi, d=drawing: self._sync_text_box(obj, d))
         self._update_text_box_view(did, update_roi=False)
 
     def _select_drawing_id(self, did: str | None):
+        if not self.drawing_interaction_enabled:
+            self.selected_drawing_id = None
+            self._refresh_selection_visuals()
+            return
         self.selected_drawing_id = did
         self._refresh_selection_visuals()
         if did is not None:
@@ -2630,7 +2670,7 @@ class ChartWidget(QtWidgets.QWidget):
         by_id = {d.get("id"): d for d in self.case.drawings}
         for did, item in self.drawing_items.items():
             drawing = by_id.get(did, {})
-            selected = did == self.selected_drawing_id
+            selected = bool(self.drawing_interaction_enabled and did == self.selected_drawing_id)
             try:
                 item.setSelected(selected)
             except Exception:
@@ -2674,6 +2714,8 @@ class ChartWidget(QtWidgets.QWidget):
                 self._update_fibo_view_geometry(did, update_box=False)
 
     def _show_drawing_context_menu(self, did: str):
+        if not self.drawing_interaction_enabled:
+            return
         drawing = self._drawing_by_id(did)
         if drawing is None:
             return
@@ -2921,6 +2963,8 @@ class ChartWidget(QtWidgets.QWidget):
         self._commit_drawing_change()
 
     def _delete_drawing_by_id(self, did: str):
+        if not self.drawing_interaction_enabled:
+            return
         if self.case is None:
             return
         self.case.drawings = [d for d in self.case.drawings if d.get("id") != did]
@@ -2929,6 +2973,8 @@ class ChartWidget(QtWidgets.QWidget):
         self._commit_drawing_change("Delete Drawing")
 
     def _commit_drawing_change(self, label: str = "Edit Drawing"):
+        if not self.drawing_interaction_enabled:
+            return
         if self.case is None:
             return
         self.case.touch()
@@ -2943,6 +2989,8 @@ class ChartWidget(QtWidgets.QWidget):
         self._render_drawing_items()
 
     def _register_drawing_hit_item(self, did: str, item):
+        if not self.drawing_interaction_enabled:
+            return
         self.drawing_hit_items[id(item)] = did
         self._drawing_hit_objects.append((did, item))
 
@@ -3006,7 +3054,7 @@ class ChartWidget(QtWidgets.QWidget):
             return
         sx, sy, ex, ey, _left, _right, ymin, ymax, ys = self._fibo_geometry(drawing)
         anchor_w, anchor_h = self._fibo_anchor_size(ymin, ymax)
-        selected = did == self.selected_drawing_id
+        selected = bool(self.drawing_interaction_enabled and did == self.selected_drawing_id)
 
         lines = group.get("lines", [])
         hit_lines = group.get("hit_lines", [])
@@ -3024,8 +3072,10 @@ class ChartWidget(QtWidgets.QWidget):
             if i < len(anchors):
                 anchor = anchors[i]
                 self._set_fibo_anchor_roi(anchor, x, y, anchor_w, anchor_h)
-                anchor.setAcceptedMouseButtons(QtCore.Qt.LeftButton if selected else QtCore.Qt.NoButton)
-                anchor.setVisible(bool(selected))
+                anchor.setAcceptedMouseButtons(
+                    QtCore.Qt.LeftButton if (self.drawing_interaction_enabled and selected) else QtCore.Qt.NoButton
+                )
+                anchor.setVisible(bool(self.drawing_interaction_enabled and selected))
                 anchor.setZValue(27)
             if i < len(markers):
                 marker = markers[i]
@@ -3036,6 +3086,8 @@ class ChartWidget(QtWidgets.QWidget):
         group["anchor_size"] = (anchor_w, anchor_h)
 
     def _sync_fibo_from_anchor(self, did: str, anchor_index: int):
+        if not self.drawing_interaction_enabled:
+            return
         drawing = self._drawing_by_id(did)
         group = self.drawing_items.get(did)
         if drawing is None or not isinstance(group, dict) or group.get("syncing"):
@@ -3063,6 +3115,8 @@ class ChartWidget(QtWidgets.QWidget):
             group["syncing"] = False
 
     def _finish_fibo_change(self, did: str):
+        if not self.drawing_interaction_enabled:
+            return
         if self.case is None or self._drawing_by_id(did) is None:
             return
         self.case.touch()
@@ -3073,7 +3127,7 @@ class ChartWidget(QtWidgets.QWidget):
         did = drawing.get("id")
         sx, sy, ex, ey, _left, _right, ymin, ymax, ys = self._fibo_geometry(drawing)
         anchor_w, anchor_h = self._fibo_anchor_size(ymin, ymax)
-        selected = did == self.selected_drawing_id
+        selected = bool(self.drawing_interaction_enabled and did == self.selected_drawing_id)
 
         lines = []
         hit_lines = []
@@ -3085,13 +3139,13 @@ class ChartWidget(QtWidgets.QWidget):
             self.plot.addItem(line)
             lines.append(line)
 
-            # Wider invisible hit line keeps double-click selection / right-click
-            # settings comfortable without adding any visible adjustment UI.
-            hit = pg.PlotDataItem(x=[sx, ex], y=[y, y], pen=pg.mkPen((255, 255, 255, 0), width=12))
-            hit.setAcceptedMouseButtons(QtCore.Qt.NoButton)
-            hit.setZValue(11)
-            self.plot.addItem(hit)
-            hit_lines.append(hit)
+            # Wider invisible hit line is needed only in Analyzer for selection/context menus.
+            if self.drawing_interaction_enabled:
+                hit = pg.PlotDataItem(x=[sx, ex], y=[y, y], pen=pg.mkPen((255, 255, 255, 0), width=12))
+                hit.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+                hit.setZValue(11)
+                self.plot.addItem(hit)
+                hit_lines.append(hit)
 
         # Exactly two draggable anchors define the Fibonacci geometry:
         # anchor 0 = multiplier 0 / start point, anchor 1 = multiplier 1 / end point.
@@ -3099,30 +3153,31 @@ class ChartWidget(QtWidgets.QWidget):
         # visible circular control point. Both are shown only while the Fibo is selected.
         anchors = []
         markers = []
-        transparent_pen = pg.mkPen((255, 255, 255, 0), width=1)
-        for idx, (x, y) in enumerate(((sx, sy), (ex, ey))):
-            anchor = pg.ROI(
-                [x - anchor_w * 0.5, y - anchor_h * 0.5],
-                [anchor_w, anchor_h],
-                pen=transparent_pen,
-                movable=True,
-            )
-            anchor._fibo_anchor_index = idx
-            anchor._fibo_expected_x = float(x)
-            anchor._fibo_expected_y = float(y)
-            anchor.setAcceptedMouseButtons(QtCore.Qt.LeftButton if selected else QtCore.Qt.NoButton)
-            anchor.setZValue(27)
-            anchor.setVisible(bool(selected))
-            try:
-                anchor.setHoverPen(transparent_pen)
-            except Exception:
-                pass
-            self.plot.addItem(anchor)
-            anchors.append(anchor)
+        if self.drawing_interaction_enabled:
+            transparent_pen = pg.mkPen((255, 255, 255, 0), width=1)
+            for idx, (x, y) in enumerate(((sx, sy), (ex, ey))):
+                anchor = pg.ROI(
+                    [x - anchor_w * 0.5, y - anchor_h * 0.5],
+                    [anchor_w, anchor_h],
+                    pen=transparent_pen,
+                    movable=True,
+                )
+                anchor._fibo_anchor_index = idx
+                anchor._fibo_expected_x = float(x)
+                anchor._fibo_expected_y = float(y)
+                anchor.setAcceptedMouseButtons(QtCore.Qt.LeftButton if selected else QtCore.Qt.NoButton)
+                anchor.setZValue(27)
+                anchor.setVisible(bool(selected))
+                try:
+                    anchor.setHoverPen(transparent_pen)
+                except Exception:
+                    pass
+                self.plot.addItem(anchor)
+                anchors.append(anchor)
 
-            marker = self._make_standard_adjustment_marker(x, y, visible=selected)
-            marker.setZValue(26)
-            markers.append(marker)
+                marker = self._make_standard_adjustment_marker(x, y, visible=selected)
+                marker.setZValue(26)
+                markers.append(marker)
 
         group = {
             "type": "fibonacci",
@@ -3142,9 +3197,10 @@ class ChartWidget(QtWidgets.QWidget):
             except Exception:
                 pass
 
-        for i, anchor in enumerate(anchors):
-            anchor.sigRegionChanged.connect(lambda _=None, d=did, idx=i: self._sync_fibo_from_anchor(d, idx))
-            anchor.sigRegionChangeFinished.connect(lambda _=None, d=did: self._finish_fibo_change(d))
+        if self.drawing_interaction_enabled:
+            for i, anchor in enumerate(anchors):
+                anchor.sigRegionChanged.connect(lambda _=None, d=did, idx=i: self._sync_fibo_from_anchor(d, idx))
+                anchor.sigRegionChangeFinished.connect(lambda _=None, d=did: self._finish_fibo_change(d))
 
     def _rectangle_geometry(self, drawing: dict):
         p1, p2 = drawing["points"]
@@ -3225,17 +3281,22 @@ class ChartWidget(QtWidgets.QWidget):
         # Rectangle uses exactly four edge-midpoint resize handles.
         roi = pg.ROI(
             [left, bottom], [right - left, top - bottom],
-            pen=pg.mkPen((255, 255, 255, 0), width=1), movable=True,
+            pen=pg.mkPen((255, 255, 255, 0), width=1),
+            movable=self.drawing_interaction_enabled,
         )
         try:
             roi.setHoverPen(pg.mkPen((255, 255, 255, 0), width=1))
         except Exception:
             pass
-        self._configure_four_side_resize_handles(roi)
+        if not self.drawing_interaction_enabled:
+            roi.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        if self.drawing_interaction_enabled:
+            self._configure_four_side_resize_handles(roi)
         self._set_roi_handles_visible(roi, False)
         roi.setZValue(6)
         self.plot.addItem(roi)
-        self._install_standard_roi_handle_markers(roi, selected=False)
+        if self.drawing_interaction_enabled:
+            self._install_standard_roi_handle_markers(roi, selected=False)
         group = {"type": "rectangle", "roi": roi, "fill": fill_item, "outline": outline, "selection": selection, "drawing": drawing}
         self.drawing_items[did] = group
         self._register_drawing_hit_item(did, roi)
@@ -3244,9 +3305,10 @@ class ChartWidget(QtWidgets.QWidget):
         self._register_drawing_hit_item(did, selection)
         roi._magnet_guard = False
         roi._magnet_prev_rect = (left, bottom, right, top)
-        roi.sigRegionChanged.connect(lambda _=None, d=did: self._rectangle_region_changed(d))
-        roi.sigRegionChanged.connect(lambda _=None, obj=roi: self._update_standard_roi_handle_markers(obj))
-        roi.sigRegionChangeFinished.connect(lambda obj=roi, d=drawing: self._sync_rectangle(obj, d))
+        if self.drawing_interaction_enabled:
+            roi.sigRegionChanged.connect(lambda _=None, d=did: self._rectangle_region_changed(d))
+            roi.sigRegionChanged.connect(lambda _=None, obj=roi: self._update_standard_roi_handle_markers(obj))
+            roi.sigRegionChangeFinished.connect(lambda obj=roi, d=drawing: self._sync_rectangle(obj, d))
 
     def _render_drawing_items(self):
         self.drawing_items.clear()
@@ -3260,27 +3322,42 @@ class ChartWidget(QtWidgets.QWidget):
             style = drawing.get("style", {})
             if dtype == "horizontal_line":
                 item = pg.InfiniteLine(
-                    pos=float(drawing["price"]), angle=0, movable=True,
+                    pos=float(drawing["price"]), angle=0,
+                    movable=self.drawing_interaction_enabled,
                     pen=self._pen_from_style(style, selected=False),
                 )
                 item._magnet_guard = False
-                item.sigPositionChanged.connect(lambda _=None, obj=item: self._magnetize_hline(obj))
-                item.sigPositionChangeFinished.connect(lambda obj=item, d=drawing: self._sync_hline(obj, d))
+                if self.drawing_interaction_enabled:
+                    item.sigPositionChanged.connect(lambda _=None, obj=item: self._magnetize_hline(obj))
+                    item.sigPositionChangeFinished.connect(lambda obj=item, d=drawing: self._sync_hline(obj, d))
+                else:
+                    item.setAcceptedMouseButtons(QtCore.Qt.NoButton)
                 self.plot.addItem(item)
             elif dtype == "trend_line":
                 p1, p2 = drawing["points"]
                 item = pg.LineSegmentROI(
                     [(p1["time"], p1["price"]), (p2["time"], p2["price"])],
                     pen=self._pen_from_style(style, selected=False),
+                    movable=self.drawing_interaction_enabled,
                 )
                 item._shift_prev_points = [(float(p1["time"]), float(p1["price"])), (float(p2["time"]), float(p2["price"]))]
                 item._shift_constraint_guard = False
-                item.sigRegionChanged.connect(lambda _=None, obj=item: self._enforce_trend_shift_constraint(obj))
-                item.sigRegionChanged.connect(lambda _=None, obj=item: self._update_standard_roi_handle_markers(obj))
-                item.sigRegionChangeFinished.connect(lambda obj=item, d=drawing: self._sync_trend(obj, d))
+                if self.drawing_interaction_enabled:
+                    item.sigRegionChanged.connect(lambda _=None, obj=item: self._enforce_trend_shift_constraint(obj))
+                    item.sigRegionChanged.connect(lambda _=None, obj=item: self._update_standard_roi_handle_markers(obj))
+                    item.sigRegionChangeFinished.connect(lambda obj=item, d=drawing: self._sync_trend(obj, d))
+                else:
+                    item.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+                    try:
+                        for handle in item.getHandles():
+                            handle.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+                            handle.setOpacity(0.0)
+                    except Exception:
+                        pass
                 self.plot.addItem(item)
                 self._set_roi_handles_visible(item, False)
-                self._install_standard_roi_handle_markers(item, selected=False)
+                if self.drawing_interaction_enabled:
+                    self._install_standard_roi_handle_markers(item, selected=False)
             elif dtype == "text":
                 self._render_text_box(drawing)
                 continue
@@ -3302,6 +3379,8 @@ class ChartWidget(QtWidgets.QWidget):
         self._refresh_selection_visuals()
 
     def sync_all_drawings_from_view(self):
+        if not self.drawing_interaction_enabled:
+            return
         if self.case is None:
             return
         by_id = {d.get("id"): d for d in self.case.drawings}
@@ -3341,6 +3420,8 @@ class ChartWidget(QtWidgets.QWidget):
             item._magnet_guard = False
 
     def _rectangle_region_changed(self, did: str):
+        if not self.drawing_interaction_enabled:
+            return
         group = self.drawing_items.get(did)
         if not isinstance(group, dict):
             return
@@ -3395,10 +3476,14 @@ class ChartWidget(QtWidgets.QWidget):
             roi._magnet_guard = False
 
     def _sync_hline(self, item, drawing):
+        if not self.drawing_interaction_enabled:
+            return
         drawing["price"] = float(item.value())
         self.case.touch(); self.dirty.emit(); self.history_committed.emit("Move Drawing")
 
     def _sync_trend(self, item, drawing, emit=True):
+        if not self.drawing_interaction_enabled:
+            return
         try:
             pts = self._line_state_points(item)
             if len(pts) != 2:
@@ -3413,6 +3498,8 @@ class ChartWidget(QtWidgets.QWidget):
             pass
 
     def _sync_rectangle(self, item, drawing, emit=True):
+        if not self.drawing_interaction_enabled:
+            return
         try:
             pos = item.pos(); size = item.size()
             left = float(pos.x()); bottom = float(pos.y())
@@ -3430,6 +3517,8 @@ class ChartWidget(QtWidgets.QWidget):
             pass
 
     def _sync_text(self, item, drawing):
+        if not self.drawing_interaction_enabled:
+            return
         try:
             pos = item.pos()
             drawing["time"] = float(pos.x())
@@ -3455,6 +3544,8 @@ class ChartWidget(QtWidgets.QWidget):
 
     def copy_selected_drawing(self) -> bool:
         """Copy the selected Drawing Domain object into the internal drawing clipboard."""
+        if not self.drawing_interaction_enabled:
+            return False
         if self.case is None or self.selected_drawing_id is None:
             return False
         # Persist any current drag/resize state before taking the copy.
@@ -3469,6 +3560,8 @@ class ChartWidget(QtWidgets.QWidget):
 
     def paste_copied_drawing(self) -> bool:
         """Paste a cloned drawing with a new id and a small visible offset."""
+        if not self.drawing_interaction_enabled:
+            return False
         if self.case is None or self._drawing_clipboard is None:
             return False
         self._clipboard_paste_count += 1
@@ -3488,6 +3581,8 @@ class ChartWidget(QtWidgets.QWidget):
         return True
 
     def delete_selected_drawing(self):
+        if not self.drawing_interaction_enabled:
+            return
         if self.case is None or self.selected_drawing_id is None:
             return
         self._delete_drawing_by_id(self.selected_drawing_id)

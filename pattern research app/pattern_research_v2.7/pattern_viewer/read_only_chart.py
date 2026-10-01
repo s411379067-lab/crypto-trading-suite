@@ -19,8 +19,9 @@ class ReadOnlyChartWidget(ChartWidget):
     """
 
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.drawing_interaction_enabled = False
+        # B-mode: Drawings are born non-interactive inside ChartWidget.  Viewer no
+        # longer creates editable ROI objects and then tries to lock them afterward.
+        super().__init__(parent, drawing_interaction_enabled=False)
 
         # Hide drawing-creation tools. The Drawing visibility toggle remains useful.
         for widget in (self.btn_h, self.btn_l, self.btn_t, self.btn_rect, self.btn_fibo):
@@ -128,85 +129,3 @@ class ReadOnlyChartWidget(ChartWidget):
             self.btn_long_axis.hide()
         except Exception:
             pass
-
-    def _refresh_selection_visuals(self):
-        # Viewer has no selected Drawing state and therefore no resize handles.
-        self.selected_drawing_id = None
-        super()._refresh_selection_visuals()
-        self._lock_all_drawing_items()
-
-    def _render_drawing_items(self):
-        super()._render_drawing_items()
-        self._lock_all_drawing_items()
-
-    @staticmethod
-    def _disable_graphics_interaction(obj):
-        if obj is None:
-            return
-        try:
-            obj.setAcceptedMouseButtons(QtCore.Qt.NoButton)
-        except Exception:
-            pass
-        try:
-            obj.setFlag(QtWidgets.QGraphicsItem.ItemIsMovable, False)
-        except Exception:
-            pass
-        try:
-            obj.setEnabled(False)
-        except Exception:
-            pass
-
-    def _lock_roi(self, roi):
-        if roi is None:
-            return
-        try:
-            roi.setMovable(False)
-        except Exception:
-            pass
-        self._disable_graphics_interaction(roi)
-        try:
-            self._set_roi_handles_visible(roi, False)
-        except Exception:
-            pass
-        for marker in list(getattr(roi, "_standard_handle_markers", []) or []):
-            try:
-                marker.setVisible(False)
-            except Exception:
-                pass
-            self._disable_graphics_interaction(marker)
-        try:
-            handles = list(roi.getHandles())
-        except Exception:
-            handles = []
-        for handle in handles:
-            self._disable_graphics_interaction(handle)
-
-    def _lock_all_drawing_items(self):
-        """Disable every mutable Drawing hit target after each render/rebuild."""
-        self.selected_drawing_id = None
-        self.drawing_hit_items.clear()
-        self._drawing_hit_objects.clear()
-        for item in list(self.drawing_items.values()):
-            if isinstance(item, dict):
-                roi = item.get("roi")
-                self._lock_roi(roi)
-                for key in ("text", "border", "selection", "background", "fill", "outline"):
-                    obj = item.get(key)
-                    if obj is not None:
-                        self._disable_graphics_interaction(obj)
-                for key in ("anchors", "anchor_markers", "hit_lines", "lines"):
-                    for obj in item.get(key, []) or []:
-                        self._disable_graphics_interaction(obj)
-                        if key in {"anchors", "anchor_markers"}:
-                            try:
-                                obj.setVisible(False)
-                            except Exception:
-                                pass
-                continue
-
-            self._lock_roi(item)
-            try:
-                item.setMovable(False)
-            except Exception:
-                pass
-            self._disable_graphics_interaction(item)
