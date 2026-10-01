@@ -19,7 +19,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: "pattern research app"
+        working-directory: "pattern research app/source"
 
     steps:
       - name: Check out repository
@@ -33,7 +33,7 @@ jobs:
           cache-dependency-path: "pattern research app/source/requirements.txt"
 
       - name: Install dependencies
-        run: python -m pip install -r source/requirements.txt pytest
+        run: python -m pip install -r requirements.txt pytest
 
       - name: Run tests
-        run: python -m pytest -q source/tests
+        run: python -m pytest -q tests
