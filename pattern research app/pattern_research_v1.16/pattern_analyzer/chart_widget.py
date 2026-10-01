@@ -2050,10 +2050,10 @@ class ChartWidget(QtWidgets.QWidget):
             return None
 
     def _install_standard_roi_handle_markers(self, roi, selected: bool = False):
-        """Hide native PyQtGraph handle artwork and overlay the shared FIBO-style markers.
+        """Overlay the shared FIBO-style markers while keeping native handles fully interactive.
 
-        Native handles remain present and interactive, so resize/move behaviour is unchanged;
-        only their visual representation is replaced.
+        Native PyQtGraph handles stay at full opacity so they remain reliable mouse hit targets.
+        The FIBO-style marker is drawn above them as the shared visual affordance.
         """
         old_markers = list(getattr(roi, "_standard_handle_markers", []) or [])
         for marker in old_markers:
@@ -2068,7 +2068,7 @@ class ChartWidget(QtWidgets.QWidget):
             handles = []
         for handle in handles:
             try:
-                handle.setOpacity(0.0)
+                handle.setOpacity(1.0)
             except Exception:
                 pass
             pos = self._roi_handle_absolute_position(roi, handle)

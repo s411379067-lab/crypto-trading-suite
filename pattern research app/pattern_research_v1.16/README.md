@@ -1,5 +1,13 @@
-# Pattern Research v1.15
+# Pattern Research v1.16
 
+
+
+## v1.16 — Adjustment handle interaction fix
+
+- Restored native PyQtGraph ROI handles to full opacity so they remain reliable mouse hit targets.
+- Keeps the shared FIBO-style circular adjustment markers as the visible handle style.
+- Fixes Trend Line / Rectangle / Text Box handles behaving like whole-object move instead of resize.
+- No changes to FIBO anchor logic, Undo/Redo, Magnet, templates, or Drawing persistence.
 
 ## v1.15 — Unified adjustment-point style
 
