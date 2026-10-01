@@ -944,18 +944,44 @@ class ChartWidget(QtWidgets.QWidget):
         try:
             high = float(rth["high"])
             low = float(rth["low"])
+            close = float(rth["close"])
         except Exception:
             return
 
-        pen = pg.mkPen((255, 255, 255, 185), width=1, style=QtCore.Qt.DashLine)
-        high_line = pg.InfiniteLine(pos=high, angle=0, movable=False, pen=pen)
-        low_line = pg.InfiniteLine(pos=low, angle=0, movable=False, pen=pen)
-        high_line.setZValue(2)
-        low_line.setZValue(2)
-        high_line.setToolTip(f"Previous RTH High: {high:.2f}")
-        low_line.setToolTip(f"Previous RTH Low: {low:.2f}")
-        self.plot.addItem(high_line)
-        self.plot.addItem(low_line)
+        high_pen = pg.mkPen((255, 221, 87, 215), width=1, style=QtCore.Qt.DashLine)
+        low_pen = pg.mkPen((255, 221, 87, 215), width=1, style=QtCore.Qt.DashLine)
+        close_pen = pg.mkPen((255, 255, 255, 200), width=1, style=QtCore.Qt.DashLine)
+
+        entries = [
+            ("H", high, high_pen, f"Previous RTH High: {high:.2f}", "#ffdd57"),
+            ("L", low, low_pen, f"Previous RTH Low: {low:.2f}", "#ffdd57"),
+            ("C", close, close_pen, f"Previous RTH Close: {close:.2f}", "#ffffff"),
+        ]
+
+        def _fmt(v: float) -> str:
+            s = f"{float(v):.2f}"
+            return s.rstrip("0").rstrip(".")
+
+        try:
+            x_range = self.plot.viewRange()[0]
+            right_x = float(x_range[1])
+            left_x = float(x_range[0])
+        except Exception:
+            right_x = float(self.replay.current_ts)
+            left_x = float(self.replay.data_start_ts)
+        x_pad = max(60.0, (right_x - left_x) * 0.01)
+        label_x = right_x - x_pad
+
+        for prefix, y, pen, tooltip, color in entries:
+            line = pg.InfiniteLine(pos=y, angle=0, movable=False, pen=pen)
+            line.setZValue(2)
+            line.setToolTip(tooltip)
+            self.plot.addItem(line)
+
+            label = pg.TextItem(text=f"{prefix} {_fmt(y)}", color=color, anchor=(1, 1))
+            label.setPos(label_x, y)
+            label.setZValue(3)
+            self.plot.addItem(label)
 
     def _draw_bars(self, bars: pd.DataFrame):
         t = bars["timestamp"].to_numpy(float)

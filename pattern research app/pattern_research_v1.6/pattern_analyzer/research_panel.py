@@ -92,14 +92,14 @@ class ResearchPanel(QtWidgets.QWidget):
             self.note_list.addItem(widget_item)
 
         rth = self.case.reference_levels.get("previous_rth") if hasattr(self.case, "reference_levels") else None
-        available = isinstance(rth, dict) and rth.get("high") is not None and rth.get("low") is not None
+        available = isinstance(rth, dict) and rth.get("high") is not None and rth.get("low") is not None and rth.get("close") is not None
         self.rth_checkbox.blockSignals(True)
         self.rth_checkbox.setEnabled(bool(available))
         self.rth_checkbox.setChecked(bool(available and self.case.display.get("show_previous_rth", False)))
         self.rth_checkbox.blockSignals(False)
         if available:
             self.rth_status.setText(
-                f"{rth.get('session_date', '')}   H {float(rth['high']):.2f}   L {float(rth['low']):.2f}"
+                f"{rth.get('session_date', '')}   H {float(rth['high']):.2f}   L {float(rth['low']):.2f}   C {float(rth['close']):.2f}"
             )
             self.rth_status.setStyleSheet("color:#cfd7e6; font-size:9.5pt;")
         else:

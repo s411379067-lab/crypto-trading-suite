@@ -246,3 +246,8 @@ Example order record:
   - bottom-edge midpoint: adjusts height only while keeping the top edge fixed.
 - Rectangle resize handles use the same right-midpoint / bottom-midpoint interaction.
 - Existing Text / Rectangle JSON geometry remains compatible; no schema migration is required.
+
+
+## v1.6 Enricher upgrade
+
+Previous RTH now stores High / Low / Close plus their timestamps. The Enricher only skips an existing payload when all required fields are present and the calculator version, session timezone/start/end, and data source ID match the current settings. Older H/L-only payloads are automatically recalculated and upgraded.

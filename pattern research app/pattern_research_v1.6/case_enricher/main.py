@@ -9,7 +9,7 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 from shared_core.market_data import MarketDataService
 from shared_core.repository import CaseRepository
-from shared_core.rth import find_previous_valid_rth
+from shared_core.rth import find_previous_valid_rth, previous_rth_is_current
 
 
 STYLE = """
@@ -22,6 +22,9 @@ QLineEdit, QComboBox, QTimeEdit, QPlainTextEdit {
 QCheckBox { spacing:7px; }
 QGroupBox { border:1px solid #2a3142; border-radius:4px; margin-top:8px; padding-top:10px; font-weight:700; }
 """
+
+
+RTH_CALCULATOR_VERSION = "1.1"
 
 
 def _weekday_name(d: date) -> str:
@@ -41,14 +44,14 @@ def _weekend_target(path: Path, is_weekend: bool) -> Path:
 class EnricherWindow(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Case Enricher v1.5 — Previous RTH")
+        self.setWindowTitle("Case Enricher v1.6 — Previous RTH H/L/C")
         self.resize(780, 650)
         self.setStyleSheet(STYLE)
         self.repo = CaseRepository()
         self.market = MarketDataService()
 
         layout = QtWidgets.QVBoxLayout(self)
-        title = QtWidgets.QLabel("Case Enricher — Previous RTH High / Low")
+        title = QtWidgets.QLabel("Case Enricher — Previous RTH High / Low / Close")
         title.setStyleSheet("font-size:16pt; font-weight:700;")
         layout.addWidget(title)
 
@@ -69,14 +72,15 @@ class EnricherWindow(QtWidgets.QWidget):
         form.addRow("RTH Start", self.start_time)
         form.addRow("RTH End", self.end_time)
 
-        self.only_missing = QtWidgets.QCheckBox("只計算缺少 Previous RTH 的平日 Case")
+        self.only_missing = QtWidgets.QCheckBox("只計算缺少／過期 Previous RTH H/L/C 的平日 Case")
         self.only_missing.setChecked(True)
         form.addRow("", self.only_missing)
         layout.addLayout(form)
 
         info = QtWidgets.QLabel(
             "週末 Case：不建立 Previous RTH，寫入 calendar.is_weekend=true，檔名自動加 (W)。\n"
-            "平日 Case：往前尋找上一個完整有效 RTH Session；display.timezone 不參與計算。"
+            "平日 Case：往前尋找上一個完整有效 RTH Session，寫入 H/L/C；display.timezone 不參與計算。\n"
+            "若既有資料缺少 close、版本不同、RTH 時段不同或資料來源不同，會自動重新計算。"
         )
         info.setWordWrap(True)
         info.setStyleSheet("color:#9ba8bc;")
@@ -161,11 +165,25 @@ class EnricherWindow(QtWidgets.QWidget):
                     path.rename(target_path)
                     path = target_path
 
-                if self.only_missing.isChecked() and case.reference_levels.get("previous_rth"):
+                existing_rth = case.reference_levels.get("previous_rth")
+                source_id = str(case.market_data.get("source_id", ""))
+                is_current = previous_rth_is_current(
+                    existing_rth,
+                    calculator_version=RTH_CALCULATOR_VERSION,
+                    timezone_name=session_tz,
+                    start_hhmm=start_hhmm,
+                    end_hhmm=end_hhmm,
+                    data_source_id=source_id,
+                )
+                if self.only_missing.isChecked() and is_current:
                     self.repo.save(path, case)  # persist calendar/time_context migrations
                     stats["existing"] += 1
-                    self._append(f"EXISTS {path.name}: 保留既有 Previous RTH")
+                    self._append(
+                        f"EXISTS {path.name}: Previous RTH H/L/C 已完整，版本={RTH_CALCULATOR_VERSION}"
+                    )
                     continue
+                if self.only_missing.isChecked() and existing_rth and not is_current:
+                    self._append(f"UPGRADE {path.name}: 既有 Previous RTH 缺欄位或版本/設定過期，重新計算")
 
                 try:
                     raw = self.market.load_for_case(path, case.market_data)
@@ -190,7 +208,7 @@ class EnricherWindow(QtWidgets.QWidget):
                     continue
 
                 rth.update({
-                    "calculator_version": "1.0",
+                    "calculator_version": RTH_CALCULATOR_VERSION,
                     "calculated_at": datetime.now(timezone.utc).isoformat(),
                     "data_source_id": case.market_data.get("source_id", ""),
                 })
@@ -199,7 +217,7 @@ class EnricherWindow(QtWidgets.QWidget):
                 self.repo.save(path, case)
                 stats["updated"] += 1
                 self._append(
-                    f"OK {path.name}: {rth['session_date']}  H={rth['high']:.2f}  L={rth['low']:.2f}"
+                    f"OK {path.name}: {rth['session_date']}  H={rth['high']:.2f}  L={rth['low']:.2f}  C={rth['close']:.2f}"
                 )
         finally:
             self.run_btn.setEnabled(True)

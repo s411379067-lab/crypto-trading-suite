@@ -80,6 +80,7 @@ def extract_rth_session(
     low_idx = sub["low"].astype(float).idxmin()
     high_row = sub.loc[high_idx]
     low_row = sub.loc[low_idx]
+    close_row = sub.sort_values("timestamp").iloc[-1]
 
     return {
         "session_date": session_date.isoformat(),
@@ -88,12 +89,54 @@ def extract_rth_session(
         "session_end": end_hhmm,
         "high": float(high_row["high"]),
         "low": float(low_row["low"]),
+        "close": float(close_row["close"]),
         "high_time": _iso_utc_from_ts(float(high_row["timestamp"])),
         "low_time": _iso_utc_from_ts(float(low_row["timestamp"])),
+        "close_time": _iso_utc_from_ts(float(close_row["timestamp"])),
         "source_resolution_seconds": float(resolution),
         "bar_count": int(len(sub)),
     }
 
+
+
+def previous_rth_is_current(
+    rth: dict | None,
+    *,
+    calculator_version: str,
+    timezone_name: str,
+    start_hhmm: str,
+    end_hhmm: str,
+    data_source_id: str = "",
+) -> bool:
+    """Return True only when a stored Previous RTH payload is complete and matches current rules.
+
+    v1.6 requires H/L/C plus their timestamps. Older v1.5 payloads that only
+    contain H/L are intentionally treated as stale so the Enricher upgrades them.
+    """
+    if not isinstance(rth, dict):
+        return False
+    required = (
+        "session_date", "session_timezone", "session_start", "session_end",
+        "high", "low", "close", "high_time", "low_time", "close_time",
+        "calculator_version",
+    )
+    if any(rth.get(key) is None or rth.get(key) == "" for key in required):
+        return False
+    if str(rth.get("calculator_version")) != str(calculator_version):
+        return False
+    if str(rth.get("session_timezone")) != str(timezone_name):
+        return False
+    if str(rth.get("session_start")) != str(start_hhmm):
+        return False
+    if str(rth.get("session_end")) != str(end_hhmm):
+        return False
+    if data_source_id and str(rth.get("data_source_id", "")) != str(data_source_id):
+        return False
+    try:
+        float(rth["high"]); float(rth["low"]); float(rth["close"])
+    except Exception:
+        return False
+    return True
 
 def find_previous_valid_rth(
     raw_df: pd.DataFrame,
