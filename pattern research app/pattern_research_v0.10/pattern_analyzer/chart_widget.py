@@ -347,30 +347,115 @@ class RectangleSettingsDialog(QtWidgets.QDialog):
 
 
 class TextSettingsDialog(QtWidgets.QDialog):
-    def __init__(self, color: str, font_size: int,
-                 save_template_callback: Callable[[dict], None] | None = None, parent=None):
+    """TradingView-like text box editor.
+
+    Text content and drawing style are edited together. Templates save style only;
+    geometry and text content remain owned by the Case JSON.
+    """
+    def __init__(
+        self,
+        text: str,
+        text_color: str,
+        font_size: int,
+        bold: bool = False,
+        italic: bool = False,
+        border_enabled: bool = False,
+        border_color: str = "#ffffff",
+        border_width: int = 1,
+        background_enabled: bool = False,
+        background_color: str = "#181c27",
+        background_opacity: int = 0,
+        auto_wrap: bool = True,
+        save_template_callback: Callable[[dict], None] | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("文字設定")
-        self.resize(350, 180)
-        self._color = QtGui.QColor(color if color else "#ffffff")
+        self.resize(500, 520)
+        self._text_color = QtGui.QColor(text_color or "#ffffff")
+        self._border_color = QtGui.QColor(border_color or "#ffffff")
+        self._background_color = QtGui.QColor(background_color or "#181c27")
         self._save_template_callback = save_template_callback
 
         layout = QtWidgets.QVBoxLayout(self)
-        color_row = QtWidgets.QHBoxLayout()
-        color_row.addWidget(QtWidgets.QLabel("顏色:"))
-        self.color_btn = QtWidgets.QPushButton()
-        self.color_btn.setFixedWidth(125)
-        self.color_btn.clicked.connect(self._pick_color)
-        color_row.addWidget(self.color_btn); color_row.addStretch(1)
-        layout.addLayout(color_row)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
 
-        size_row = QtWidgets.QHBoxLayout()
-        size_row.addWidget(QtWidgets.QLabel("字體大小:"))
-        self.size_spin = QtWidgets.QSpinBox()
-        self.size_spin.setRange(6, 64)
-        self.size_spin.setValue(max(6, min(64, int(font_size))))
-        size_row.addWidget(self.size_spin); size_row.addStretch(1)
-        layout.addLayout(size_row)
+        # TradingView-like compact text toolbar.
+        toolbar = QtWidgets.QHBoxLayout()
+        self.text_color_btn = QtWidgets.QPushButton()
+        self.text_color_btn.setFixedSize(42, 34)
+        self.text_color_btn.setToolTip("文字顏色")
+        self.text_color_btn.clicked.connect(self._pick_text_color)
+        toolbar.addWidget(self.text_color_btn)
+
+        self.size_combo = QtWidgets.QComboBox()
+        self.size_combo.addItems(["8", "9", "10", "11", "12", "14", "16", "18", "20", "24", "28", "32", "36", "48", "64"])
+        if self.size_combo.findText(str(int(font_size))) < 0:
+            self.size_combo.addItem(str(int(font_size)))
+        self.size_combo.setCurrentText(str(int(font_size)))
+        self.size_combo.setFixedWidth(92)
+        toolbar.addWidget(self.size_combo)
+
+        self.bold_btn = QtWidgets.QPushButton("B")
+        self.bold_btn.setCheckable(True)
+        self.bold_btn.setChecked(bool(bold))
+        self.bold_btn.setFixedSize(44, 34)
+        bold_font = self.bold_btn.font(); bold_font.setBold(True); self.bold_btn.setFont(bold_font)
+        toolbar.addWidget(self.bold_btn)
+
+        self.italic_btn = QtWidgets.QPushButton("I")
+        self.italic_btn.setCheckable(True)
+        self.italic_btn.setChecked(bool(italic))
+        self.italic_btn.setFixedSize(44, 34)
+        italic_font = self.italic_btn.font(); italic_font.setItalic(True); self.italic_btn.setFont(italic_font)
+        toolbar.addWidget(self.italic_btn)
+        toolbar.addStretch(1)
+        layout.addLayout(toolbar)
+
+        self.text_edit = QtWidgets.QTextEdit()
+        self.text_edit.setPlainText(text or "")
+        self.text_edit.setMinimumHeight(205)
+        self.text_edit.setPlaceholderText("輸入文字...")
+        layout.addWidget(self.text_edit)
+
+        # Background controls are included because they are part of the TradingView text-box workflow.
+        bg_row = QtWidgets.QHBoxLayout()
+        self.background_check = QtWidgets.QCheckBox("背景")
+        self.background_check.setChecked(bool(background_enabled))
+        bg_row.addWidget(self.background_check)
+        self.background_color_btn = QtWidgets.QPushButton()
+        self.background_color_btn.setFixedSize(44, 32)
+        self.background_color_btn.clicked.connect(self._pick_background_color)
+        bg_row.addWidget(self.background_color_btn)
+        bg_row.addWidget(QtWidgets.QLabel("透明度"))
+        self.background_opacity_spin = QtWidgets.QSpinBox()
+        self.background_opacity_spin.setRange(0, 100)
+        self.background_opacity_spin.setSuffix(" %")
+        self.background_opacity_spin.setValue(max(0, min(100, int(background_opacity))))
+        bg_row.addWidget(self.background_opacity_spin)
+        bg_row.addStretch(1)
+        layout.addLayout(bg_row)
+
+        border_row = QtWidgets.QHBoxLayout()
+        self.border_check = QtWidgets.QCheckBox("框線")
+        self.border_check.setChecked(bool(border_enabled))
+        border_row.addWidget(self.border_check)
+        self.border_color_btn = QtWidgets.QPushButton()
+        self.border_color_btn.setFixedSize(44, 32)
+        self.border_color_btn.clicked.connect(self._pick_border_color)
+        border_row.addWidget(self.border_color_btn)
+        border_row.addWidget(QtWidgets.QLabel("粗度"))
+        self.border_width_spin = QtWidgets.QSpinBox()
+        self.border_width_spin.setRange(1, 12)
+        self.border_width_spin.setValue(max(1, int(border_width or 1)))
+        border_row.addWidget(self.border_width_spin)
+        border_row.addStretch(1)
+        layout.addLayout(border_row)
+
+        self.wrap_check = QtWidgets.QCheckBox("自動換行")
+        self.wrap_check.setChecked(bool(auto_wrap))
+        layout.addWidget(self.wrap_check)
 
         buttons = QtWidgets.QHBoxLayout()
         save_btn = QtWidgets.QPushButton("存為模板...")
@@ -378,31 +463,70 @@ class TextSettingsDialog(QtWidgets.QDialog):
         save_btn.clicked.connect(self._save_template)
         ok_btn = QtWidgets.QPushButton("套用")
         cancel_btn = QtWidgets.QPushButton("取消")
-        ok_btn.clicked.connect(self.accept); cancel_btn.clicked.connect(self.reject)
-        buttons.addWidget(save_btn); buttons.addStretch(1); buttons.addWidget(ok_btn); buttons.addWidget(cancel_btn)
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn.clicked.connect(self.reject)
+        buttons.addWidget(save_btn)
+        buttons.addStretch(1)
+        buttons.addWidget(ok_btn)
+        buttons.addWidget(cancel_btn)
         layout.addLayout(buttons)
-        self._refresh_color_button()
 
-    def _pick_color(self):
-        color = get_tradingview_color(self._color, self, "選擇文字顏色")
-        if color is not None and color.isValid():
-            self._color = color
-            self._refresh_color_button()
+        self._refresh_color_buttons()
 
-    def _refresh_color_button(self):
-        self.color_btn.setText(self._color.name().upper())
-        brightness = self._color.red() * 0.299 + self._color.green() * 0.587 + self._color.blue() * 0.114
+    @staticmethod
+    def _button_style(color: QtGui.QColor) -> str:
+        brightness = color.red() * 0.299 + color.green() * 0.587 + color.blue() * 0.114
         fg = "#000000" if brightness > 165 else "#ffffff"
-        self.color_btn.setStyleSheet(f"background-color:{self._color.name()}; color:{fg}; border:1px solid #666;")
+        return f"background-color:{color.name()}; color:{fg}; border:1px solid #666; border-radius:4px;"
+
+    def _refresh_color_buttons(self):
+        for button, color in (
+            (self.text_color_btn, self._text_color),
+            (self.border_color_btn, self._border_color),
+            (self.background_color_btn, self._background_color),
+        ):
+            button.setText("")
+            button.setStyleSheet(self._button_style(color))
+
+    def _pick_text_color(self):
+        color = get_tradingview_color(self._text_color, self, "選擇文字顏色")
+        if color is not None and color.isValid():
+            self._text_color = color
+            self._refresh_color_buttons()
+
+    def _pick_border_color(self):
+        color = get_tradingview_color(self._border_color, self, "選擇框線顏色")
+        if color is not None and color.isValid():
+            self._border_color = color
+            self._refresh_color_buttons()
+
+    def _pick_background_color(self):
+        color = get_tradingview_color(self._background_color, self, "選擇背景顏色")
+        if color is not None and color.isValid():
+            self._background_color = color
+            self._refresh_color_buttons()
 
     def values(self):
-        return self._color.name(), int(self.size_spin.value())
+        style = {
+            "color": self._text_color.name(),
+            "font_size": int(self.size_combo.currentText()),
+            "bold": bool(self.bold_btn.isChecked()),
+            "italic": bool(self.italic_btn.isChecked()),
+            "border_enabled": bool(self.border_check.isChecked()),
+            "border_color": self._border_color.name(),
+            "border_width": int(self.border_width_spin.value()),
+            "background_enabled": bool(self.background_check.isChecked()),
+            "background_color": self._background_color.name(),
+            "background_opacity": int(self.background_opacity_spin.value()),
+            "auto_wrap": bool(self.wrap_check.isChecked()),
+        }
+        return self.text_edit.toPlainText(), style
 
     def _save_template(self):
         if self._save_template_callback is None:
             return
-        color, font_size = self.values()
-        self._save_template_callback({"style": {"color": color, "font_size": font_size}})
+        _text, style = self.values()
+        self._save_template_callback({"style": style})
 
 
 class FiboSettingsDialog(QtWidgets.QDialog):
@@ -870,6 +994,9 @@ class ChartWidget(QtWidgets.QWidget):
         for did, group in list(self.drawing_items.items()):
             if isinstance(group, dict) and group.get("type") == "fibonacci":
                 self._update_fibo_view_geometry(did, update_box=False)
+            elif isinstance(group, dict) and group.get("type") == "text":
+                # Text wrapping is based on the box width in screen pixels, so refresh it after zoom/pan.
+                self._update_text_box_view(did, update_roi=False)
 
     def export_screenshot(self):
         path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "匯出圖表", "chart.png", "PNG (*.png)")
@@ -1230,17 +1357,37 @@ class ChartWidget(QtWidgets.QWidget):
             return
 
         if self.tool_mode == "text":
-            text, ok = QtWidgets.QInputDialog.getMultiLineText(self, "文字註記", "內容")
-            if ok and text.strip():
-                self.case.drawings.append({
-                    "id": f"drawing-{uuid.uuid4().hex[:12]}",
-                    "type": "text",
-                    "time": x,
-                    "price": y,
-                    "text": text.strip(),
-                    "style": {"color": "#ffffff", "font_size": 12},
-                })
-                self.case.touch(); self.dirty.emit(); self.rebuild_drawings(); self.render(False)
+            defaults = self._default_text_style()
+            dialog = TextSettingsDialog(
+                text="",
+                text_color=defaults["color"],
+                font_size=int(defaults["font_size"]),
+                bold=bool(defaults["bold"]),
+                italic=bool(defaults["italic"]),
+                border_enabled=bool(defaults["border_enabled"]),
+                border_color=defaults["border_color"],
+                border_width=int(defaults["border_width"]),
+                background_enabled=bool(defaults["background_enabled"]),
+                background_color=defaults["background_color"],
+                background_opacity=int(defaults["background_opacity"]),
+                auto_wrap=bool(defaults["auto_wrap"]),
+                save_template_callback=lambda payload: self._save_template_interactive("text", payload),
+                parent=self,
+            )
+            if dialog.exec() == QtWidgets.QDialog.Accepted:
+                text, style = dialog.values()
+                if text.strip():
+                    box_w, box_h = self._default_text_box_size()
+                    self.case.drawings.append({
+                        "id": f"drawing-{uuid.uuid4().hex[:12]}",
+                        "type": "text",
+                        "time": x,
+                        "price": y,
+                        "text": text,
+                        "box": {"width": box_w, "height": box_h},
+                        "style": style,
+                    })
+                    self.case.touch(); self.dirty.emit(); self.rebuild_drawings(); self.render(False)
             self.tool_mode = None
 
     def _drawing_by_id(self, did: str):
@@ -1265,6 +1412,269 @@ class ChartWidget(QtWidgets.QWidget):
         qt_style = self._qt_line_style(style.get("line_style", "solid"))
         return pg.mkPen(color, width=width, style=qt_style)
 
+    @staticmethod
+    def _default_text_style() -> dict:
+        return {
+            "color": "#ffffff",
+            "font_size": 12,
+            "bold": False,
+            "italic": False,
+            "border_enabled": False,
+            "border_color": "#ffffff",
+            "border_width": 1,
+            "background_enabled": False,
+            "background_color": "#181c27",
+            "background_opacity": 0,
+            "auto_wrap": True,
+        }
+
+    def _default_text_box_size(self) -> tuple[float, float]:
+        try:
+            (x0, x1), (y0, y1) = self.plot.viewRange()
+            x_span = max(abs(float(x1) - float(x0)), float(timeframe_seconds(self.timeframe_combo.currentText())) * 10.0)
+            y_span = max(abs(float(y1) - float(y0)), 1e-6)
+            return max(x_span * 0.22, float(timeframe_seconds(self.timeframe_combo.currentText())) * 6.0), max(y_span * 0.16, 1e-6)
+        except Exception:
+            return float(timeframe_seconds(self.timeframe_combo.currentText())) * 12.0, 1.0
+
+    def _normalize_text_drawing(self, drawing: dict) -> tuple[dict, dict]:
+        style = drawing.setdefault("style", {})
+        for key, value in self._default_text_style().items():
+            style.setdefault(key, value)
+        box = drawing.setdefault("box", {})
+        default_w, default_h = self._default_text_box_size()
+        try:
+            width = abs(float(box.get("width", default_w)))
+        except Exception:
+            width = default_w
+        try:
+            height = abs(float(box.get("height", default_h)))
+        except Exception:
+            height = default_h
+        box["width"] = max(width, 1e-6)
+        box["height"] = max(height, 1e-9)
+        return style, box
+
+    def _text_box_geometry(self, drawing: dict) -> tuple[float, float, float, float]:
+        _style, box = self._normalize_text_drawing(drawing)
+        left = float(drawing.get("time", 0.0))
+        top = float(drawing.get("price", 0.0))
+        width = max(float(box.get("width", 1.0)), 1e-6)
+        height = max(float(box.get("height", 1.0)), 1e-9)
+        right = left + width
+        bottom = top - height
+        return left, right, bottom, top
+
+    def _text_box_pixel_size(self, left: float, right: float, bottom: float, top: float) -> tuple[float, float]:
+        try:
+            a = self.plot.vb.mapViewToScene(QtCore.QPointF(left, top))
+            b = self.plot.vb.mapViewToScene(QtCore.QPointF(right, bottom))
+            return max(abs(float(b.x() - a.x())), 24.0), max(abs(float(b.y() - a.y())), 18.0)
+        except Exception:
+            return 180.0, 80.0
+
+    @staticmethod
+    def _set_roi_handles_visible(roi, visible: bool):
+        try:
+            for handle in roi.getHandles():
+                handle.setVisible(bool(visible))
+        except Exception:
+            pass
+
+    def _update_text_box_view(self, did: str, update_roi: bool = False):
+        drawing = self._drawing_by_id(did)
+        group = self.drawing_items.get(did)
+        if drawing is None or not isinstance(group, dict):
+            return
+        roi = group.get("roi")
+        text_item = group.get("text")
+        border_item = group.get("border")
+        background_item = group.get("background")
+        if roi is None or text_item is None:
+            return
+
+        style, _box = self._normalize_text_drawing(drawing)
+        left, right, bottom, top = self._text_box_geometry(drawing)
+        width = max(right - left, 1e-6)
+        height = max(top - bottom, 1e-9)
+
+        if update_roi:
+            try:
+                roi.blockSignals(True)
+                roi.setPos([left, bottom])
+                roi.setSize([width, height])
+            finally:
+                roi.blockSignals(False)
+
+        rect = QtCore.QRectF(left, bottom, width, height)
+        if background_item is not None:
+            background_item.setRect(rect)
+            if bool(style.get("background_enabled", False)):
+                color = QtGui.QColor(style.get("background_color", "#181c27"))
+                opacity = max(0, min(100, int(style.get("background_opacity", 0))))
+                color.setAlpha(int(round(opacity * 255 / 100.0)))
+                background_item.setBrush(QtGui.QBrush(color))
+            else:
+                background_item.setBrush(QtGui.QBrush(QtCore.Qt.NoBrush))
+
+        if border_item is not None:
+            border_item.setRect(rect)
+            if bool(style.get("border_enabled", False)):
+                border_item.setPen(QtGui.QPen(QtGui.QColor(style.get("border_color", "#ffffff")), max(1, int(style.get("border_width", 1)))))
+            else:
+                border_item.setPen(QtGui.QPen(QtCore.Qt.NoPen))
+
+        try:
+            text_item.setText(str(drawing.get("text", "")), color=style.get("color", "#ffffff"))
+        except Exception:
+            try:
+                text_item.setText(str(drawing.get("text", "")))
+                text_item.setColor(style.get("color", "#ffffff"))
+            except Exception:
+                pass
+        font = QtGui.QFont()
+        font.setPointSize(max(6, int(style.get("font_size", 12))))
+        font.setBold(bool(style.get("bold", False)))
+        font.setItalic(bool(style.get("italic", False)))
+        try:
+            text_item.textItem.setFont(font)
+        except Exception:
+            pass
+        try:
+            text_item.setPos(left, top)
+        except Exception:
+            pass
+
+        px_w, px_h = self._text_box_pixel_size(left, right, bottom, top)
+        try:
+            if bool(style.get("auto_wrap", True)):
+                text_item.textItem.setTextWidth(max(px_w - 8.0, 20.0))
+            else:
+                text_item.textItem.setTextWidth(-1)
+            # Page size gives Qt's text document a stable editing box.  Width controls wrapping;
+            # height is also persisted as part of the drawing even when content is shorter.
+            doc = text_item.textItem.document()
+            if bool(style.get("auto_wrap", True)):
+                doc.setPageSize(QtCore.QSizeF(max(px_w - 8.0, 20.0), max(px_h - 6.0, 16.0)))
+        except Exception:
+            pass
+
+    def _text_region_changed(self, did: str):
+        group = self.drawing_items.get(did)
+        drawing = self._drawing_by_id(did)
+        if not isinstance(group, dict) or drawing is None:
+            return
+        roi = group.get("roi")
+        if roi is None:
+            return
+        try:
+            pos = roi.pos(); size = roi.size()
+            current = (float(pos.x()), float(pos.y()), float(pos.x()+size.x()), float(pos.y()+size.y()))
+        except Exception:
+            return
+        previous = getattr(roi, "_magnet_prev_rect", current)
+        if self._ctrl_pressed() and not getattr(roi, "_magnet_guard", False):
+            left, bottom, right, top = current
+            pl, pb, pr, pt = previous
+            width_changed = abs((right-left) - (pr-pl)) > 1e-9
+            height_changed = abs((top-bottom) - (pt-pb)) > 1e-9
+            roi._magnet_guard = True
+            try:
+                if width_changed or height_changed:
+                    cursor = self._cursor_view_position()
+                    if cursor is not None:
+                        sx, sy = self._magnet_snap_point(*cursor)
+                        if width_changed:
+                            if abs(left-pl) >= abs(right-pr): left = sx
+                            else: right = sx
+                        if height_changed:
+                            if abs(bottom-pb) >= abs(top-pt): bottom = sy
+                            else: top = sy
+                        if right < left: left, right = right, left
+                        if top < bottom: bottom, top = top, bottom
+                        roi.setPos([left, bottom])
+                        roi.setSize([max(right-left, 1e-6), max(top-bottom, 1e-9)])
+                else:
+                    dx, dy = self._magnet_cursor_delta()
+                    if abs(dx) > 0 or abs(dy) > 0:
+                        roi.setPos([left + dx, bottom + dy])
+            finally:
+                roi._magnet_guard = False
+        try:
+            pos = roi.pos(); size = roi.size()
+            left = float(pos.x()); bottom = float(pos.y())
+            width = max(float(size.x()), 1e-6); height = max(float(size.y()), 1e-9)
+            drawing["time"] = left
+            drawing["price"] = bottom + height
+            drawing.setdefault("box", {})["width"] = width
+            drawing.setdefault("box", {})["height"] = height
+            roi._magnet_prev_rect = (left, bottom, left + width, bottom + height)
+            self._update_text_box_view(did, update_roi=False)
+        except Exception:
+            pass
+
+    def _sync_text_box(self, roi, drawing, emit=True):
+        try:
+            pos = roi.pos(); size = roi.size()
+            left = float(pos.x()); bottom = float(pos.y())
+            width = max(float(size.x()), 1e-6); height = max(float(size.y()), 1e-9)
+            drawing["time"] = left
+            drawing["price"] = bottom + height
+            drawing.setdefault("box", {})["width"] = width
+            drawing.setdefault("box", {})["height"] = height
+            if emit:
+                self.case.touch(); self.dirty.emit()
+        except Exception:
+            pass
+
+    def _render_text_box(self, drawing: dict):
+        did = drawing.get("id")
+        style, _box = self._normalize_text_drawing(drawing)
+        left, right, bottom, top = self._text_box_geometry(drawing)
+        width = max(right-left, 1e-6); height = max(top-bottom, 1e-9)
+
+        background = QtWidgets.QGraphicsRectItem(left, bottom, width, height)
+        background.setPen(QtGui.QPen(QtCore.Qt.NoPen))
+        background.setZValue(5)
+        background.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        self.plot.addItem(background)
+
+        border = QtWidgets.QGraphicsRectItem(left, bottom, width, height)
+        border.setBrush(QtGui.QBrush(QtCore.Qt.NoBrush))
+        border.setZValue(6)
+        border.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        self.plot.addItem(border)
+
+        text_item = MovableTextItem(text=str(drawing.get("text", "")), color=style.get("color", "#ffffff"), anchor=(0, 0))
+        text_item.setZValue(7)
+        text_item.setFlag(QtWidgets.QGraphicsItem.ItemIsMovable, False)
+        try:
+            text_item.setAcceptedMouseButtons(QtCore.Qt.RightButton)
+            text_item.textItem.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        except Exception:
+            pass
+        text_item.context_menu_callback = lambda d=did: self._show_drawing_context_menu(d)
+        self.plot.addItem(text_item)
+
+        roi = pg.RectROI([left, bottom], [width, height], pen=pg.mkPen((255,255,0,0), width=1), movable=True)
+        roi.setZValue(8)
+        roi.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+        self._set_roi_handles_visible(roi, False)
+        roi._magnet_guard = False
+        roi._magnet_prev_rect = (left, bottom, right, top)
+        self.plot.addItem(roi)
+
+        group = {"type": "text", "roi": roi, "text": text_item, "border": border, "background": background}
+        self.drawing_items[did] = group
+        for item in (roi, text_item, border, background):
+            self._register_drawing_hit_item(did, item)
+            try: item.setToolTip(f"text / {did}")
+            except Exception: pass
+
+        roi.sigRegionChanged.connect(lambda _=None, d=did: self._text_region_changed(d))
+        roi.sigRegionChangeFinished.connect(lambda obj=roi, d=drawing: self._sync_text_box(obj, d))
+        self._update_text_box_view(did, update_roi=False)
+
     def _select_drawing_id(self, did: str | None):
         self.selected_drawing_id = did
         self._refresh_selection_visuals()
@@ -1286,12 +1696,17 @@ class ChartWidget(QtWidgets.QWidget):
                     item.setPen(self._pen_from_style(drawing.get("style", {}), selected=selected))
                 except Exception:
                     pass
-            elif dtype == "text":
-                try:
-                    base = drawing.get("style", {}).get("color", "#ffffff")
-                    item.setColor("#ffff00" if selected else base)
-                except Exception:
-                    pass
+            elif dtype == "text" and isinstance(item, dict):
+                roi = item.get("roi")
+                if roi is not None:
+                    try:
+                        roi.setAcceptedMouseButtons(QtCore.Qt.LeftButton if selected else QtCore.Qt.NoButton)
+                        roi.setPen(pg.mkPen("#ffff00" if selected else (255, 255, 0, 0), width=2 if selected else 1))
+                        self._set_roi_handles_visible(roi, selected)
+                    except Exception:
+                        pass
+                # Selection is represented by the yellow resize box, never by changing text color.
+                self._update_text_box_view(did, update_roi=False)
             elif dtype == "rectangle" and isinstance(item, dict):
                 roi = item.get("roi")
                 if roi is not None:
@@ -1321,9 +1736,9 @@ class ChartWidget(QtWidgets.QWidget):
         if dtype == "text":
             settings_action = menu.addAction("文字設定")
             settings_action.triggered.connect(lambda: self._open_text_settings(did))
-            color_action = menu.addAction("改顏色")
+            color_action = menu.addAction("改文字顏色")
             color_action.triggered.connect(lambda: self._change_text_color(did))
-            size_action = menu.addAction("改大小")
+            size_action = menu.addAction("改字體大小")
             size_action.triggered.connect(lambda: self._change_text_size(did))
         elif dtype == "rectangle":
             settings_action = menu.addAction("長方形設定")
@@ -1440,18 +1855,28 @@ class ChartWidget(QtWidgets.QWidget):
         drawing = self._drawing_by_id(did)
         if drawing is None:
             return
-        style = drawing.setdefault("style", {})
+        style, _box = self._normalize_text_drawing(drawing)
         dialog = TextSettingsDialog(
-            style.get("color", "#ffffff"),
-            int(style.get("font_size", 12)),
+            text=str(drawing.get("text", "")),
+            text_color=style.get("color", "#ffffff"),
+            font_size=int(style.get("font_size", 12)),
+            bold=bool(style.get("bold", False)),
+            italic=bool(style.get("italic", False)),
+            border_enabled=bool(style.get("border_enabled", False)),
+            border_color=style.get("border_color", "#ffffff"),
+            border_width=int(style.get("border_width", 1)),
+            background_enabled=bool(style.get("background_enabled", False)),
+            background_color=style.get("background_color", "#181c27"),
+            background_opacity=int(style.get("background_opacity", 0)),
+            auto_wrap=bool(style.get("auto_wrap", True)),
             save_template_callback=lambda payload: self._save_template_interactive("text", payload),
             parent=self,
         )
         if dialog.exec() != QtWidgets.QDialog.Accepted:
             return
-        color, font_size = dialog.values()
-        style["color"] = color
-        style["font_size"] = int(font_size)
+        text, new_style = dialog.values()
+        drawing["text"] = text
+        drawing["style"] = new_style
         self._commit_drawing_change()
 
     def _change_text_color(self, did: str):
@@ -1855,22 +2280,8 @@ class ChartWidget(QtWidgets.QWidget):
                 item.sigRegionChangeFinished.connect(lambda obj=item, d=drawing: self._sync_trend(obj, d))
                 self.plot.addItem(item)
             elif dtype == "text":
-                item = MovableTextItem(
-                    text=drawing.get("text", ""),
-                    color=style.get("color", "#ffffff"),
-                    anchor=(0, 0),
-                )
-                font = QtGui.QFont(); font.setPointSize(int(style.get("font_size", 12)))
-                try:
-                    item.textItem.setFont(font)
-                except Exception:
-                    pass
-                item.setPos(float(drawing["time"]), float(drawing["price"]))
-                item.setFlag(QtWidgets.QGraphicsItem.ItemIsMovable, True)
-                item.magnet_callback = self._magnet_snap_point
-                item.context_menu_callback = lambda d=did: self._show_drawing_context_menu(d)
-                item.movementFinished.connect(lambda obj=item, d=drawing: self._sync_text(obj, d))
-                self.plot.addItem(item)
+                self._render_text_box(drawing)
+                continue
             elif dtype == "rectangle":
                 self._render_rectangle(drawing)
                 continue
@@ -1901,8 +2312,9 @@ class ChartWidget(QtWidgets.QWidget):
             elif d.get("type") == "trend_line":
                 self._sync_trend(item, d, emit=False)
             elif d.get("type") == "text":
-                pos = item.pos()
-                d["time"] = float(pos.x()); d["price"] = float(pos.y())
+                roi = item.get("roi") if isinstance(item, dict) else None
+                if roi is not None:
+                    self._sync_text_box(roi, d, emit=False)
             elif d.get("type") == "rectangle":
                 roi = item.get("roi") if isinstance(item, dict) else None
                 if roi is not None:

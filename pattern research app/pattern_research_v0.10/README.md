@@ -181,3 +181,12 @@ Example order record:
 - 修正 Text Drawing 右鍵沒有選單的問題。
 - Text 右鍵選單現在包含：文字設定、改顏色、改大小、模板，以及最底部的刪除。
 - Text 內部文字物件不再攔截右鍵；拖曳與 Ctrl Magnet 功能維持不變。
+
+### v0.1.10 Text Box Drawing
+- Text 升級為可調整寬高的 Text Box Drawing。
+- 文字設定改為 TradingView-like 編輯器：文字內容、文字顏色、字體大小、粗體、斜體、背景、框線、自動換行。
+- 文字顏色與框線顏色完全獨立。
+- 框線可以關閉；即使無框線，左鍵雙擊選取後仍顯示黃色選取框與 resize handles。
+- 選取後可拖曳整個文字框，亦可拖曳 handles 修改寬、高；幾何資訊保存到 Case JSON 的 text `box`。
+- Text Box 保留 Ctrl magnet，拖曳與 resize 時可吸附已揭露 K 棒。
+- 舊版 text drawing 沒有 `box` / 新 style 欄位時會自動套用相容預設值。
