@@ -20,8 +20,11 @@ class ResearchCase:
     case: dict[str, Any]
     market_data: dict[str, Any]
     time_range: dict[str, Any]
+    time_context: dict[str, Any]
     display: dict[str, Any]
     replay: dict[str, Any]
+    calendar: dict[str, Any] = field(default_factory=dict)
+    reference_levels: dict[str, Any] = field(default_factory=dict)
     patterns: list[dict[str, Any]] = field(default_factory=list)
     intraday_notes: list[dict[str, Any]] = field(default_factory=list)
     drawings: list[dict[str, Any]] = field(default_factory=list)
@@ -35,13 +38,25 @@ class ResearchCase:
         if missing:
             raise ValueError(f"Case JSON missing required fields: {missing}")
 
+        # Backward compatibility: older cases had no explicit time_context.
+        # We infer it once from their saved display timezone, then persist it on
+        # the next save. Later display-timezone changes do not alter this value.
+        legacy_display = dict(data.get("display", {}))
+        inferred_case_tz = legacy_display.get("timezone", "UTC")
+        time_context = dict(data.get("time_context", {}))
+        time_context.setdefault("case_timezone", inferred_case_tz)
+        time_context.setdefault("canonical_timezone", "UTC")
+
         case = cls(
             schema_version=str(data.get("schema_version", "0.1")),
             case=dict(data["case"]),
             market_data=dict(data["market_data"]),
             time_range=dict(data["time_range"]),
-            display=dict(data.get("display", {})),
+            time_context=time_context,
+            display=legacy_display,
             replay=dict(data.get("replay", {})),
+            calendar=dict(data.get("calendar", {})),
+            reference_levels=dict(data.get("reference_levels", {})),
             patterns=list(data.get("patterns", [])),
             intraday_notes=list(data.get("intraday_notes", [])),
             drawings=list(data.get("drawings", [])),
@@ -61,8 +76,11 @@ class ResearchCase:
         self.market_data.setdefault("source_type", "txt")
         self.market_data.setdefault("resolution", "M1")
 
+        self.time_context.setdefault("case_timezone", self.display.get("timezone", "UTC"))
+        self.time_context.setdefault("canonical_timezone", "UTC")
+
         self.display.setdefault("view_timeframe", "M5")
-        self.display.setdefault("timezone", "Asia/Taipei")
+        self.display.setdefault("timezone", self.time_context.get("case_timezone", "UTC"))
         self.display.setdefault("x_tick_interval", "15m")
 
         replay_start = self.time_range.get("replay_start")
@@ -85,8 +103,11 @@ class ResearchCase:
             "case": self.case,
             "market_data": self.market_data,
             "time_range": self.time_range,
+            "time_context": self.time_context,
             "display": self.display,
             "replay": self.replay,
+            "calendar": self.calendar,
+            "reference_levels": self.reference_levels,
             "patterns": self.patterns,
             "intraday_notes": self.intraday_notes,
             "drawings": self.drawings,

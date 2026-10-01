@@ -674,6 +674,7 @@ class ChartWidget(QtWidgets.QWidget):
         self.auto_all_mode = False
         self._syncing_auto_all = False
         self.order_events: list[dict] = []
+        self.show_previous_rth = False
 
         pg.setConfigOption("background", "#181c27")
         pg.setConfigOption("foreground", "white")
@@ -830,6 +831,7 @@ class ChartWidget(QtWidgets.QWidget):
         self.timezone_combo.blockSignals(False)
         self.axis.set_timezone(self.timezone_combo.currentText())
         self.axis.set_tick_interval(self.x_tick_combo.currentText())
+        self.show_previous_rth = bool(case.display.get("show_previous_rth", False))
 
         self.rebuild_drawings()
         self.render(reset_x=True)
@@ -908,6 +910,7 @@ class ChartWidget(QtWidgets.QWidget):
         else:
             self.ohlc_label.setText("開=--  高=--  低=--  收=--")
 
+        self._render_reference_levels()
         self._render_drawing_items()
         self._render_order_markers()
 
@@ -925,6 +928,34 @@ class ChartWidget(QtWidgets.QWidget):
 
         if self.auto_all_mode:
             self.auto_all()
+
+
+    def set_previous_rth_visible(self, enabled: bool):
+        self.show_previous_rth = bool(enabled)
+        if self.replay is not None:
+            self.render(reset_x=False)
+
+    def _render_reference_levels(self):
+        if not self.show_previous_rth or self.case is None:
+            return
+        rth = getattr(self.case, "reference_levels", {}).get("previous_rth")
+        if not isinstance(rth, dict):
+            return
+        try:
+            high = float(rth["high"])
+            low = float(rth["low"])
+        except Exception:
+            return
+
+        pen = pg.mkPen((255, 255, 255, 185), width=1, style=QtCore.Qt.DashLine)
+        high_line = pg.InfiniteLine(pos=high, angle=0, movable=False, pen=pen)
+        low_line = pg.InfiniteLine(pos=low, angle=0, movable=False, pen=pen)
+        high_line.setZValue(2)
+        low_line.setZValue(2)
+        high_line.setToolTip(f"Previous RTH High: {high:.2f}")
+        low_line.setToolTip(f"Previous RTH Low: {low:.2f}")
+        self.plot.addItem(high_line)
+        self.plot.addItem(low_line)
 
     def _draw_bars(self, bars: pd.DataFrame):
         t = bars["timestamp"].to_numpy(float)

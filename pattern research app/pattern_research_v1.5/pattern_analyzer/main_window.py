@@ -55,7 +55,7 @@ QSplitter::handle { background:#252c3b; }
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, case_root: str | Path):
         super().__init__()
-        self.setWindowTitle("Pattern Analyzer v1.0")
+        self.setWindowTitle("Pattern Analyzer v1.5")
         self.resize(1550, 900)
         self.setStyleSheet(APP_STYLE)
 
@@ -115,6 +115,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.library.case_open_requested.connect(self.open_case)
         self.chart.dirty.connect(self.mark_dirty)
         self.research.changed.connect(self.mark_dirty)
+        self.research.reference_levels_changed.connect(self.chart.set_previous_rth_visible)
         self.order.changed.connect(self.mark_dirty)
         self.order.fills_changed.connect(self._refresh_order_markers)
         self.chart.order_prefill_requested.connect(self.order.prefill_from_chart)
@@ -158,8 +159,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chart.set_order_events(self.order.visible_fill_events(), render=False)
         self.chart.set_context(case, raw, replay, path)
         self.research.set_case(case, self.current_replay_time_text)
+        self.chart.set_previous_rth_visible(self.research.rth_checkbox.isChecked())
         self.update_status()
-        self.setWindowTitle(f"Pattern Analyzer v1.0 — {case.case.get('symbol')} — {self.case_path.name}")
+        self.setWindowTitle(f"Pattern Analyzer v1.5 — {case.case.get('symbol')} — {self.case_path.name}")
 
     def current_replay_time_text(self) -> str:
         if self.replay is None or self.case is None:

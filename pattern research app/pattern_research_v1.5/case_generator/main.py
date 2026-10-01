@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import sys
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, time
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+from shared_core.time_model import build_case_time_range
 
 from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
@@ -23,7 +25,7 @@ QGroupBox { border:1px solid #2a3142; border-radius:4px; margin-top:8px; padding
 class GeneratorWindow(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Case Generator v0.1")
+        self.setWindowTitle("Case Generator v1.5")
         self.resize(720, 520)
         self.setStyleSheet(STYLE)
 
@@ -79,10 +81,6 @@ class GeneratorWindow(QtWidgets.QWidget):
         path = QtWidgets.QFileDialog.getExistingDirectory(self, "Output Folder", self.output_edit.text())
         if path: self.output_edit.setText(path)
 
-    def _combine(self, day, qtime, tz_name):
-        value = datetime(day.year(), day.month(), day.day(), qtime.hour(), qtime.minute(), qtime.second())
-        return value.replace(tzinfo=ZoneInfo(tz_name)).isoformat()
-
     def generate(self):
         source = Path(self.source_edit.text()).expanduser()
         if not source.exists():
@@ -107,6 +105,14 @@ class GeneratorWindow(QtWidgets.QWidget):
         for i in range(count):
             day = d0.addDays(i)
             day_str = day.toString("yyyy-MM-dd")
+            py_day = date(day.year(), day.month(), day.day())
+            tr = build_case_time_range(
+                py_day,
+                time(self.a_time.time().hour(), self.a_time.time().minute(), self.a_time.time().second()),
+                time(self.b_time.time().hour(), self.b_time.time().minute(), self.b_time.time().second()),
+                time(self.c_time.time().hour(), self.c_time.time().minute(), self.c_time.time().second()),
+                tz_name,
+            )
             case = {
                 "schema_version": "0.1",
                 "case": {"id": f"case-{uuid.uuid4().hex[:12]}", "symbol": symbol, "research_date": day_str},
@@ -116,13 +122,13 @@ class GeneratorWindow(QtWidgets.QWidget):
                     "source_path": str(source.resolve()),
                     "resolution": "M1"
                 },
-                "time_range": {
-                    "data_start": self._combine(day, self.a_time.time(), tz_name),
-                    "replay_start": self._combine(day, self.b_time.time(), tz_name),
-                    "default_end": self._combine(day, self.c_time.time(), tz_name)
+                "time_range": tr,
+                "time_context": {
+                    "case_timezone": tz_name,
+                    "canonical_timezone": "UTC"
                 },
                 "display": {"view_timeframe": self.view_tf.currentText(), "timezone": tz_name, "x_tick_interval": "15m"},
-                "replay": {"step_minutes": 1, "current_time": self._combine(day, self.b_time.time(), tz_name)},
+                "replay": {"step_minutes": 1, "current_time": tr["replay_start"]},
                 "patterns": [], "intraday_notes": [], "drawings": [],
                 "metadata": {"created_at": datetime.now(tz=ZoneInfo("UTC")).isoformat(), "updated_at": datetime.now(tz=ZoneInfo("UTC")).isoformat()}
             }

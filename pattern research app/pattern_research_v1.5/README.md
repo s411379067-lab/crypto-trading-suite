@@ -1,3 +1,20 @@
+# Pattern Research v1.5
+
+## v1.5 Previous RTH workflow
+- Adds a separate `Case Enricher` program (`run_case_enricher.py`).
+- Weekday cases: finds the previous complete 09:30-16:00 America/New_York RTH session and writes H/L + high/low timestamps into `reference_levels.previous_rth`.
+- Weekend cases: do not receive Previous RTH data, are marked `calendar.is_weekend=true`, and the JSON filename receives `(W)`.
+- Pattern Analyzer only reads the stored JSON reference levels. Changing `display.timezone` never changes the RTH values.
+- The right Research panel has a `Previous RTH H/L` checkbox. Cases without enriched data show `無 RTH 資料` and the checkbox is disabled.
+
+# Pattern Research v1.4
+
+## v1.4 time-model changes
+- Adds `time_context.case_timezone` and `time_context.canonical_timezone`.
+- Display timezone is independent from the case timezone.
+- Case Generator now guarantees chronological A -> B -> C timestamps across midnight.
+- Example: A=08:00, B=09:30, C=04:30 produces C on the next calendar day.
+
 # Pattern Research v1.3
 
 ## v1.3 changes
