@@ -5,7 +5,6 @@ from shared_core.order_brackets import (
     create_pending_bracket,
     move_bracket_entry,
     move_bracket_leg,
-    set_bracket_group_qty,
     set_bracket_qty,
 )
 
@@ -50,26 +49,16 @@ def test_moving_one_leg_keeps_the_other_leg_unchanged():
     assert moved["groups"][0]["target_price"] == 101.0
 
 
-def test_group_lot_edit_updates_the_matching_sl_and_tp_group_together():
+def test_reducing_entry_lots_is_rejected_when_it_would_over_allocate_groups():
     bracket = create_pending_bracket("short", 100.0, 2.0)
-    group_id = bracket["groups"][0]["id"]
-    edited = set_bracket_group_qty(bracket, group_id, 0.75)
-
-    assert bracket["groups"][0]["qty"] == 2.0
-    assert edited["groups"][0]["qty"] == 0.75
-    assert available_bracket_qty(edited) == 1.25
-
-
-def test_total_lots_cannot_be_lower_than_existing_group_allocation():
-    bracket = create_pending_bracket("long", 100.0, 2.0)
 
     with pytest.raises(ValueError, match="allocated"):
         set_bracket_qty(bracket, 1.0)
 
 
-def test_group_lots_cannot_exceed_entry_lots():
+def test_entry_lots_can_increase_without_changing_existing_group_lots():
     bracket = create_pending_bracket("long", 100.0, 1.0)
-    group_id = bracket["groups"][0]["id"]
+    edited = set_bracket_qty(bracket, 2.5)
 
-    with pytest.raises(ValueError, match="exceeds"):
-        set_bracket_group_qty(bracket, group_id, 1.5)
+    assert edited["groups"][0]["qty"] == 1.0
+    assert available_bracket_qty(edited) == 1.5

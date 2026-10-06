@@ -20,7 +20,6 @@ from shared_core.order_brackets import (
     available_bracket_qty,
     move_bracket_entry,
     move_bracket_leg,
-    set_bracket_group_qty,
     set_bracket_qty,
 )
 from pattern_analyzer.drawing_templates import DrawingTemplateRepository
@@ -726,7 +725,7 @@ class ChartWidget(QtWidgets.QWidget):
         self.order_events: list[dict] = []
         self.order_segments: list[dict] = []
         self.pending_bracket: dict | None = None
-        self._pending_qty_controls: list[tuple[QtWidgets.QPushButton, float]] = []
+        self._pending_qty_controls: list[tuple[QtWidgets.QWidget, float]] = []
         self.show_all_orders = False
         self.show_previous_rth = False
         self.show_all_drawings = True
@@ -1492,13 +1491,10 @@ class ChartWidget(QtWidgets.QWidget):
             angle=0,
             movable=True,
             pen=pg.mkPen(color=entry_color, width=1, style=QtCore.Qt.DashLine),
-            label=f"{'SELL' if side == 'short' else 'BUY'} Entry  {qty:.4f}  ↕",
-            labelOpts={"position": 0.98, "color": entry_color},
         )
         entry_item.sigPositionChangeFinished.connect(
             lambda item=entry_item: self._pending_entry_drag_finished(item)
         )
-        self._add_pending_drag_handle(entry_item)
         entry_item.setZValue(30)
         self.plot.addItem(entry_item)
         self._add_pending_qty_control(
@@ -1514,38 +1510,23 @@ class ChartWidget(QtWidgets.QWidget):
                 target = float(group["target_price"])
             except (KeyError, TypeError, ValueError):
                 continue
-            for leg, price, color, text in (
-                ("stop", stop, (255, 179, 0), f"SL {index}  {group_qty:.4f}  ↕"),
-                ("target", target, (0, 196, 168), f"TP {index}  {group_qty:.4f}  ↕"),
+            for leg, price, color in (
+                ("stop", stop, (255, 179, 0)),
+                ("target", target, (0, 196, 168)),
             ):
                 item = pg.InfiniteLine(
                     pos=price,
                     angle=0,
                     movable=True,
                     pen=pg.mkPen(color=color, width=1, style=QtCore.Qt.DashLine),
-                    label=text,
-                    labelOpts={"position": 0.98, "color": color},
                 )
                 item.sigPositionChangeFinished.connect(
                     lambda line=item, group_id=group_id, leg=leg: self._pending_leg_drag_finished(line, group_id, leg)
                 )
-                self._add_pending_drag_handle(item)
                 item.setZValue(30)
                 self.plot.addItem(item)
-            self._add_pending_qty_control(
-                f"SL/TP {index}  {group_qty:.4f}", stop, (255, 179, 0),
-                lambda gid=group_id: self._edit_pending_group_qty(gid),
-            )
-
-    @staticmethod
-    def _add_pending_drag_handle(line):
-        """Add a clear square grip near the right edge of a pending-order line."""
-        handle = QtGui.QPainterPath()
-        handle.addRoundedRect(QtCore.QRectF(-0.5, -0.5, 1.0, 1.0), 0.12, 0.12)
-        line.markers.append((handle, 0.95, 12.0))
-        line._maxMarkerSize = max(line._maxMarkerSize, 6.0)
-        line.setToolTip("拖曳右側方形把手可調整此價格")
-        line.update()
+            self._add_pending_qty_control(f"SL {group_qty:.4f}", stop, (255, 179, 0))
+            self._add_pending_qty_control(f"TP {group_qty:.4f}", target, (0, 196, 168))
 
     def _clear_pending_qty_controls(self):
         for button, _price in self._pending_qty_controls:
@@ -1553,18 +1534,22 @@ class ChartWidget(QtWidgets.QWidget):
             button.deleteLater()
         self._pending_qty_controls = []
 
-    def _add_pending_qty_control(self, text: str, price: float, color, callback):
-        """Create a click target for changing Entry or an SL/TP group's lots."""
-        button = QtWidgets.QPushButton(text, self.graphics)
-        button.setFixedHeight(22)
-        button.setStyleSheet(
+    def _add_pending_qty_control(self, text: str, price: float, color, callback=None):
+        """Create the boxed lot label attached to a pending-order line."""
+        control = QtWidgets.QPushButton(text, self.graphics) if callback else QtWidgets.QLabel(text, self.graphics)
+        control.setFixedHeight(22)
+        control.setStyleSheet(
             f"background-color:#0d1420; border:1px solid rgb{tuple(color)}; border-radius:2px; "
             f"color:rgb{tuple(color)}; padding:1px 5px; font-weight:600;"
         )
-        button.setToolTip("點擊修改 lots；同組 SL 與 TP 會同步")
-        button.clicked.connect(callback)
-        button.hide()
-        self._pending_qty_controls.append((button, float(price)))
+        if callback:
+            control.setToolTip("點擊修改 Entry lots")
+            control.clicked.connect(callback)
+        else:
+            control.setToolTip("SL/TP lots 由 Entry 分配；不可直接修改")
+            control.setAlignment(QtCore.Qt.AlignCenter)
+        control.hide()
+        self._pending_qty_controls.append((control, float(price)))
 
     def _position_pending_qty_controls(self):
         if not self.pending_bracket:
@@ -1603,23 +1588,6 @@ class ChartWidget(QtWidgets.QWidget):
         )
         if accepted:
             self.pending_bracket_edited.emit(set_bracket_qty(self.pending_bracket, qty))
-
-    def _edit_pending_group_qty(self, group_id: str):
-        if not self.pending_bracket:
-            return
-        group = next((g for g in self.pending_bracket.get("groups", []) if str(g.get("id")) == group_id), None)
-        if group is None:
-            return
-        try:
-            current = float(group["qty"])
-            maximum = current + available_bracket_qty(self.pending_bracket)
-        except (KeyError, TypeError, ValueError):
-            return
-        qty, accepted = QtWidgets.QInputDialog.getDouble(
-            self, "SL/TP group lots", "Lots", current, 0.0001, maximum, 4,
-        )
-        if accepted:
-            self.pending_bracket_edited.emit(set_bracket_group_qty(self.pending_bracket, group_id, qty))
 
     def _pending_entry_drag_finished(self, item):
         if not self.pending_bracket:
