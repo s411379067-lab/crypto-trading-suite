@@ -25,13 +25,14 @@ def _write_case(path: Path, date: str, symbol: str, patterns: list[str]):
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
-def test_pattern_filter_any_all(tmp_path):
+def test_pattern_filter_any_all_and_exclusion_modes(tmp_path):
     _write_case(tmp_path / "a.json", "2026-09-01", "NAS100", ["開盤TR", "BOP"])
     _write_case(tmp_path / "b.json", "2026-09-02", "NAS100", ["開盤TR"])
     _write_case(tmp_path / "c.json", "2026-09-03", "SP500", ["BOM"])
+    _write_case(tmp_path / "d.json", "2026-09-04", "SP500", [])
 
     entries = scan_case_entries(tmp_path)
-    assert len(entries) == 3
+    assert len(entries) == 4
     assert collect_patterns(entries) == ["BOM", "BOP", "開盤TR"]
 
     any_rows = filter_case_entries(entries, ["BOP", "BOM"], "ANY")
@@ -39,6 +40,15 @@ def test_pattern_filter_any_all(tmp_path):
 
     all_rows = filter_case_entries(entries, ["開盤TR", "BOP"], "ALL")
     assert [x.path.name for x in all_rows] == ["a.json"]
+
+    exclude_any_rows = filter_case_entries(entries, ["開盤TR", "BOM"], "EXCLUDE_ANY")
+    assert [x.path.name for x in exclude_any_rows] == ["d.json"]
+
+    exclude_all_rows = filter_case_entries(entries, ["開盤TR", "BOP"], "EXCLUDE_ALL")
+    assert {x.path.name for x in exclude_all_rows} == {"b.json", "c.json", "d.json"}
+
+    with_patterns_only = filter_case_entries(entries, [], has_patterns_only=True)
+    assert {x.path.name for x in with_patterns_only} == {"a.json", "b.json", "c.json"}
 
 
 def test_invalid_json_is_ignored(tmp_path):

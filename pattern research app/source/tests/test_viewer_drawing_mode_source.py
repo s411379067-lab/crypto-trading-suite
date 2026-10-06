@@ -40,3 +40,9 @@ def test_viewer_selected_case_shows_realized_pnl():
     assert "self._set_selected_realized_pnl(realized_pnl)" in VIEWER_WINDOW
     assert 'color, value = "#7bd88f"' in VIEWER_WINDOW
     assert 'color, value = "#ff6b6b"' in VIEWER_WINDOW
+
+
+def test_viewer_exposes_pattern_presence_and_exclusion_filters():
+    assert 'self.has_patterns_only_checkbox = QtWidgets.QCheckBox("只顯示有 Pattern 的 Cases")' in VIEWER_WINDOW
+    assert 'self.mode_combo.addItem("不包含任一選到 Pattern", "EXCLUDE_ANY")' in VIEWER_WINDOW
+    assert 'self.mode_combo.addItem("不包含所有選到 Pattern", "EXCLUDE_ALL")' in VIEWER_WINDOW

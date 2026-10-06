@@ -86,16 +86,26 @@ def filter_case_entries(
     entries: list[ViewerCaseEntry],
     selected_patterns: list[str] | tuple[str, ...] | set[str],
     mode: str = "ANY",
+    has_patterns_only: bool = False,
 ) -> list[ViewerCaseEntry]:
     selected = {str(x).strip() for x in selected_patterns if str(x).strip()}
-    if not selected:
-        return list(entries)
-
     mode = str(mode or "ANY").upper()
     out = []
     for entry in entries:
         tags = set(entry.patterns)
-        matched = selected.issubset(tags) if mode == "ALL" else bool(selected & tags)
+        if has_patterns_only and not tags:
+            continue
+        if not selected:
+            out.append(entry)
+            continue
+        if mode == "ALL":
+            matched = selected.issubset(tags)
+        elif mode == "EXCLUDE_ANY":
+            matched = not bool(selected & tags)
+        elif mode == "EXCLUDE_ALL":
+            matched = not selected.issubset(tags)
+        else:
+            matched = bool(selected & tags)
         if matched:
             out.append(entry)
     return out

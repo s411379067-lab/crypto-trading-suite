@@ -118,11 +118,18 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.mode_combo = QtWidgets.QComboBox()
         self.mode_combo.addItem("ANY — 任一 Pattern", "ANY")
         self.mode_combo.addItem("ALL — 所有 Pattern", "ALL")
+        self.mode_combo.addItem("不包含任一選到 Pattern", "EXCLUDE_ANY")
+        self.mode_combo.addItem("不包含所有選到 Pattern", "EXCLUDE_ALL")
         mode_row.addWidget(self.mode_combo, 1)
         self.btn_clear_patterns = QtWidgets.QPushButton("清除")
         self.btn_clear_patterns.setFixedWidth(58)
         mode_row.addWidget(self.btn_clear_patterns)
         fl.addLayout(mode_row)
+
+        self.has_patterns_only_checkbox = QtWidgets.QCheckBox("只顯示有 Pattern 的 Cases")
+        self.has_patterns_only_checkbox.setChecked(False)
+        self.has_patterns_only_checkbox.setToolTip("隱藏沒有任何 Pattern 標記的 Case；可單獨使用或與 Pattern 篩選合併")
+        fl.addWidget(self.has_patterns_only_checkbox)
 
         self.pattern_list = QtWidgets.QListWidget()
         self.pattern_list.setMinimumHeight(160)
@@ -215,6 +222,7 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.btn_folder.clicked.connect(self.choose_folder)
         self.btn_refresh.clicked.connect(lambda: self.refresh_cases(select_first=False))
         self.mode_combo.currentIndexChanged.connect(self.apply_filter)
+        self.has_patterns_only_checkbox.toggled.connect(self.apply_filter)
         self.btn_clear_patterns.clicked.connect(self.clear_pattern_filter)
         self.pattern_search.textChanged.connect(self._apply_pattern_search_visibility)
         self.pattern_list.itemChanged.connect(self.apply_filter)
@@ -402,7 +410,8 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
             return
         selected = self._selected_patterns()
         mode = str(self.mode_combo.currentData() or "ANY")
-        self.filtered_entries = filter_case_entries(self.entries, selected, mode)
+        has_patterns_only = self.has_patterns_only_checkbox.isChecked()
+        self.filtered_entries = filter_case_entries(self.entries, selected, mode, has_patterns_only)
 
         target_path = preferred_path or self.current_case_path
         self._updating_case_list = True
@@ -421,6 +430,7 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.case_count_label.setText(
             f"Cases: {len(self.filtered_entries)} / {len(self.entries)}"
             + (f"   |   Filter: {len(selected)}" if selected else "")
+            + ("   |   有 Pattern" if has_patterns_only else "")
         )
         self.case_list.blockSignals(False)
         self._updating_case_list = False
