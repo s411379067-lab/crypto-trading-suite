@@ -1489,6 +1489,7 @@ class ChartWidget(QtWidgets.QWidget):
         entry_item.sigPositionChangeFinished.connect(
             lambda item=entry_item: self._pending_entry_drag_finished(item)
         )
+        self._add_pending_drag_handle(entry_item)
         entry_item.setZValue(30)
         self.plot.addItem(entry_item)
 
@@ -1515,8 +1516,19 @@ class ChartWidget(QtWidgets.QWidget):
                 item.sigPositionChangeFinished.connect(
                     lambda line=item, group_id=group_id, leg=leg: self._pending_leg_drag_finished(line, group_id, leg)
                 )
+                self._add_pending_drag_handle(item)
                 item.setZValue(30)
                 self.plot.addItem(item)
+
+    @staticmethod
+    def _add_pending_drag_handle(line):
+        """Add a clear square grip near the right edge of a pending-order line."""
+        handle = QtGui.QPainterPath()
+        handle.addRoundedRect(QtCore.QRectF(-0.5, -0.5, 1.0, 1.0), 0.12, 0.12)
+        line.markers.append((handle, 0.95, 12.0))
+        line._maxMarkerSize = max(line._maxMarkerSize, 6.0)
+        line.setToolTip("拖曳右側方形把手可調整此價格")
+        line.update()
 
     def _pending_entry_drag_finished(self, item):
         if not self.pending_bracket:
