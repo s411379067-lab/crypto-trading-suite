@@ -16,6 +16,7 @@ from shared_core.note_callout import align_note_x_to_timeframe, find_m1_close, l
 from shared_core.rth import summarize_intraday_volatility_payload
 from shared_core.replay_stats import summarize_current_replay_range
 from shared_core.ohlc import format_ohlc_text
+from shared_core.order_brackets import move_bracket_entry, move_bracket_leg
 from pattern_analyzer.drawing_templates import DrawingTemplateRepository
 
 
@@ -692,6 +693,7 @@ class ChartWidget(QtWidgets.QWidget):
     view_timeframe_changed = QtCore.Signal(str)
     timezone_changed = QtCore.Signal(str)
     order_prefill_requested = QtCore.Signal(str, float)
+    pending_bracket_edited = QtCore.Signal(object)
 
     def __init__(self, parent=None, *, drawing_interaction_enabled: bool = True):
         super().__init__(parent)
@@ -1461,7 +1463,7 @@ class ChartWidget(QtWidgets.QWidget):
             self.plot.addItem(item)
 
     def _render_pending_bracket(self):
-        """Render the first-stage session-only Entry / SL / TP bracket layout."""
+        """Render the session-only, draggable Entry / SL / TP bracket layout."""
         bracket = self.pending_bracket
         if not bracket:
             return
@@ -1469,29 +1471,68 @@ class ChartWidget(QtWidgets.QWidget):
             side = str(bracket["side"])
             entry = float(bracket["entry_price"])
             qty = float(bracket["qty"])
-            group = list(bracket["groups"])[0]
-            stop = float(group["stop_price"])
-            target = float(group["target_price"])
-        except (KeyError, TypeError, ValueError, IndexError):
+            groups = list(bracket["groups"])
+        except (KeyError, TypeError, ValueError):
+            return
+        if not groups:
             return
 
         entry_color = (255, 82, 95) if side == "short" else (31, 121, 245)
-        rows = [
-            (entry, entry_color, QtCore.Qt.DashLine, f"{'SELL' if side == 'short' else 'BUY'} Entry  {qty:.4f}"),
-            (stop, (255, 179, 0), QtCore.Qt.DashLine, f"SL  {qty:.4f}"),
-            (target, (0, 196, 168), QtCore.Qt.DashLine, f"TP  {qty:.4f}"),
-        ]
-        for price, color, style, label in rows:
-            item = pg.InfiniteLine(
-                pos=price,
-                angle=0,
-                movable=False,
-                pen=pg.mkPen(color=color, width=1, style=style),
-                label=label,
-                labelOpts={"position": 0.02, "color": color},
-            )
-            item.setZValue(30)
-            self.plot.addItem(item)
+        entry_item = pg.InfiniteLine(
+            pos=entry,
+            angle=0,
+            movable=True,
+            pen=pg.mkPen(color=entry_color, width=1, style=QtCore.Qt.DashLine),
+            label=f"{'SELL' if side == 'short' else 'BUY'} Entry  {qty:.4f}",
+            labelOpts={"position": 0.02, "color": entry_color},
+        )
+        entry_item.sigPositionChangeFinished.connect(
+            lambda item=entry_item: self._pending_entry_drag_finished(item)
+        )
+        entry_item.setZValue(30)
+        self.plot.addItem(entry_item)
+
+        for index, group in enumerate(groups, start=1):
+            try:
+                group_id = str(group["id"])
+                group_qty = float(group["qty"])
+                stop = float(group["stop_price"])
+                target = float(group["target_price"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            for leg, price, color, text in (
+                ("stop", stop, (255, 179, 0), f"SL {index}  {group_qty:.4f}"),
+                ("target", target, (0, 196, 168), f"TP {index}  {group_qty:.4f}"),
+            ):
+                item = pg.InfiniteLine(
+                    pos=price,
+                    angle=0,
+                    movable=True,
+                    pen=pg.mkPen(color=color, width=1, style=QtCore.Qt.DashLine),
+                    label=text,
+                    labelOpts={"position": 0.02, "color": color},
+                )
+                item.sigPositionChangeFinished.connect(
+                    lambda line=item, group_id=group_id, leg=leg: self._pending_leg_drag_finished(line, group_id, leg)
+                )
+                item.setZValue(30)
+                self.plot.addItem(item)
+
+    def _pending_entry_drag_finished(self, item):
+        if not self.pending_bracket:
+            return
+        try:
+            self.pending_bracket_edited.emit(move_bracket_entry(self.pending_bracket, float(item.value())))
+        except (TypeError, ValueError, KeyError):
+            return
+
+    def _pending_leg_drag_finished(self, item, group_id: str, leg: str):
+        if not self.pending_bracket:
+            return
+        try:
+            self.pending_bracket_edited.emit(move_bracket_leg(self.pending_bracket, group_id, leg, float(item.value())))
+        except (TypeError, ValueError, KeyError):
+            return
 
     def auto_scale(self):
         self.auto_all_mode = False

@@ -198,6 +198,13 @@ class OrderPanel(QtWidgets.QWidget):
         self.pending_bracket["order_type"] = order_type
         self.pending_bracket_changed.emit(dict(self.pending_bracket))
 
+    def update_pending_bracket(self, bracket: dict):
+        """Keep the session-only pending bracket in sync with chart dragging."""
+        if not isinstance(bracket, dict):
+            return
+        self.pending_bracket = dict(bracket)
+        self.pending_bracket_changed.emit(dict(self.pending_bracket))
+
     def _new_order_record(self, side: str, order_type: str, requested_price, qty: float, origin="place"):
         ts = self._current_ts()
         return {

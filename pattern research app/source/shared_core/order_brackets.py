@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from copy import deepcopy
 
 
 def create_pending_bracket(side: str, entry_price: float, qty: float, risk_fraction: float = 0.01) -> dict:
@@ -32,3 +33,29 @@ def create_pending_bracket(side: str, entry_price: float, qty: float, risk_fract
             "target_price": target_price,
         }],
     }
+
+
+def move_bracket_entry(bracket: dict, entry_price: float) -> dict:
+    """Move Entry and retain every group's SL/TP distance from Entry."""
+    updated = deepcopy(bracket)
+    old_entry = float(updated["entry_price"])
+    entry_price = float(entry_price)
+    delta = entry_price - old_entry
+    updated["entry_price"] = entry_price
+    for group in updated.get("groups", []):
+        group["stop_price"] = float(group["stop_price"]) + delta
+        group["target_price"] = float(group["target_price"]) + delta
+    return updated
+
+
+def move_bracket_leg(bracket: dict, group_id: str, leg: str, price: float) -> dict:
+    """Move one SL or TP leg without changing the other leg in its group."""
+    key = {"stop": "stop_price", "target": "target_price"}.get(str(leg))
+    if key is None:
+        raise ValueError("Bracket leg must be stop or target")
+    updated = deepcopy(bracket)
+    for group in updated.get("groups", []):
+        if str(group.get("id")) == str(group_id):
+            group[key] = float(price)
+            return updated
+    raise ValueError("Bracket group was not found")
