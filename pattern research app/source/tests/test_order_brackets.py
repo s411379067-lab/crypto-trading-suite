@@ -1,10 +1,14 @@
 import pytest
+import pandas as pd
+from pyqtgraph.Qt import QtWidgets
 
+from pattern_analyzer.order_panel import OrderPanel
 from shared_core.order_brackets import (
     available_bracket_qty,
     create_pending_bracket,
     move_bracket_entry,
     move_bracket_leg,
+    pending_bracket_order_specs,
     set_bracket_group_qty,
     set_bracket_qty,
 )
@@ -80,3 +84,49 @@ def test_group_lots_cannot_exceed_entry_lots():
 
     with pytest.raises(ValueError, match="exceeds"):
         set_bracket_group_qty(bracket, group_id, 1.5)
+
+
+def test_pending_submit_specs_include_entry_stop_and_target_with_linked_lots():
+    bracket = create_pending_bracket("short", 100.0, 2.0)
+    bracket["groups"][0]["qty"] = 0.75
+    specs = pending_bracket_order_specs(bracket)
+
+    assert [(spec["role"], spec["side"], spec["order_type"], spec["qty"]) for spec in specs] == [
+        ("entry", "short", "limit", 2.0),
+        ("stop", "long", "stop market", 0.75),
+        ("target", "long", "limit", 0.75),
+    ]
+
+
+def test_pending_submit_keeps_brackets_linked_until_entry_then_oco_exits():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    class Case:
+        orders = []
+        display = {"timezone": "UTC"}
+
+        def touch(self):
+            pass
+
+    class Replay:
+        current_ts = 0.0
+
+    panel = OrderPanel()
+    panel.case = Case()
+    panel.raw_df = pd.DataFrame([
+        {"timestamp": 60.0, "low": 99.0, "high": 101.0, "close": 100.0},
+        {"timestamp": 120.0, "low": 98.0, "high": 99.0, "close": 99.0},
+    ])
+    panel.replay = Replay()
+    panel.pending_bracket = create_pending_bracket("short", 100.0, 1.0)
+
+    panel.submit_pending_bracket()
+    assert [record["bracket_role"] for record in panel.pending_orders] == ["entry", "stop", "target"]
+
+    panel.process_replay_advance(0.0, 60.0)
+    assert [record["bracket_role"] for record in panel.case.orders] == ["entry"]
+    assert {record["bracket_role"] for record in panel.pending_orders} == {"stop", "target"}
+
+    panel.process_replay_advance(60.0, 120.0)
+    assert [record["bracket_role"] for record in panel.case.orders] == ["entry", "target"]
+    assert panel.pending_orders == []

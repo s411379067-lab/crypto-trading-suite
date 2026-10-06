@@ -77,6 +77,7 @@ class TimeAxis(pg.AxisItem):
         self.timezone_name = timezone_name
         self.tick_interval = tick_interval if tick_interval in self.INTERVAL_SECONDS else "15m"
 
+
     def set_timezone(self, timezone_name: str):
         self.timezone_name = timezone_name
         self.picture = None
@@ -132,6 +133,16 @@ class TimeAxis(pg.AxisItem):
             except Exception:
                 labels.append("")
         return labels
+
+
+class DoubleClickButton(QtWidgets.QPushButton):
+    """A compact chart control whose action intentionally requires a double click."""
+
+    double_clicked = QtCore.Signal()
+
+    def mouseDoubleClickEvent(self, event):
+        self.double_clicked.emit()
+        event.accept()
 
 
 class MovableTextItem(pg.TextItem):
@@ -700,6 +711,7 @@ class ChartWidget(QtWidgets.QWidget):
     timezone_changed = QtCore.Signal(str)
     order_prefill_requested = QtCore.Signal(str, float)
     pending_bracket_edited = QtCore.Signal(object)
+    pending_bracket_submit_requested = QtCore.Signal()
 
     def __init__(self, parent=None, *, drawing_interaction_enabled: bool = True):
         super().__init__(parent)
@@ -1502,6 +1514,10 @@ class ChartWidget(QtWidgets.QWidget):
             f"Entry {qty:.4f}", entry, entry_color,
             lambda: self._edit_pending_entry_qty(),
         )
+        self._add_pending_qty_control(
+            "Pending", entry, entry_color,
+            lambda: self.pending_bracket_submit_requested.emit(), offset_x=92,
+        )
 
         for index, group in enumerate(groups, start=1):
             try:
@@ -1528,11 +1544,11 @@ class ChartWidget(QtWidgets.QWidget):
                 self.plot.addItem(item)
             self._add_pending_qty_control(
                 f"SL {group_qty:.4f}", stop, (255, 179, 0),
-                lambda gid=group_id: self._edit_pending_group_qty(gid),
+                lambda gid=group_id: self._edit_pending_group_qty(gid), double_click=True,
             )
             self._add_pending_qty_control(
                 f"TP {group_qty:.4f}", target, (0, 196, 168),
-                lambda gid=group_id: self._edit_pending_group_qty(gid),
+                lambda gid=group_id: self._edit_pending_group_qty(gid), double_click=True,
             )
 
     def _clear_pending_qty_controls(self):
@@ -1541,21 +1557,22 @@ class ChartWidget(QtWidgets.QWidget):
             button.deleteLater()
         self._pending_qty_controls = []
 
-    def _add_pending_qty_control(self, text: str, price: float, color, callback=None):
+    def _add_pending_qty_control(self, text: str, price: float, color, callback=None, *, double_click=False, offset_x=0):
         """Create the boxed lot label attached to a pending-order line."""
-        control = QtWidgets.QPushButton(text, self.graphics) if callback else QtWidgets.QLabel(text, self.graphics)
+        control = (DoubleClickButton(text, self.graphics) if double_click else QtWidgets.QPushButton(text, self.graphics)) if callback else QtWidgets.QLabel(text, self.graphics)
         control.setFixedHeight(22)
         control.setStyleSheet(
             f"background-color:#0d1420; border:1px solid rgb{tuple(color)}; border-radius:2px; "
             f"color:rgb{tuple(color)}; padding:1px 5px; font-weight:600;"
         )
         if callback:
-            control.setToolTip("點擊修改 lots；同組 SL 與 TP 會同步")
-            control.clicked.connect(callback)
+            control.setToolTip("雙擊修改 lots；同組 SL 與 TP 會同步" if double_click else "點擊執行")
+            (control.double_clicked if double_click else control.clicked).connect(callback)
         else:
             control.setToolTip("SL/TP lots 由 Entry 分配；不可直接修改")
             control.setAlignment(QtCore.Qt.AlignCenter)
         control.hide()
+        control._pending_control_offset_x = int(offset_x)
         self._pending_qty_controls.append((control, float(price)))
 
     def _position_pending_qty_controls(self):
@@ -1573,7 +1590,7 @@ class ChartWidget(QtWidgets.QWidget):
             except Exception:
                 button.hide()
                 continue
-            x = max(0, self.graphics.width() - 72 - button.sizeHint().width() - 22)
+            x = max(0, self.graphics.width() - 72 - button.sizeHint().width() - 22 - int(getattr(button, "_pending_control_offset_x", 0)))
             y = int(widget_y - button.height() * 0.5)
             if 0 <= y <= self.graphics.height() - button.height():
                 button.move(x, y)

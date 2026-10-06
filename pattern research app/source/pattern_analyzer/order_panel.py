@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 import pandas as pd
 from pyqtgraph.Qt import QtCore, QtWidgets
-from shared_core.order_brackets import create_pending_bracket
+from shared_core.order_brackets import create_pending_bracket, pending_bracket_order_specs
 from shared_core.order_overlay import build_order_overlay
 
 
@@ -205,6 +205,38 @@ class OrderPanel(QtWidgets.QWidget):
         self.pending_bracket = dict(bracket)
         self.pending_bracket_changed.emit(dict(self.pending_bracket))
 
+    def submit_pending_bracket(self):
+        """Send the adjusted Entry and its linked SL/TP orders to pending orders."""
+        if self.case is None or self.replay is None or not self.pending_bracket:
+            return
+        try:
+            specs = pending_bracket_order_specs(self.pending_bracket)
+        except (KeyError, TypeError, ValueError):
+            QtWidgets.QMessageBox.warning(self, "Pending", "掛單資料無效")
+            return
+        entry_spec = specs[0]
+        bracket_id = str(self.pending_bracket.get("id", ""))
+        entry = self._new_order_record(
+            entry_spec["side"], entry_spec["order_type"], entry_spec["price"], entry_spec["qty"], origin="bracket-entry",
+        )
+        entry.update({"bracket_id": bracket_id, "bracket_role": "entry", "group_id": None})
+        records = [entry]
+        for spec in specs[1:]:
+            record = self._new_order_record(
+                spec["side"], spec["order_type"], spec["price"], spec["qty"], origin=f"bracket-{spec['role']}",
+            )
+            record.update({
+                "bracket_id": bracket_id,
+                "bracket_role": spec["role"],
+                "group_id": spec["group_id"],
+                "parent_order_id": entry["id"],
+            })
+            records.append(record)
+        self.pending_orders.extend(records)
+        self.pending_bracket = None
+        self.pending_bracket_changed.emit(None)
+        self.refresh()
+
     def _new_order_record(self, side: str, order_type: str, requested_price, qty: float, origin="place"):
         ts = self._current_ts()
         return {
@@ -308,6 +340,11 @@ class OrderPanel(QtWidgets.QWidget):
                     continue
                 if record.get("order_type") not in ("limit", "stop market"):
                     continue
+                parent_id = record.get("parent_order_id")
+                if parent_id:
+                    parent = next((o for o in self.case.orders if o.get("id") == parent_id), None)
+                    if parent is None or parent.get("status") != "filled" or float(parent.get("fill_ts") or bar_ts) >= bar_ts:
+                        continue
                 price = record.get("requested_price")
                 if price is None:
                     continue
@@ -316,6 +353,15 @@ class OrderPanel(QtWidgets.QWidget):
                     self._fill_record(record, price, bar_ts)
                     self.pending_orders.remove(record)
                     self.case.orders.append(record)
+                    if record.get("bracket_role") in ("stop", "target"):
+                        self.pending_orders = [
+                            other for other in self.pending_orders
+                            if not (
+                                other.get("parent_order_id") == record.get("parent_order_id")
+                                and other.get("group_id") == record.get("group_id")
+                                and other.get("bracket_role") in ("stop", "target")
+                            )
+                        ]
                     changed = True
         if changed:
             self.case.touch()

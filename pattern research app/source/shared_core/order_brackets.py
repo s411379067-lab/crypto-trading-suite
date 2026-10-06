@@ -98,3 +98,30 @@ def set_bracket_group_qty(bracket: dict, group_id: str, qty: float) -> dict:
         group["qty"] = qty
         return updated
     raise ValueError("Bracket group was not found")
+
+
+def pending_bracket_order_specs(bracket: dict) -> list[dict]:
+    """Build the Entry plus linked SL/TP pending-order instructions."""
+    side = "short" if str(bracket.get("side")) == "short" else "long"
+    entry_type = str(bracket.get("order_type") or "limit")
+    entry_price = float(bracket["entry_price"])
+    entry_qty = float(bracket["qty"])
+    if entry_qty <= 0:
+        raise ValueError("Bracket quantity must be positive")
+    close_side = "long" if side == "short" else "short"
+    specs = [{
+        "role": "entry", "group_id": None, "side": side,
+        "order_type": entry_type, "price": entry_price, "qty": entry_qty,
+    }]
+    for group in bracket.get("groups", []):
+        qty = float(group["qty"])
+        if qty <= 0:
+            raise ValueError("Group quantity must be positive")
+        group_id = str(group["id"])
+        specs.extend((
+            {"role": "stop", "group_id": group_id, "side": close_side,
+             "order_type": "stop market", "price": float(group["stop_price"]), "qty": qty},
+            {"role": "target", "group_id": group_id, "side": close_side,
+             "order_type": "limit", "price": float(group["target_price"]), "qty": qty},
+        ))
+    return specs
