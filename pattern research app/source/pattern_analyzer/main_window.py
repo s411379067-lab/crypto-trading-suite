@@ -124,6 +124,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.research.all_notes_visibility_changed.connect(self.chart.set_all_intraday_notes_visible)
         self.order.changed.connect(self.mark_dirty)
         self.order.fills_changed.connect(self._refresh_order_markers)
+        self.order.pending_bracket_changed.connect(self.chart.set_pending_bracket)
         self.chart.order_prefill_requested.connect(self.order.prefill_from_chart)
         self.btn_forward.clicked.connect(self.step_forward)
         self.btn_back.clicked.connect(self.step_backward)

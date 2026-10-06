@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 import pandas as pd
 from pyqtgraph.Qt import QtCore, QtWidgets
+from shared_core.order_brackets import create_pending_bracket
 from shared_core.order_overlay import build_order_overlay
 
 
@@ -20,6 +21,7 @@ class OrderPanel(QtWidgets.QWidget):
 
     changed = QtCore.Signal()
     fills_changed = QtCore.Signal()
+    pending_bracket_changed = QtCore.Signal(object)
 
     R_VALUE = 60.0
 
@@ -47,6 +49,7 @@ class OrderPanel(QtWidgets.QWidget):
         # Pending orders are intentionally session-only.
         # Only actual fills are persisted to ResearchCase.orders.
         self.pending_orders: list[dict] = []
+        self.pending_bracket: dict | None = None
 
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -140,6 +143,8 @@ class OrderPanel(QtWidgets.QWidget):
         self.replay = replay
         # Unfilled orders are not research records and are never restored.
         self.pending_orders.clear()
+        self.pending_bracket = None
+        self.pending_bracket_changed.emit(None)
         # Compatibility cleanup for v0.1.3 cases that may contain open/cancelled rows.
         if self.case is not None:
             filled_only = [o for o in self.case.orders if o.get("status") == "filled"]
@@ -176,7 +181,7 @@ class OrderPanel(QtWidgets.QWidget):
         return 4 if abs(float(value)) < 10 else 2
 
     def prefill_from_chart(self, side: str, price: float):
-        """Legacy S/L axis-button behavior: choose limit vs stop-market from current price."""
+        """Prepare a pending order and show its initial Entry + SL/TP layout."""
         cp = self.current_price()
         if cp is None:
             return
@@ -189,6 +194,9 @@ class OrderPanel(QtWidgets.QWidget):
         self.side_combo.setCurrentText(side)
         self.type_combo.setCurrentText(order_type)
         self.price_edit.setText(f"{price:.{self._price_precision(price)}f}")
+        self.pending_bracket = create_pending_bracket(side, price, float(self.qty_spin.value()))
+        self.pending_bracket["order_type"] = order_type
+        self.pending_bracket_changed.emit(dict(self.pending_bracket))
 
     def _new_order_record(self, side: str, order_type: str, requested_price, qty: float, origin="place"):
         ts = self._current_ts()

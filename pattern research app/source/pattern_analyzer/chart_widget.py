@@ -717,6 +717,7 @@ class ChartWidget(QtWidgets.QWidget):
         self._syncing_auto_all = False
         self.order_events: list[dict] = []
         self.order_segments: list[dict] = []
+        self.pending_bracket: dict | None = None
         self.show_all_orders = False
         self.show_previous_rth = False
         self.show_all_drawings = True
@@ -1061,6 +1062,31 @@ class ChartWidget(QtWidgets.QWidget):
         if render and self.replay is not None:
             self.render(reset_x=False)
 
+    def set_pending_bracket(self, bracket: dict | None, render: bool = True):
+        """Set the transient Entry + SL/TP plan shown before an order is filled."""
+        self.pending_bracket = dict(bracket) if isinstance(bracket, dict) else None
+        if render and self.replay is not None:
+            self.render(reset_x=False)
+            self._ensure_pending_bracket_visible()
+
+    def _ensure_pending_bracket_visible(self):
+        """Expand only the Y range when a newly created bracket sits off-screen."""
+        try:
+            group = self.pending_bracket["groups"][0]
+            prices = [
+                float(self.pending_bracket["entry_price"]),
+                float(group["stop_price"]),
+                float(group["target_price"]),
+            ]
+            current_low, current_high = sorted(self.plot.viewRange()[1])
+        except (KeyError, TypeError, ValueError, IndexError):
+            return
+        if current_low <= min(prices) and max(prices) <= current_high:
+            return
+        span = max(max(prices) - min(prices), current_high - current_low, 1e-9)
+        padding = span * 0.08
+        self.plot.setYRange(min(current_low, min(prices)) - padding, max(current_high, max(prices)) + padding, padding=0)
+
     def visible_bars(self) -> pd.DataFrame:
         if self.replay is None or self.raw_df.empty:
             return pd.DataFrame()
@@ -1101,6 +1127,7 @@ class ChartWidget(QtWidgets.QWidget):
         self._render_reference_levels()
         self._render_drawing_items()
         self._render_order_overlay()
+        self._render_pending_bracket()
 
         if reset_x:
             left = self.replay.data_start_ts
@@ -1431,6 +1458,39 @@ class ChartWidget(QtWidgets.QWidget):
                 y=[float(e["price"]) for e in shorts],
                 size=9, symbol="t", brush=pg.mkBrush(255, 0, 0), pen=pg.mkPen("w", width=1),
             )
+            self.plot.addItem(item)
+
+    def _render_pending_bracket(self):
+        """Render the first-stage session-only Entry / SL / TP bracket layout."""
+        bracket = self.pending_bracket
+        if not bracket:
+            return
+        try:
+            side = str(bracket["side"])
+            entry = float(bracket["entry_price"])
+            qty = float(bracket["qty"])
+            group = list(bracket["groups"])[0]
+            stop = float(group["stop_price"])
+            target = float(group["target_price"])
+        except (KeyError, TypeError, ValueError, IndexError):
+            return
+
+        entry_color = (255, 82, 95) if side == "short" else (31, 121, 245)
+        rows = [
+            (entry, entry_color, QtCore.Qt.DashLine, f"{'SELL' if side == 'short' else 'BUY'} Entry  {qty:.4f}"),
+            (stop, (255, 179, 0), QtCore.Qt.DashLine, f"SL  {qty:.4f}"),
+            (target, (0, 196, 168), QtCore.Qt.DashLine, f"TP  {qty:.4f}"),
+        ]
+        for price, color, style, label in rows:
+            item = pg.InfiniteLine(
+                pos=price,
+                angle=0,
+                movable=False,
+                pen=pg.mkPen(color=color, width=1, style=style),
+                label=label,
+                labelOpts={"position": 0.02, "color": color},
+            )
+            item.setZValue(30)
             self.plot.addItem(item)
 
     def auto_scale(self):
