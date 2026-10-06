@@ -20,6 +20,7 @@ from shared_core.order_brackets import (
     available_bracket_qty,
     move_bracket_entry,
     move_bracket_leg,
+    set_bracket_group_qty,
     set_bracket_qty,
 )
 from pattern_analyzer.drawing_templates import DrawingTemplateRepository
@@ -1525,8 +1526,14 @@ class ChartWidget(QtWidgets.QWidget):
                 )
                 item.setZValue(30)
                 self.plot.addItem(item)
-            self._add_pending_qty_control(f"SL {group_qty:.4f}", stop, (255, 179, 0))
-            self._add_pending_qty_control(f"TP {group_qty:.4f}", target, (0, 196, 168))
+            self._add_pending_qty_control(
+                f"SL {group_qty:.4f}", stop, (255, 179, 0),
+                lambda gid=group_id: self._edit_pending_group_qty(gid),
+            )
+            self._add_pending_qty_control(
+                f"TP {group_qty:.4f}", target, (0, 196, 168),
+                lambda gid=group_id: self._edit_pending_group_qty(gid),
+            )
 
     def _clear_pending_qty_controls(self):
         for button, _price in self._pending_qty_controls:
@@ -1543,7 +1550,7 @@ class ChartWidget(QtWidgets.QWidget):
             f"color:rgb{tuple(color)}; padding:1px 5px; font-weight:600;"
         )
         if callback:
-            control.setToolTip("點擊修改 Entry lots")
+            control.setToolTip("點擊修改 lots；同組 SL 與 TP 會同步")
             control.clicked.connect(callback)
         else:
             control.setToolTip("SL/TP lots 由 Entry 分配；不可直接修改")
@@ -1588,6 +1595,23 @@ class ChartWidget(QtWidgets.QWidget):
         )
         if accepted:
             self.pending_bracket_edited.emit(set_bracket_qty(self.pending_bracket, qty))
+
+    def _edit_pending_group_qty(self, group_id: str):
+        if not self.pending_bracket:
+            return
+        group = next((g for g in self.pending_bracket.get("groups", []) if str(g.get("id")) == group_id), None)
+        if group is None:
+            return
+        try:
+            current = float(group["qty"])
+            maximum = current + available_bracket_qty(self.pending_bracket)
+        except (KeyError, TypeError, ValueError):
+            return
+        qty, accepted = QtWidgets.QInputDialog.getDouble(
+            self, "SL/TP lots", "Lots", current, 0.0001, maximum, 4,
+        )
+        if accepted:
+            self.pending_bracket_edited.emit(set_bracket_group_qty(self.pending_bracket, group_id, qty))
 
     def _pending_entry_drag_finished(self, item):
         if not self.pending_bracket:

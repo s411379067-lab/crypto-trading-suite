@@ -81,3 +81,20 @@ def set_bracket_qty(bracket: dict, qty: float) -> dict:
         raise ValueError("Bracket quantity cannot be less than allocated SL/TP lots")
     updated["qty"] = qty
     return updated
+
+
+def set_bracket_group_qty(bracket: dict, group_id: str, qty: float) -> dict:
+    """Change one group's shared SL/TP lots without exceeding Entry lots."""
+    updated = deepcopy(bracket)
+    qty = float(qty)
+    if qty <= 0:
+        raise ValueError("Group quantity must be positive")
+    for group in updated.get("groups", []):
+        if str(group.get("id")) != str(group_id):
+            continue
+        other_qty = allocated_bracket_qty(updated) - float(group.get("qty", 0.0))
+        if other_qty + qty > float(updated["qty"]) + 1e-9:
+            raise ValueError("Group quantity exceeds available Entry lots")
+        group["qty"] = qty
+        return updated
+    raise ValueError("Bracket group was not found")
