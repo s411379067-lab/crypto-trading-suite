@@ -1483,8 +1483,8 @@ class ChartWidget(QtWidgets.QWidget):
             angle=0,
             movable=True,
             pen=pg.mkPen(color=entry_color, width=1, style=QtCore.Qt.DashLine),
-            label=f"{'SELL' if side == 'short' else 'BUY'} Entry  {qty:.4f}",
-            labelOpts={"position": 0.02, "color": entry_color},
+            label=f"{'SELL' if side == 'short' else 'BUY'} Entry  {qty:.4f}  ↕",
+            labelOpts={"position": 0.98, "color": entry_color},
         )
         entry_item.sigPositionChangeFinished.connect(
             lambda item=entry_item: self._pending_entry_drag_finished(item)
@@ -1501,8 +1501,8 @@ class ChartWidget(QtWidgets.QWidget):
             except (KeyError, TypeError, ValueError):
                 continue
             for leg, price, color, text in (
-                ("stop", stop, (255, 179, 0), f"SL {index}  {group_qty:.4f}"),
-                ("target", target, (0, 196, 168), f"TP {index}  {group_qty:.4f}"),
+                ("stop", stop, (255, 179, 0), f"SL {index}  {group_qty:.4f}  ↕"),
+                ("target", target, (0, 196, 168), f"TP {index}  {group_qty:.4f}  ↕"),
             ):
                 item = pg.InfiniteLine(
                     pos=price,
@@ -1510,7 +1510,7 @@ class ChartWidget(QtWidgets.QWidget):
                     movable=True,
                     pen=pg.mkPen(color=color, width=1, style=QtCore.Qt.DashLine),
                     label=text,
-                    labelOpts={"position": 0.02, "color": color},
+                    labelOpts={"position": 0.98, "color": color},
                 )
                 item.sigPositionChangeFinished.connect(
                     lambda line=item, group_id=group_id, leg=leg: self._pending_leg_drag_finished(line, group_id, leg)
