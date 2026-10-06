@@ -59,3 +59,42 @@ def move_bracket_leg(bracket: dict, group_id: str, leg: str, price: float) -> di
             group[key] = float(price)
             return updated
     raise ValueError("Bracket group was not found")
+
+
+def allocated_bracket_qty(bracket: dict) -> float:
+    """Return the total lots reserved by SL/TP groups."""
+    return sum(float(group.get("qty", 0.0)) for group in bracket.get("groups", []))
+
+
+def available_bracket_qty(bracket: dict) -> float:
+    """Return lots that can still receive another SL/TP group."""
+    return max(0.0, float(bracket["qty"]) - allocated_bracket_qty(bracket))
+
+
+def set_bracket_qty(bracket: dict, qty: float) -> dict:
+    """Change Entry lots without allowing existing SL/TP allocations to overflow."""
+    updated = deepcopy(bracket)
+    qty = float(qty)
+    if qty <= 0:
+        raise ValueError("Bracket quantity must be positive")
+    if qty + 1e-9 < allocated_bracket_qty(updated):
+        raise ValueError("Bracket quantity cannot be less than allocated SL/TP lots")
+    updated["qty"] = qty
+    return updated
+
+
+def set_bracket_group_qty(bracket: dict, group_id: str, qty: float) -> dict:
+    """Change a group's lots while keeping its SL and TP synchronized."""
+    updated = deepcopy(bracket)
+    qty = float(qty)
+    if qty <= 0:
+        raise ValueError("Group quantity must be positive")
+    for group in updated.get("groups", []):
+        if str(group.get("id")) != str(group_id):
+            continue
+        other_qty = allocated_bracket_qty(updated) - float(group.get("qty", 0.0))
+        if other_qty + qty > float(updated["qty"]) + 1e-9:
+            raise ValueError("Group quantity exceeds available position lots")
+        group["qty"] = qty
+        return updated
+    raise ValueError("Bracket group was not found")

@@ -16,7 +16,13 @@ from shared_core.note_callout import align_note_x_to_timeframe, find_m1_close, l
 from shared_core.rth import summarize_intraday_volatility_payload
 from shared_core.replay_stats import summarize_current_replay_range
 from shared_core.ohlc import format_ohlc_text
-from shared_core.order_brackets import move_bracket_entry, move_bracket_leg
+from shared_core.order_brackets import (
+    available_bracket_qty,
+    move_bracket_entry,
+    move_bracket_leg,
+    set_bracket_group_qty,
+    set_bracket_qty,
+)
 from pattern_analyzer.drawing_templates import DrawingTemplateRepository
 
 
@@ -720,6 +726,7 @@ class ChartWidget(QtWidgets.QWidget):
         self.order_events: list[dict] = []
         self.order_segments: list[dict] = []
         self.pending_bracket: dict | None = None
+        self._pending_qty_controls: list[tuple[QtWidgets.QPushButton, float]] = []
         self.show_all_orders = False
         self.show_previous_rth = False
         self.show_all_drawings = True
@@ -1103,6 +1110,7 @@ class ChartWidget(QtWidgets.QWidget):
         if self.replay is None:
             return
         old_range = self.plot.viewRange()[0]
+        self._clear_pending_qty_controls()
         self.plot.clear()
         # Dynamic all-note callouts were removed by plot.clear(); drop stale refs.
         self._all_note_callout_items = []
@@ -1146,6 +1154,7 @@ class ChartWidget(QtWidgets.QWidget):
         if self.auto_all_mode:
             self.auto_all()
 
+        self._position_pending_qty_controls()
         self._update_current_replay_range()
         self._update_note_callout_overlay()
 
@@ -1492,6 +1501,10 @@ class ChartWidget(QtWidgets.QWidget):
         self._add_pending_drag_handle(entry_item)
         entry_item.setZValue(30)
         self.plot.addItem(entry_item)
+        self._add_pending_qty_control(
+            f"Entry {qty:.4f}", entry, entry_color,
+            lambda: self._edit_pending_entry_qty(),
+        )
 
         for index, group in enumerate(groups, start=1):
             try:
@@ -1519,6 +1532,10 @@ class ChartWidget(QtWidgets.QWidget):
                 self._add_pending_drag_handle(item)
                 item.setZValue(30)
                 self.plot.addItem(item)
+            self._add_pending_qty_control(
+                f"SL/TP {index}  {group_qty:.4f}", stop, (255, 179, 0),
+                lambda gid=group_id: self._edit_pending_group_qty(gid),
+            )
 
     @staticmethod
     def _add_pending_drag_handle(line):
@@ -1529,6 +1546,80 @@ class ChartWidget(QtWidgets.QWidget):
         line._maxMarkerSize = max(line._maxMarkerSize, 6.0)
         line.setToolTip("拖曳右側方形把手可調整此價格")
         line.update()
+
+    def _clear_pending_qty_controls(self):
+        for button, _price in self._pending_qty_controls:
+            button.hide()
+            button.deleteLater()
+        self._pending_qty_controls = []
+
+    def _add_pending_qty_control(self, text: str, price: float, color, callback):
+        """Create a click target for changing Entry or an SL/TP group's lots."""
+        button = QtWidgets.QPushButton(text, self.graphics)
+        button.setFixedHeight(22)
+        button.setStyleSheet(
+            f"background-color:#0d1420; border:1px solid rgb{tuple(color)}; border-radius:2px; "
+            f"color:rgb{tuple(color)}; padding:1px 5px; font-weight:600;"
+        )
+        button.setToolTip("點擊修改 lots；同組 SL 與 TP 會同步")
+        button.clicked.connect(callback)
+        button.hide()
+        self._pending_qty_controls.append((button, float(price)))
+
+    def _position_pending_qty_controls(self):
+        if not self.pending_bracket:
+            return
+        try:
+            x_range = self.plot.vb.viewRange()[0]
+            reference_x = (float(x_range[0]) + float(x_range[1])) * 0.5
+        except Exception:
+            return
+        for button, price in self._pending_qty_controls:
+            try:
+                scene = self.plot.vb.mapViewToScene(QtCore.QPointF(reference_x, price))
+                widget_y = self.graphics.mapFromScene(scene).y()
+            except Exception:
+                button.hide()
+                continue
+            x = max(0, self.graphics.width() - 72 - button.sizeHint().width() - 22)
+            y = int(widget_y - button.height() * 0.5)
+            if 0 <= y <= self.graphics.height() - button.height():
+                button.move(x, y)
+                button.show()
+                button.raise_()
+            else:
+                button.hide()
+
+    def _edit_pending_entry_qty(self):
+        if not self.pending_bracket:
+            return
+        try:
+            allocated = float(self.pending_bracket["qty"]) - available_bracket_qty(self.pending_bracket)
+            current = float(self.pending_bracket["qty"])
+        except (KeyError, TypeError, ValueError):
+            return
+        qty, accepted = QtWidgets.QInputDialog.getDouble(
+            self, "Entry lots", "Lots", current, max(allocated, 0.0001), 1_000_000.0, 4,
+        )
+        if accepted:
+            self.pending_bracket_edited.emit(set_bracket_qty(self.pending_bracket, qty))
+
+    def _edit_pending_group_qty(self, group_id: str):
+        if not self.pending_bracket:
+            return
+        group = next((g for g in self.pending_bracket.get("groups", []) if str(g.get("id")) == group_id), None)
+        if group is None:
+            return
+        try:
+            current = float(group["qty"])
+            maximum = current + available_bracket_qty(self.pending_bracket)
+        except (KeyError, TypeError, ValueError):
+            return
+        qty, accepted = QtWidgets.QInputDialog.getDouble(
+            self, "SL/TP group lots", "Lots", current, 0.0001, maximum, 4,
+        )
+        if accepted:
+            self.pending_bracket_edited.emit(set_bracket_group_qty(self.pending_bracket, group_id, qty))
 
     def _pending_entry_drag_finished(self, item):
         if not self.pending_bracket:
@@ -1586,6 +1677,7 @@ class ChartWidget(QtWidgets.QWidget):
         # Manual pan/zoom exits persistent AutoAll mode. Internal AutoAll updates do not.
         if self.auto_all_mode and not self._syncing_auto_all:
             self.auto_all_mode = False
+        self._position_pending_qty_controls()
 
         # Keep Fibonacci 0/1 anchor hit-zones roughly constant in screen pixels.
         # This keeps the two selected anchor points easy to grab at any zoom level.
