@@ -1575,13 +1575,16 @@ class ChartWidget(QtWidgets.QWidget):
             entry = float(position["entry"])
             pnl = float(position["pnl"])
             side = str(position["side"])
+            qty = float(position["qty"])
         except (KeyError, TypeError, ValueError):
             return
         color = (0, 196, 168) if pnl >= 0 else (247, 82, 95)
         item = pg.InfiniteLine(pos=entry, angle=0, movable=False, pen=pg.mkPen(color=color, width=1, style=QtCore.Qt.DashLine))
         item.setZValue(30)
         self.plot.addItem(item)
-        self._add_pending_qty_control(f"{'BUY' if side == 'long' else 'SELL'}  ${pnl:+.2f}", entry, color)
+        self._add_pending_qty_control(
+            f"{'Long' if side == 'long' else 'Short'} {qty:.4f}  ${pnl:+.2f}", entry, color,
+        )
         self._add_pending_qty_control("X", entry, color, lambda: self.active_position_close_requested.emit(), offset_x=108)
 
     def _render_submitted_bracket(self):
