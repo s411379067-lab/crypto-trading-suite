@@ -36,10 +36,12 @@ def test_viewer_order_toggle_lives_in_overlay_and_not_chart_toolbar():
 
 
 def test_viewer_selected_case_shows_realized_pnl():
-    assert 'self.selected_pnl_label = QtWidgets.QLabel("Realized PnL: --")' in VIEWER_WINDOW
+    assert 'self.selected_case_label = QtWidgets.QLabel("-- | Realized PnL: --")' in VIEWER_WINDOW
     assert "self._set_selected_realized_pnl(realized_pnl)" in VIEWER_WINDOW
+    assert 'self.selected_case_label.setText(f"{case_name} | Realized PnL: {value}")' in VIEWER_WINDOW
     assert 'color, value = "#7bd88f"' in VIEWER_WINDOW
     assert 'color, value = "#ff6b6b"' in VIEWER_WINDOW
+    assert 'self.inspector_splitter.addWidget(self.pattern_edit_box)' in VIEWER_WINDOW
 
 
 def test_viewer_exposes_pattern_presence_and_exclusion_filters():
@@ -55,6 +57,5 @@ def test_viewer_filter_selection_and_side_panels_are_resizable():
     assert "self.selected_rows_layout.addWidget(row)" in VIEWER_WINDOW
     assert "self.filter_rows_scroll.setMinimumHeight(280)" in VIEWER_WINDOW
     assert "self.sidebar_splitter.setChildrenCollapsible(False)" in VIEWER_WINDOW
-    assert "self.case_content_splitter.setChildrenCollapsible(False)" in VIEWER_WINDOW
     assert "self.inspector_splitter.setChildrenCollapsible(False)" in VIEWER_WINDOW
     assert "splitter.setHandleWidth(7)" in VIEWER_WINDOW

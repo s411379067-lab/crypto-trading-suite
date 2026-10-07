@@ -307,18 +307,12 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         pel.addLayout(edit_btn_row)
         self.pattern_edit_box.setEnabled(False)
 
-        self.case_content_splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
-        self.case_content_splitter.setChildrenCollapsible(False)
-        self.case_content_splitter.setHandleWidth(7)
-        self.case_content_splitter.addWidget(self.case_list)
-        self.case_content_splitter.addWidget(self.pattern_edit_box)
-        self.case_content_splitter.setSizes([650, 210])
         case_area = QtWidgets.QWidget()
         case_area_layout = QtWidgets.QVBoxLayout(case_area)
         case_area_layout.setContentsMargins(0, 0, 0, 0)
         case_area_layout.setSpacing(4)
         case_area_layout.addWidget(self.case_count_label)
-        case_area_layout.addWidget(self.case_content_splitter, 1)
+        case_area_layout.addWidget(self.case_list, 1)
         self.sidebar_splitter.addWidget(case_area)
         self.sidebar_splitter.setSizes([500, 500])
 
@@ -373,17 +367,14 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
 
         detail_box = QtWidgets.QGroupBox("Selected Case")
         detail_layout = QtWidgets.QVBoxLayout(detail_box)
-        self.selected_path_label = QtWidgets.QLabel("--")
-        self.selected_path_label.setWordWrap(True)
-        self.selected_patterns_label = QtWidgets.QLabel("Pattern: --")
-        self.selected_patterns_label.setWordWrap(True)
-        self.selected_pnl_label = QtWidgets.QLabel("Realized PnL: --")
-        self.selected_pnl_label.setStyleSheet("color:#cfd7e6; font-weight:700;")
-        detail_layout.addWidget(self.selected_path_label)
-        detail_layout.addWidget(self.selected_patterns_label)
-        detail_layout.addWidget(self.selected_pnl_label)
+        self.selected_case_label = QtWidgets.QLabel("-- | Realized PnL: --")
+        self.selected_case_label.setWordWrap(True)
+        self.selected_case_label.setMinimumHeight(36)
+        self.selected_case_label.setStyleSheet("color:#cfd7e6; font-weight:700;")
+        detail_layout.addWidget(self.selected_case_label)
         self.inspector_splitter.addWidget(detail_box)
-        self.inspector_splitter.setSizes([220, 500])
+        self.inspector_splitter.addWidget(self.pattern_edit_box)
+        self.inspector_splitter.setSizes([220, 100, 420])
         layout.addWidget(self.inspector_splitter, 1)
         return panel
 
@@ -769,10 +760,7 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.chart.set_all_orders_visible(self.show_orders_checkbox.isChecked())
         self.chart.render(reset_x=True)
 
-        patterns = [str(x.get("text", "")).strip() for x in case.patterns if isinstance(x, dict) and str(x.get("text", "")).strip()]
-        self.selected_path_label.setText(path.name)
-        self.selected_path_label.setToolTip(str(path))
-        self.selected_patterns_label.setText("Pattern: " + (" / ".join(patterns) if patterns else "無"))
+        self.selected_case_label.setToolTip(str(path))
         self._set_selected_realized_pnl(realized_pnl)
         self._refresh_case_pattern_editor()
         self.case_status.setText(f"{case.case.get('symbol', '')}   {case.case.get('research_date', '')}")
@@ -804,24 +792,24 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
             self.chart.set_all_orders_visible(bool(checked))
 
     def _set_selected_realized_pnl(self, realized_pnl: float):
+        case_name = self.current_case_path.name if self.current_case_path is not None else "--"
         if realized_pnl > 1e-12:
-            color, value = "#7bd88f", f"+{realized_pnl:.3f}"
+            color, value = "#7bd88f", f"+${realized_pnl:,.2f}"
         elif realized_pnl < -1e-12:
-            color, value = "#ff6b6b", f"{realized_pnl:.3f}"
+            color, value = "#ff6b6b", f"-${abs(realized_pnl):,.2f}"
         else:
-            color, value = "#cfd7e6", "0.000"
-        self.selected_pnl_label.setText(f"Realized PnL: {value}")
-        self.selected_pnl_label.setStyleSheet(f"color:{color}; font-weight:700;")
+            color, value = "#cfd7e6", "$0.00"
+        self.selected_case_label.setText(f"{case_name} | Realized PnL: {value}")
+        self.selected_case_label.setStyleSheet(f"color:{color}; font-weight:700;")
 
     def _clear_current_case_display(self):
         self.current_case = None
         self.current_case_path = None
         self.current_replay = None
         self.current_raw = pd.DataFrame()
-        self.selected_path_label.setText("--")
-        self.selected_patterns_label.setText("Pattern: --")
-        self.selected_pnl_label.setText("Realized PnL: --")
-        self.selected_pnl_label.setStyleSheet("color:#cfd7e6; font-weight:700;")
+        self.selected_case_label.setText("-- | Realized PnL: --")
+        self.selected_case_label.setToolTip("")
+        self.selected_case_label.setStyleSheet("color:#cfd7e6; font-weight:700;")
         self._refresh_case_pattern_editor()
         self.case_status.setText("沒有符合條件的 Case")
         self.range_status.setText("")
