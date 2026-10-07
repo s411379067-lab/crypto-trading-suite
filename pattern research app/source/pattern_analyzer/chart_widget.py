@@ -1143,14 +1143,27 @@ class ChartWidget(QtWidgets.QWidget):
             loss_text = "--" if loss is None else f"{fmt(loss)} USD"
             return f'<span style="color:#ff6b70">SL {fmt(price)} | {loss_text}</span>'
 
-        profit = self.order_plan.get("est_profit")
-        rr = self.order_plan.get("rr")
+        target = None
+        if field == "tp":
+            targets = list(self.order_plan.get("take_profits") or [])
+            target = targets[0] if targets else None
+        elif field.startswith("tp:"):
+            target_id = field.split(":", 1)[1]
+            target = next((item for item in self.order_plan.get("take_profits", [])
+                           if item.get("id") == target_id), None)
+        entry = self.order_plan.get("entry")
+        qty = target.get("qty") if target else self.order_plan.get("lots")
+        profit = abs(float(price) - float(entry)) * float(qty) if entry and qty else self.order_plan.get("est_profit")
+        sl = self.order_plan.get("sl")
+        rr = abs(float(price) - float(entry)) / abs(float(entry) - float(sl)) if entry and sl and abs(float(entry) - float(sl)) > 1e-12 else self.order_plan.get("rr")
         profit_text = "--" if profit is None else f"{fmt(profit)} USD"
         rr_text = "--" if rr is None else f"{fmt(rr)}R"
+        target_label = target.get("label", "TP") if target else "TP"
+        lots_text = "--" if qty is None else fmt(qty, 1)
         return (
-            f'<span style="color:#e6edf7">TP {fmt(price)}</span>'
+            f'<span style="color:#e6edf7">{target_label} {fmt(price)}</span>'
             f'<span style="color:#50d6a0"> | {profit_text}</span>'
-            f'<span style="color:#62c9ff"> | {rr_text}</span>'
+            f'<span style="color:#62c9ff"> | {rr_text} | Lots {lots_text}</span>'
         )
 
     def _position_order_plan_labels(self, *_args) -> None:
@@ -1195,14 +1208,25 @@ class ChartWidget(QtWidgets.QWidget):
     def _render_order_plan(self) -> None:
         if self.replay is None:
             return
-        styles = {
-            "entry": ("#e6edf7"),
-            "sl": ("#ef5350"),
-            "tp": ("#f5a623"),
-        }
-        for field, color in styles.items():
+        styles = [("entry", "#e6edf7"), ("sl", "#ef5350")]
+        targets = list(self.order_plan.get("take_profits") or [])
+        if targets:
+            for index, target in enumerate(targets):
+                field = "tp" if index == 0 else f"tp:{target.get('id')}"
+                styles.append((field, "#f5a623"))
+        else:
+            styles.append(("tp", "#f5a623"))
+        for field, color in styles:
             try:
-                price = float(self.order_plan.get(field) or 0.0)
+                if field == "entry" or field == "sl":
+                    value = self.order_plan.get(field)
+                elif field == "tp":
+                    value = targets[0].get("price") if targets else self.order_plan.get("tp")
+                else:
+                    target_id = field.split(":", 1)[1]
+                    target = next((item for item in targets if item.get("id") == target_id), None)
+                    value = target.get("price") if target else None
+                price = float(value or 0.0)
             except (TypeError, ValueError):
                 continue
             if price <= 0:

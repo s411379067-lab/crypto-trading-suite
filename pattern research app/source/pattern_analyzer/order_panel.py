@@ -57,6 +57,10 @@ class OrderPanel(QtWidgets.QWidget):
         self._realized_r = 0.0
         self._active_entry_id: str | None = None
         self._confirmed_bracket: tuple[float, float] | None = None
+        self._take_profit_rows: list[dict] = []
+        self._next_take_profit_number = 1
+        self._tp_allocation_manual = False
+        self._updating_tp_rows = False
         # Pending orders are intentionally session-only.
         # Only actual fills are persisted to ResearchCase.orders.
         self.pending_orders: list[dict] = []
@@ -98,10 +102,23 @@ class OrderPanel(QtWidgets.QWidget):
         self.risk_input.setValue(100.0); self.risk_input.setGroupSeparatorShown(True)
         self.entry_edit = QtWidgets.QLineEdit("0")
         self.sl_edit = QtWidgets.QLineEdit("0")
-        self.tp_edit = QtWidgets.QLineEdit("0")
+        self.tp_targets_widget = QtWidgets.QWidget()
+        self.tp_targets_layout = QtWidgets.QVBoxLayout(self.tp_targets_widget)
+        self.tp_targets_layout.setContentsMargins(0, 0, 0, 0)
+        self.tp_targets_layout.setSpacing(3)
+        self.btn_add_tp = QtWidgets.QPushButton("+ TP")
+        self.btn_add_tp.setFixedWidth(58)
+        self.tp_targets_header = QtWidgets.QHBoxLayout()
+        self.tp_targets_header.addWidget(QtWidgets.QLabel("Target"))
+        self.tp_targets_header.addWidget(QtWidgets.QLabel("Lots"))
+        self.tp_targets_header.addWidget(self.btn_add_tp)
+        self.tp_targets_layout.addLayout(self.tp_targets_header)
+        self.tp_allocation_label = QtWidgets.QLabel("Allocated TP Lots: --")
+        self.tp_targets_layout.addWidget(self.tp_allocation_label)
+        self.tp_targets_widget.setMinimumWidth(220)
         for row, (name, widget) in enumerate((
             ("Equity", self.equity_spin), ("", self.risk_input), ("Entry", self.entry_edit),
-            ("SL", self.sl_edit), ("TP", self.tp_edit),
+            ("SL", self.sl_edit), ("TP Targets", self.tp_targets_widget),
         )):
             if row == 1:
                 input_grid.addWidget(self.risk_mode_button, row, 0)
@@ -109,6 +126,9 @@ class OrderPanel(QtWidgets.QWidget):
             else:
                 input_grid.addWidget(QtWidgets.QLabel(name), row, 0)
                 input_grid.addWidget(widget, row, 1)
+        first_tp = self._create_take_profit_row("0")
+        self.tp_edit = first_tp["price"]
+        self.tp_lots_spin = first_tp["qty"]
         top.addWidget(input_box, 1)
 
         metrics_box = QtWidgets.QGroupBox("TRADE METRICS")
@@ -198,6 +218,7 @@ class OrderPanel(QtWidgets.QWidget):
 
         self.btn_place.clicked.connect(self.submit_plan)
         self.btn_cancel_plan.clicked.connect(self.cancel_plan)
+        self.btn_add_tp.clicked.connect(self.add_take_profit_target)
         self.btn_cancel.clicked.connect(self.cancel_selected)
         self.btn_delete_record.clicked.connect(self.delete_selected_record)
         self.btn_export.clicked.connect(self.export_records)
@@ -209,7 +230,7 @@ class OrderPanel(QtWidgets.QWidget):
         self.btn_short.clicked.connect(lambda: self.set_side("short"))
         for widget in (self.equity_spin, self.risk_input):
             widget.valueChanged.connect(self.update_metrics)
-        for widget in (self.entry_edit, self.sl_edit, self.tp_edit):
+        for widget in (self.entry_edit, self.sl_edit):
             widget.textChanged.connect(self.update_metrics)
         self.set_order_mode("pending")
         self.set_side("long")
@@ -284,6 +305,9 @@ class OrderPanel(QtWidgets.QWidget):
         if self._active_entry_id is not None or self._position is not None:
             self._set_send_status("Manage or close the current position before sending another", "#f5a623")
             return False
+        if len(self._take_profit_rows) > 1:
+            self._set_send_status("Multiple TP execution will be added in the next order stage", "#f5a623")
+            return False
 
         entry = self._entry_price()
         sl = self._read_price(self.sl_edit.text())
@@ -304,6 +328,9 @@ class OrderPanel(QtWidgets.QWidget):
             return False
         if qty <= 0:
             self._set_send_status("Lots must be greater than 0 (check Risk and SL)", "#ef5350")
+            return False
+        if abs(float(self._take_profit_rows[0]["qty"].value()) - qty) > 1e-9:
+            self._set_send_status("The single TP must cover the full position until partial exits are enabled", "#f5a623")
             return False
 
         current_price = self.current_price()
@@ -502,7 +529,7 @@ class OrderPanel(QtWidgets.QWidget):
             return
         self.entry_edit.setText("0")
         self.sl_edit.setText("0")
-        self.tp_edit.setText("0")
+        self._reset_take_profit_rows()
         self.status_label.setText("Plan cancelled")
         self.status_label.setStyleSheet("color:#9aa9bf;")
         self.update_metrics()
@@ -566,25 +593,46 @@ class OrderPanel(QtWidgets.QWidget):
         stop_valid = sl is not None and entry is not None and (sl < entry if multiplier > 0 else sl > entry)
         lots = None
         est_loss = None
-        est_profit = None
-        rr = None
         if bracket_active:
             lots = float(active_entry.get("qty") or 0.0)
             if sl is not None and entry is not None:
                 est_loss = abs(entry - sl) * lots
-                if tp is not None and (tp > entry if multiplier > 0 else tp < entry):
-                    est_profit = abs(tp - entry) * lots
-                    rr = abs(tp - entry) / abs(entry - sl) if abs(entry - sl) else None
         elif risk_target > 0 and stop_valid:
             per_lot_loss = abs(entry - sl)
             if per_lot_loss > 0:
                 lots = self._lots_down(risk_target / per_lot_loss)
                 est_loss = lots * per_lot_loss
-                if tp is not None and (tp > entry if multiplier > 0 else tp < entry):
-                    est_profit = abs(tp - entry) * lots
-                    rr = abs(tp - entry) / per_lot_loss
 
         self.qty_spin.setValue(0.0 if lots is None else lots)
+        if lots is not None and len(self._take_profit_rows) == 1 and not self._tp_allocation_manual:
+            self._updating_tp_rows = True
+            self._take_profit_rows[0]["qty"].setValue(self._lots_down(lots))
+            self._updating_tp_rows = False
+        take_profits = self._take_profit_plan()
+        assigned_tp_lots = sum(item["qty"] for item in take_profits)
+        est_profit_total = 0.0
+        has_valid_tp = False
+        if entry is not None:
+            for target in take_profits:
+                target_price = target["price"]
+                if target_price is None or target["qty"] <= 0:
+                    continue
+                if target_price > entry if multiplier > 0 else target_price < entry:
+                    est_profit_total += abs(target_price - entry) * target["qty"]
+                    has_valid_tp = True
+        est_profit = est_profit_total if has_valid_tp else None
+        rr = est_profit / est_loss if est_profit is not None and est_loss and est_loss > 1e-12 else None
+        if lots is None:
+            self.tp_allocation_label.setText("Allocated TP Lots: --")
+        elif assigned_tp_lots <= lots + 1e-9:
+            self.tp_allocation_label.setText(
+                f"Allocated: {assigned_tp_lots:.1f} / {lots:.1f}  |  Runner: {max(0.0, lots - assigned_tp_lots):.1f}"
+            )
+        else:
+            self.tp_allocation_label.setText(f"TP Lots exceed position by {assigned_tp_lots - lots:.1f}")
+        self.btn_add_tp.setEnabled(active_entry is None)
+        for row in self._take_profit_rows:
+            row["remove"].setEnabled(active_entry is None and len(self._take_profit_rows) > 1)
         self.metric_labels["Est Loss"].setText("--" if est_loss is None else f"{est_loss:,.2f} USD")
         self.metric_labels["Est Profit"].setText("--" if est_profit is None else f"{est_profit:,.2f} USD")
         self.metric_labels["RR"].setText("--" if rr is None else f"{rr:.2f}")
@@ -597,6 +645,8 @@ class OrderPanel(QtWidgets.QWidget):
             "entry": entry,
             "sl": sl,
             "tp": tp,
+            "take_profits": take_profits,
+            "tp_allocation_over": lots is not None and assigned_tp_lots > lots + 1e-9,
             "order_type": order_type,
             "lots": lots,
             "est_loss": est_loss,
@@ -616,6 +666,10 @@ class OrderPanel(QtWidgets.QWidget):
     def set_plan_price_from_chart(self, field: str, price: float) -> None:
         fields = {"entry": self.entry_edit, "sl": self.sl_edit, "tp": self.tp_edit}
         widget = fields.get(field)
+        if field.startswith("tp:"):
+            target_id = field.split(":", 1)[1]
+            row = next((item for item in self._take_profit_rows if item["id"] == target_id), None)
+            widget = row["price"] if row is not None else None
         if widget is None or price <= 0:
             return
         if field == "entry" and self.mode_market.isChecked():
@@ -628,7 +682,8 @@ class OrderPanel(QtWidgets.QWidget):
         self.replay = replay
         self._active_entry_id = None
         self._confirmed_bracket = None
-        for widget in (self.entry_edit, self.sl_edit, self.tp_edit):
+        self._reset_take_profit_rows()
+        for widget in (self.entry_edit, self.sl_edit):
             widget.setText("0")
         # Unfilled orders are not research records and are never restored.
         self.pending_orders.clear()
@@ -641,6 +696,128 @@ class OrderPanel(QtWidgets.QWidget):
                 self.changed.emit()
         self._restore_active_bracket()
         self.refresh()
+
+    def _create_take_profit_row(self, price_text: str, qty: float = 0.0) -> dict:
+        number = self._next_take_profit_number
+        self._next_take_profit_number += 1
+        row_id = f"tp-{number}"
+        widget = QtWidgets.QWidget()
+        layout = QtWidgets.QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(3)
+        label = QtWidgets.QLabel(f"TP{number}")
+        label.setMinimumWidth(28)
+        price = QtWidgets.QLineEdit(price_text)
+        price.setPlaceholderText("Price")
+        lots = QtWidgets.QDoubleSpinBox()
+        lots.setDecimals(1)
+        lots.setSingleStep(0.1)
+        lots.setRange(0.0, 1_000_000.0)
+        lots.setValue(self._lots_down(qty))
+        lots.setFixedWidth(75)
+        remove = QtWidgets.QPushButton("×")
+        remove.setFixedWidth(26)
+        layout.addWidget(label)
+        layout.addWidget(price, 1)
+        layout.addWidget(lots)
+        if number == 1:
+            remove.hide()
+        layout.addWidget(remove)
+        row = {"id": row_id, "label": label.text(), "widget": widget,
+               "price": price, "qty": lots, "remove": remove}
+        self._take_profit_rows.append(row)
+        self.tp_targets_layout.insertWidget(max(1, self.tp_targets_layout.count() - 1), widget)
+        price.textChanged.connect(self.update_metrics)
+        lots.valueChanged.connect(lambda _value, key=row_id: self._take_profit_qty_changed(key))
+        remove.clicked.connect(lambda _checked=False, key=row_id: self.remove_take_profit_target(key))
+        return row
+
+    def _take_profit_qty_changed(self, row_id: str) -> None:
+        if self._updating_tp_rows:
+            return
+        row = next((item for item in self._take_profit_rows if item["id"] == row_id), None)
+        if row is None:
+            return
+        total_lots = float(self.qty_spin.value())
+        assigned_elsewhere = sum(
+            float(item["qty"].value()) for item in self._take_profit_rows if item["id"] != row_id
+        )
+        allowed = max(0.0, self._lots_down(total_lots - assigned_elsewhere))
+        value = float(row["qty"].value())
+        if value > allowed + 1e-9:
+            self._updating_tp_rows = True
+            row["qty"].setValue(allowed)
+            self._updating_tp_rows = False
+            self._set_send_status("TP Lots total cannot exceed position Lots", "#ef5350")
+        self._tp_allocation_manual = True
+        self.update_metrics()
+
+    def add_take_profit_target(self) -> bool:
+        if self._active_entry_id is not None:
+            self._set_send_status("Multiple TP targets can be staged before entry only in this step", "#f5a623")
+            return False
+        if not self._take_profit_rows:
+            return False
+        source = max(self._take_profit_rows, key=lambda item: float(item["qty"].value()))
+        source_qty = float(source["qty"].value())
+        new_qty = self._lots_down(source_qty / 2.0)
+        if new_qty < 0.1 or source_qty - new_qty < 0.1:
+            self._set_send_status("At least 0.2 Lots are needed to split another TP", "#f5a623")
+            return False
+        self._updating_tp_rows = True
+        source["qty"].setValue(source_qty - new_qty)
+        new_row = self._create_take_profit_row("0", new_qty)
+        self._updating_tp_rows = False
+        new_row["remove"].show()
+        self._tp_allocation_manual = True
+        self.update_metrics()
+        return True
+
+    def remove_take_profit_target(self, row_id: str) -> bool:
+        if self._active_entry_id is not None or len(self._take_profit_rows) <= 1:
+            return False
+        row = next((item for item in self._take_profit_rows if item["id"] == row_id), None)
+        if row is None:
+            return False
+        remaining_rows = [item for item in self._take_profit_rows if item["id"] != row_id]
+        removed_qty = float(row["qty"].value())
+        self._updating_tp_rows = True
+        remaining_rows[0]["qty"].setValue(
+            self._lots_down(float(remaining_rows[0]["qty"].value()) + removed_qty)
+        )
+        self.tp_targets_layout.removeWidget(row["widget"])
+        row["widget"].deleteLater()
+        self._take_profit_rows = remaining_rows
+        self._updating_tp_rows = False
+        if len(self._take_profit_rows) == 1:
+            self._take_profit_rows[0]["remove"].hide()
+        self.update_metrics()
+        return True
+
+    def _take_profit_plan(self) -> list[dict]:
+        plans = []
+        for row in self._take_profit_rows:
+            plans.append({
+                "id": row["id"], "label": row["label"],
+                "price": self._read_price(row["price"].text()),
+                "qty": float(row["qty"].value()),
+            })
+        return plans
+
+    def _reset_take_profit_rows(self) -> None:
+        self._updating_tp_rows = True
+        for row in self._take_profit_rows[1:]:
+            self.tp_targets_layout.removeWidget(row["widget"])
+            row["widget"].deleteLater()
+        self._take_profit_rows = self._take_profit_rows[:1]
+        self._next_take_profit_number = 2
+        if self._take_profit_rows:
+            first = self._take_profit_rows[0]
+            first["price"].setText("0")
+            first["qty"].setValue(0.0)
+            first["remove"].hide()
+        self._tp_allocation_manual = False
+        self._updating_tp_rows = False
 
     def _current_ts(self) -> float:
         return float(self.replay.current_ts) if self.replay is not None else 0.0

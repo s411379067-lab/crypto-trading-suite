@@ -118,6 +118,61 @@ def test_send_uses_risk_sized_lots_rounded_down_to_one_decimal():
     assert all(order["qty"] == 14.2 for order in protections)
 
 
+def test_multiple_tp_plan_splits_lots_previews_lines_and_blocks_unsafe_send():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    chart = ChartWidget()
+    chart.replay = object()
+    panel.order_plan_changed.connect(chart.set_order_plan)
+    chart.order_plan_price_changed.connect(panel.set_plan_price_from_chart)
+
+    assert panel.add_take_profit_target()
+    assert [row["qty"].value() for row in panel._take_profit_rows] == [10.0, 10.0]
+    panel._take_profit_rows[1]["price"].setText("120")
+
+    assert panel.metric_labels["Est Profit"].text() == "300.00 USD"
+    assert panel.metric_labels["RR"].text() == "3.00"
+    assert "Runner: 0.0" in panel.tp_allocation_label.text()
+    assert set(chart.order_plan_items) == {"entry", "sl", "tp", "tp:tp-2"}
+    assert "TP2 120.00" in chart.order_plan_labels["tp:tp-2"].textItem.toHtml()
+    assert "Lots 10.0" in chart.order_plan_labels["tp:tp-2"].textItem.toHtml()
+
+    chart.order_plan_price_changed.emit("tp:tp-2", 125.0)
+    assert panel._take_profit_rows[1]["price"].text() == "125.00"
+    assert not panel.submit_plan()
+    assert panel.case.orders == []
+    assert panel.pending_orders == []
+    assert "next order stage" in panel.status_label.text()
+
+
+def test_removing_tp_target_returns_its_lots_to_remaining_target():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    assert panel.add_take_profit_target()
+    second_id = panel._take_profit_rows[1]["id"]
+
+    assert panel.remove_take_profit_target(second_id)
+
+    assert len(panel._take_profit_rows) == 1
+    assert panel.tp_lots_spin.value() == 20.0
+    assert "Runner: 0.0" in panel.tp_allocation_label.text()
+
+
+def test_tp_lots_cannot_exceed_position_and_remaining_is_shown_as_runner():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    assert panel.add_take_profit_target()
+
+    panel._take_profit_rows[0]["qty"].setValue(15.0)
+    assert [row["qty"].value() for row in panel._take_profit_rows] == [10.0, 10.0]
+    panel._take_profit_rows[0]["qty"].setValue(7.0)
+    assert [row["qty"].value() for row in panel._take_profit_rows] == [7.0, 10.0]
+    assert "Runner: 3.0" in panel.tp_allocation_label.text()
+
+
 def test_send_rejects_invalid_bracket_without_creating_order():
     app = _app()
     panel = OrderPanel()
