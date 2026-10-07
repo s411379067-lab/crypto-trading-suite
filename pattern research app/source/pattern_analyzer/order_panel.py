@@ -48,123 +48,120 @@ class OrderPanel(QtWidgets.QWidget):
         # Only actual fills are persisted to ResearchCase.orders.
         self.pending_orders: list[dict] = []
 
+        self.setStyleSheet(
+            "QLabel { color:#9aa9bf; }"
+            "QLineEdit, QDoubleSpinBox { background:#111722; color:#eef3fb; border:1px solid #303b4d; padding:4px; }"
+            "QPushButton { background:#202836; color:#9aa9bf; border:1px solid #343e50; padding:6px; }"
+            "QPushButton:checked { color:white; font-weight:700; }"
+        )
         outer = QtWidgets.QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(5)
-
-        title = QtWidgets.QLabel("Order")
-        title.setStyleSheet("font-size:13pt; font-weight:700; color:#e6edf7;")
-        outer.addWidget(title)
-
-        form = QtWidgets.QGridLayout()
-        form.setContentsMargins(0, 0, 0, 0)
-        form.setHorizontalSpacing(6)
-        form.setVerticalSpacing(4)
+        outer.setContentsMargins(4, 4, 4, 4)
+        outer.setSpacing(6)
 
         self.type_combo = QtWidgets.QComboBox(); self.type_combo.addItems(["market", "limit", "stop market"])
-        self.price_edit = QtWidgets.QLineEdit(); self.price_edit.setPlaceholderText("Price")
+        self.price_edit = QtWidgets.QLineEdit(); self.price_edit.setPlaceholderText("Entry")
         self.qty_spin = QtWidgets.QDoubleSpinBox()
-        self.qty_spin.setDecimals(4); self.qty_spin.setRange(0.0, 1_000_000.0); self.qty_spin.setValue(1.0)
+        self.qty_spin.setDecimals(6); self.qty_spin.setRange(0.0, 1_000_000.0); self.qty_spin.setValue(0.0)
+        self.type_combo.hide(); self.price_edit.hide(); self.qty_spin.hide()
 
-        self.mode_pending = QtWidgets.QPushButton("Pending")
-        self.mode_market = QtWidgets.QPushButton("Market")
-        for button in (self.mode_pending, self.mode_market):
-            button.setCheckable(True)
-        self.mode_group = QtWidgets.QButtonGroup(self)
-        self.mode_group.setExclusive(True)
-        self.mode_group.addButton(self.mode_pending)
-        self.mode_group.addButton(self.mode_market)
-        mode_row = QtWidgets.QHBoxLayout()
-        mode_row.addWidget(self.mode_pending)
-        mode_row.addWidget(self.mode_market)
-        outer.addLayout(mode_row)
-
-        self.btn_long = QtWidgets.QPushButton("LONG")
-        self.btn_short = QtWidgets.QPushButton("SHORT")
-        for button in (self.btn_long, self.btn_short):
-            button.setCheckable(True)
-        self.side_group = QtWidgets.QButtonGroup(self)
-        self.side_group.setExclusive(True)
-        self.side_group.addButton(self.btn_long)
-        self.side_group.addButton(self.btn_short)
-        side_row = QtWidgets.QHBoxLayout()
-        side_row.addWidget(self.btn_long)
-        side_row.addWidget(self.btn_short)
-        outer.addLayout(side_row)
         self._selected_side = "long"
-        self.btn_long.setChecked(True)
-        self.mode_pending.setChecked(True)
+        self._risk_mode = "cash"
+        self._risk_values = {"cash": 100.0, "percent": 0.5}
 
-        form.addWidget(QtWidgets.QLabel("Pending type"), 0, 0); form.addWidget(self.type_combo, 0, 1)
-        form.addWidget(QtWidgets.QLabel("Price"), 1, 0); form.addWidget(self.price_edit, 1, 1)
-        form.addWidget(QtWidgets.QLabel("Quantity"), 2, 0); form.addWidget(self.qty_spin, 2, 1)
-        outer.addLayout(form)
+        top = QtWidgets.QHBoxLayout()
+        input_box = QtWidgets.QWidget()
+        input_grid = QtWidgets.QGridLayout(input_box)
+        input_grid.setContentsMargins(0, 0, 0, 0)
+        input_grid.setHorizontalSpacing(6)
+        input_grid.setVerticalSpacing(4)
+        self.equity_spin = QtWidgets.QDoubleSpinBox()
+        self.equity_spin.setDecimals(2); self.equity_spin.setRange(0.0, 1_000_000_000_000.0)
+        self.equity_spin.setValue(0.0); self.equity_spin.setGroupSeparatorShown(True)
+        self.risk_mode_button = QtWidgets.QPushButton("Risk $")
+        self.risk_mode_button.setFixedWidth(72)
+        self.risk_input = QtWidgets.QDoubleSpinBox()
+        self.risk_input.setDecimals(2); self.risk_input.setRange(0.0, 1_000_000_000.0)
+        self.risk_input.setValue(100.0); self.risk_input.setGroupSeparatorShown(True)
+        self.entry_edit = QtWidgets.QLineEdit("0")
+        self.sl_edit = QtWidgets.QLineEdit("0")
+        self.tp_edit = QtWidgets.QLineEdit("0")
+        for row, (name, widget) in enumerate((
+            ("Equity", self.equity_spin), ("", self.risk_input), ("Entry", self.entry_edit),
+            ("SL", self.sl_edit), ("TP", self.tp_edit),
+        )):
+            if row == 1:
+                input_grid.addWidget(self.risk_mode_button, row, 0)
+                input_grid.addWidget(widget, row, 1)
+            else:
+                input_grid.addWidget(QtWidgets.QLabel(name), row, 0)
+                input_grid.addWidget(widget, row, 1)
+        top.addWidget(input_box, 1)
 
-        ratio_row = QtWidgets.QHBoxLayout()
-        self.btn_1_3 = QtWidgets.QPushButton("1/3 P")
-        self.btn_1_2 = QtWidgets.QPushButton("1/2 P")
-        self.btn_full = QtWidgets.QPushButton("full P")
-        ratio_row.addWidget(self.btn_1_3); ratio_row.addWidget(self.btn_1_2); ratio_row.addWidget(self.btn_full)
-        outer.addLayout(ratio_row)
+        metrics_box = QtWidgets.QGroupBox("TRADE METRICS")
+        metrics_grid = QtWidgets.QGridLayout(metrics_box)
+        self.metric_labels = {}
+        for row, key in enumerate(("Est Loss", "Est Profit", "RR", "Risk Target", "Lots")):
+            value = QtWidgets.QLabel("--")
+            value.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+            metrics_grid.addWidget(QtWidgets.QLabel(key), row, 0)
+            metrics_grid.addWidget(value, row, 1)
+            self.metric_labels[key] = value
+        top.addWidget(metrics_box, 1)
+        outer.addLayout(top)
 
-        action_row = QtWidgets.QHBoxLayout()
-        self.btn_place = QtWidgets.QPushButton("Place Order")
-        self.btn_close = QtWidgets.QPushButton("Close Position")
-        action_row.addWidget(self.btn_place); action_row.addWidget(self.btn_close)
-        outer.addLayout(action_row)
+        self.order_type_label = QtWidgets.QLabel("Order Type: --")
+        self.order_type_label.setStyleSheet("background:#111722; border:1px solid #303b4d; padding:6px;")
+        outer.addWidget(self.order_type_label)
 
-        self.lbl_unreal = QtWidgets.QLabel("Unrealized PnL: 0.000 (0.000R)")
-        self.lbl_real = QtWidgets.QLabel("Realized PnL: 0.000 (0.000R)")
-        self.lbl_pos = QtWidgets.QLabel("Position: flat")
-        outer.addWidget(self.lbl_unreal); outer.addWidget(self.lbl_real); outer.addWidget(self.lbl_pos)
+        self.mode_pending = QtWidgets.QPushButton("PENDING")
+        self.mode_market = QtWidgets.QPushButton("MARKET")
+        self.btn_short = QtWidgets.QPushButton("SHORT")
+        self.btn_long = QtWidgets.QPushButton("LONG")
+        for button in (self.mode_pending, self.mode_market, self.btn_short, self.btn_long):
+            button.setCheckable(True)
+        self.mode_group = QtWidgets.QButtonGroup(self); self.mode_group.setExclusive(True)
+        self.mode_group.addButton(self.mode_pending); self.mode_group.addButton(self.mode_market)
+        self.side_group = QtWidgets.QButtonGroup(self); self.side_group.setExclusive(True)
+        self.side_group.addButton(self.btn_short); self.side_group.addButton(self.btn_long)
+        modes = QtWidgets.QHBoxLayout(); modes.addWidget(self.mode_pending); modes.addWidget(self.mode_market)
+        sides = QtWidgets.QHBoxLayout(); sides.addWidget(self.btn_short); sides.addWidget(self.btn_long)
+        outer.addLayout(modes); outer.addLayout(sides)
 
-        pending_box = QtWidgets.QGroupBox("Pending Orders")
-        pending_layout = QtWidgets.QVBoxLayout(pending_box)
+        self.status_label = QtWidgets.QLabel("Choose mode + direction")
+        outer.addWidget(self.status_label)
+        self.btn_place = QtWidgets.QPushButton("SEND")
+        self.btn_cancel_plan = QtWidgets.QPushButton("CANCEL")
+        outer.addWidget(self.btn_place); outer.addWidget(self.btn_cancel_plan)
+        self.btn_place.setToolTip("送單接線將在下一階段加入；本階段只預覽下單參數。")
+
+        # Keep the existing order/replay engine and its record widgets alive while
+        # the old tables are removed from the visible Order Panel.
         self.pending_table = QtWidgets.QTableWidget(0, 6)
-        self.pending_table.setHorizontalHeaderLabels(["ID", "Side", "Type", "Price", "Qty", "Status"])
-        self.pending_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        self.pending_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
-        self.pending_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        self.pending_table.horizontalHeader().setStretchLastSection(True)
-        self._style_order_table(self.pending_table)
-        self.pending_table.setMaximumHeight(135)
-        self.btn_cancel = QtWidgets.QPushButton("Cancel Selected")
-        pending_layout.addWidget(self.pending_table); pending_layout.addWidget(self.btn_cancel)
-        outer.addWidget(pending_box)
-
-        records_box = QtWidgets.QGroupBox("Order Records")
-        records_layout = QtWidgets.QVBoxLayout(records_box)
         self.records_table = QtWidgets.QTableWidget(0, 8)
-        self.records_table.setHorizontalHeaderLabels(["Time", "Side", "Type", "Price", "Qty", "Status", "Action", "PnL"])
-        self.records_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        self.records_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
-        self.records_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        self.records_table.horizontalHeader().setStretchLastSection(True)
-        self._style_order_table(self.records_table)
-        self.records_table.setMinimumHeight(145)
-        self.btn_delete_record = QtWidgets.QPushButton("Delete Selected Record")
-        records_layout.addWidget(self.records_table, 1); records_layout.addWidget(self.btn_delete_record)
-        history_buttons = QtWidgets.QHBoxLayout()
-        self.btn_export = QtWidgets.QPushButton("Export Records")
-        self.btn_clean = QtWidgets.QPushButton("Clean Records")
-        history_buttons.addWidget(self.btn_export); history_buttons.addWidget(self.btn_clean)
-        records_layout.addLayout(history_buttons)
-        outer.addWidget(records_box, 1)
+        self.lbl_unreal = QtWidgets.QLabel()
+        self.lbl_real = QtWidgets.QLabel()
+        self.lbl_pos = QtWidgets.QLabel()
+        self.btn_close = QtWidgets.QPushButton()
+        self.btn_cancel = QtWidgets.QPushButton()
+        self.btn_delete_record = QtWidgets.QPushButton()
+        self.btn_export = QtWidgets.QPushButton()
+        self.btn_clean = QtWidgets.QPushButton()
 
-        self.btn_place.clicked.connect(self.place_order)
+        self.btn_place.clicked.connect(self._send_not_ready)
+        self.btn_cancel_plan.clicked.connect(self.cancel_plan)
+        self.risk_mode_button.clicked.connect(self.toggle_risk_mode)
         self.mode_pending.clicked.connect(lambda: self.set_order_mode("pending"))
         self.mode_market.clicked.connect(lambda: self.set_order_mode("market"))
         self.btn_long.clicked.connect(lambda: self.set_side("long"))
         self.btn_short.clicked.connect(lambda: self.set_side("short"))
-        self.btn_close.clicked.connect(self.close_position)
-        self.btn_cancel.clicked.connect(self.cancel_selected)
-        self.btn_delete_record.clicked.connect(self.delete_selected_record)
-        self.btn_export.clicked.connect(self.export_records)
-        self.btn_clean.clicked.connect(self.clean_records)
-        self.btn_1_3.clicked.connect(lambda: self._fill_qty_ratio(1.0 / 3.0))
-        self.btn_1_2.clicked.connect(lambda: self._fill_qty_ratio(1.0 / 2.0))
-        self.btn_full.clicked.connect(lambda: self._fill_qty_ratio(1.0))
+        for widget in (self.equity_spin, self.risk_input):
+            widget.valueChanged.connect(self.update_metrics)
+        for widget in (self.entry_edit, self.sl_edit, self.tp_edit):
+            widget.textChanged.connect(self.update_metrics)
         self.set_order_mode("pending")
+        self.set_side("long")
+        self._update_selection_styles()
+        self.update_metrics()
 
     @property
     def selected_side(self) -> str:
@@ -174,20 +171,132 @@ class OrderPanel(QtWidgets.QWidget):
         self._selected_side = "short" if side == "short" else "long"
         self.btn_long.setChecked(self._selected_side == "long")
         self.btn_short.setChecked(self._selected_side == "short")
+        self._update_selection_styles()
+        self.update_metrics()
+        self._update_status()
 
     def set_order_mode(self, mode: str) -> None:
         market = mode == "market"
         self.mode_market.setChecked(market)
         self.mode_pending.setChecked(not market)
-        if market:
-            self.type_combo.setCurrentText("market")
-            self.type_combo.setEnabled(False)
-            self.btn_place.setText("Send Market")
-        else:
-            self.type_combo.setEnabled(True)
-            if self.type_combo.currentText() == "market":
-                self.type_combo.setCurrentText("limit")
-            self.btn_place.setText("Send Pending")
+        self.entry_edit.setEnabled(not market)
+        self._update_selection_styles()
+        self.update_metrics()
+        self._update_status()
+
+    def _update_selection_styles(self) -> None:
+        pending = "#2962ff"
+        market = "#f5a623"
+        short = "#ef5350"
+        long = "#26a69a"
+        for button, selected, color in (
+            (self.mode_pending, self.mode_pending.isChecked(), pending),
+            (self.mode_market, self.mode_market.isChecked(), market),
+            (self.btn_short, self.btn_short.isChecked(), short),
+            (self.btn_long, self.btn_long.isChecked(), long),
+        ):
+            bg = color if selected else "#202836"
+            border = color if selected else "#343e50"
+            button.setStyleSheet(f"QPushButton {{ background:{bg}; color:white; border:1px solid {border}; padding:6px; }}")
+        side_color = short if self.selected_side == "short" else long
+        self.btn_place.setStyleSheet(
+            f"QPushButton {{ background:{side_color}; color:white; border:1px solid {side_color}; padding:8px; font-weight:700; }}"
+            "QPushButton:disabled { color:#a0a7b2; background:#343b46; border:1px solid #414957; }"
+        )
+
+    def toggle_risk_mode(self) -> None:
+        self._risk_values[self._risk_mode] = float(self.risk_input.value())
+        self._risk_mode = "percent" if self._risk_mode == "cash" else "cash"
+        self.risk_input.setValue(self._risk_values[self._risk_mode])
+        self.risk_mode_button.setText("Risk %" if self._risk_mode == "percent" else "Risk $")
+        self.update_metrics()
+
+    def _update_status(self) -> None:
+        mode = "PENDING" if self.mode_pending.isChecked() else "MARKET"
+        side = self.selected_side.upper()
+        color = "#ef5350" if side == "SHORT" else "#26a69a"
+        self.status_label.setText(f"{mode}  •  {side}")
+        self.status_label.setStyleSheet(f"color:{color}; font-weight:700;")
+
+    def _send_not_ready(self) -> None:
+        self.status_label.setText("Preview only — order submission will be connected in the next step")
+        self.status_label.setStyleSheet("color:#f5a623;")
+
+    def cancel_plan(self) -> None:
+        self.entry_edit.setText("0")
+        self.sl_edit.setText("0")
+        self.tp_edit.setText("0")
+        self.status_label.setText("Plan cancelled")
+        self.status_label.setStyleSheet("color:#9aa9bf;")
+        self.update_metrics()
+
+    @staticmethod
+    def _read_price(text: str) -> float | None:
+        try:
+            value = float(text.strip().replace(",", ""))
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
+
+    def _entry_price(self) -> float | None:
+        if self.mode_market.isChecked():
+            value = self.current_price()
+            return None if value is None else float(value)
+        return self._read_price(self.entry_edit.text())
+
+    def _risk_target(self) -> float:
+        value = float(self.risk_input.value())
+        if self._risk_mode == "percent":
+            return float(self.equity_spin.value()) * value / 100.0
+        return value
+
+    def _order_type(self, entry: float | None) -> str:
+        if self.mode_market.isChecked():
+            return "market"
+        current = self.current_price()
+        if entry is None or current is None:
+            return "--"
+        if self.selected_side == "long":
+            return "limit" if entry <= current else "stop market"
+        return "limit" if entry >= current else "stop market"
+
+    def update_metrics(self, *_args) -> None:
+        entry = self._entry_price()
+        if self.mode_market.isChecked() and entry is not None:
+            blocked = self.entry_edit.blockSignals(True)
+            self.entry_edit.setText(f"{entry:.{self._price_precision(entry)}f}")
+            self.entry_edit.blockSignals(blocked)
+        sl = self._read_price(self.sl_edit.text())
+        tp = self._read_price(self.tp_edit.text())
+        risk_target = self._risk_target()
+        entry_edit = entry if entry is not None else 0.0
+        self.price_edit.setText(str(entry_edit))
+        order_type = self._order_type(entry)
+        self.order_type_label.setText(f"Order Type: {order_type}")
+        if order_type in ("market", "limit", "stop market"):
+            self.type_combo.setCurrentText(order_type)
+
+        multiplier = _side_mult(self.selected_side)
+        stop_valid = sl is not None and entry is not None and (sl < entry if multiplier > 0 else sl > entry)
+        lots = None
+        est_loss = None
+        est_profit = None
+        rr = None
+        if risk_target > 0 and stop_valid:
+            per_lot_loss = abs(entry - sl)
+            if per_lot_loss > 0:
+                lots = risk_target / per_lot_loss
+                est_loss = lots * per_lot_loss
+                if tp is not None and (tp > entry if multiplier > 0 else tp < entry):
+                    est_profit = abs(tp - entry) * lots
+                    rr = abs(tp - entry) / per_lot_loss
+
+        self.qty_spin.setValue(0.0 if lots is None else lots)
+        self.metric_labels["Est Loss"].setText("--" if est_loss is None else f"{est_loss:,.2f} USD")
+        self.metric_labels["Est Profit"].setText("--" if est_profit is None else f"{est_profit:,.2f} USD")
+        self.metric_labels["RR"].setText("--" if rr is None else f"{rr:.2f}")
+        self.metric_labels["Risk Target"].setText(f"{risk_target:,.2f} USD" if risk_target > 0 else "--")
+        self.metric_labels["Lots"].setText("--" if lots is None else f"{lots:.6f}")
 
     def set_context(self, case, raw_df: pd.DataFrame, replay):
         self.case = case
@@ -466,6 +575,7 @@ class OrderPanel(QtWidgets.QWidget):
     def refresh(self):
         self._recompute_state()
         cp = self.current_price()
+        self.update_metrics()
         unreal = 0.0
         if self._position is not None and cp is not None:
             unreal = (cp - self._position["entry"]) * _side_mult(self._position["side"]) * self._position["qty"]
