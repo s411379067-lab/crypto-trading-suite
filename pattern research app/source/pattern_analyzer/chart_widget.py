@@ -691,6 +691,7 @@ class ChartWidget(QtWidgets.QWidget):
     history_committed = QtCore.Signal(str)
     view_timeframe_changed = QtCore.Signal(str)
     timezone_changed = QtCore.Signal(str)
+    order_plan_price_changed = QtCore.Signal(str, float)
 
     def __init__(self, parent=None, *, drawing_interaction_enabled: bool = True):
         super().__init__(parent)
@@ -716,6 +717,8 @@ class ChartWidget(QtWidgets.QWidget):
         self._syncing_auto_all = False
         self.order_events: list[dict] = []
         self.order_segments: list[dict] = []
+        self.order_plan: dict = {}
+        self.order_plan_items: dict[str, object] = {}
         self.show_all_orders = False
         self.show_previous_rth = False
         self.show_all_drawings = True
@@ -1049,6 +1052,61 @@ class ChartWidget(QtWidgets.QWidget):
         if render and self.replay is not None:
             self.render(reset_x=False)
 
+    def set_order_plan(self, plan: dict | None) -> None:
+        """Set transient entry/SL/TP preview lines; this state is never persisted."""
+        self.order_plan = dict(plan or {})
+        self._clear_order_plan_items()
+        if self.replay is not None:
+            self._render_order_plan()
+
+    def _clear_order_plan_items(self) -> None:
+        for item in self.order_plan_items.values():
+            try:
+                self.plot.removeItem(item)
+            except Exception:
+                pass
+        self.order_plan_items = {}
+
+    def _render_order_plan(self) -> None:
+        if self.replay is None:
+            return
+        styles = {
+            "entry": ("Entry", "#e6edf7"),
+            "sl": ("SL", "#ef5350"),
+            "tp": ("TP", "#f5a623"),
+        }
+        for field, (label, color) in styles.items():
+            try:
+                price = float(self.order_plan.get(field) or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if price <= 0:
+                continue
+            movable = field != "entry" or self.order_plan.get("mode") != "market"
+            line = pg.InfiniteLine(
+                pos=price,
+                angle=0,
+                movable=movable,
+                pen=pg.mkPen(color, width=1.4, style=QtCore.Qt.DashLine),
+                hoverPen=pg.mkPen(color, width=2.2),
+                label=label + "  {value:.2f}",
+                labelOpts={"position": 0.98, "color": color, "fill": (18, 24, 35, 210)},
+            )
+            line.setZValue(90)
+            line.sigPositionChangeFinished.connect(
+                lambda item=None, key=field: self._order_plan_line_finished(key, item)
+            )
+            self.plot.addItem(line, ignoreBounds=True)
+            self.order_plan_items[field] = line
+
+    def _order_plan_line_finished(self, field: str, item=None) -> None:
+        line = item or self.order_plan_items.get(field)
+        if line is None:
+            return
+        price = float(line.value())
+        self.order_plan[field] = price
+        self.order_plan_price_changed.emit(field, price)
+
     def visible_bars(self) -> pd.DataFrame:
         if self.replay is None or self.raw_df.empty:
             return pd.DataFrame()
@@ -1064,6 +1122,7 @@ class ChartWidget(QtWidgets.QWidget):
             return
         old_range = self.plot.viewRange()[0]
         self.plot.clear()
+        self.order_plan_items = {}
         # Dynamic all-note callouts were removed by plot.clear(); drop stale refs.
         self._all_note_callout_items = []
         self.plot.addItem(self.vline, ignoreBounds=True)
@@ -1088,6 +1147,7 @@ class ChartWidget(QtWidgets.QWidget):
         self._render_reference_levels()
         self._render_drawing_items()
         self._render_order_overlay()
+        self._render_order_plan()
 
         if reset_x:
             left = self.replay.data_start_ts

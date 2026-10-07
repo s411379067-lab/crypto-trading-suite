@@ -124,6 +124,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.research.all_notes_visibility_changed.connect(self.chart.set_all_intraday_notes_visible)
         self.order.changed.connect(self.mark_dirty)
         self.order.fills_changed.connect(self._refresh_order_markers)
+        self.order.order_plan_changed.connect(self.chart.set_order_plan)
+        self.chart.order_plan_price_changed.connect(self.order.set_plan_price_from_chart)
         self.btn_forward.clicked.connect(self.step_forward)
         self.btn_back.clicked.connect(self.step_backward)
         self.btn_reset.clicked.connect(self.reset_replay)

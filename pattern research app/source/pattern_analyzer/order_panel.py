@@ -20,6 +20,7 @@ class OrderPanel(QtWidgets.QWidget):
 
     changed = QtCore.Signal()
     fills_changed = QtCore.Signal()
+    order_plan_changed = QtCore.Signal(dict)
 
     R_VALUE = 60.0
 
@@ -337,10 +338,30 @@ class OrderPanel(QtWidgets.QWidget):
         self.metric_labels["Risk Target"].setText(f"{risk_target:,.2f} USD" if risk_target > 0 else "--")
         self.metric_labels["Lots"].setText("--" if lots is None else f"{lots:.6f}")
 
+        self.order_plan_changed.emit({
+            "mode": "market" if self.mode_market.isChecked() else "pending",
+            "side": self.selected_side,
+            "entry": entry,
+            "sl": sl,
+            "tp": tp,
+            "order_type": order_type,
+        })
+
+    def set_plan_price_from_chart(self, field: str, price: float) -> None:
+        fields = {"entry": self.entry_edit, "sl": self.sl_edit, "tp": self.tp_edit}
+        widget = fields.get(field)
+        if widget is None or price <= 0:
+            return
+        if field == "entry" and self.mode_market.isChecked():
+            return
+        widget.setText(f"{float(price):.{self._price_precision(price)}f}")
+
     def set_context(self, case, raw_df: pd.DataFrame, replay):
         self.case = case
         self.raw_df = raw_df
         self.replay = replay
+        for widget in (self.entry_edit, self.sl_edit, self.tp_edit):
+            widget.setText("0")
         # Unfilled orders are not research records and are never restored.
         self.pending_orders.clear()
         # Compatibility cleanup for v0.1.3 cases that may contain open/cancelled rows.
