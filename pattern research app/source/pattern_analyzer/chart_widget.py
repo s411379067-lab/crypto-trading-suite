@@ -721,6 +721,7 @@ class ChartWidget(QtWidgets.QWidget):
         self.order_segments: list[dict] = []
         self.order_plan: dict = {}
         self.order_plan_items: dict[str, object] = {}
+        self.order_plan_labels: dict[str, object] = {}
         self.show_all_orders = False
         self.show_previous_rth = False
         self.show_all_drawings = True
@@ -917,6 +918,7 @@ class ChartWidget(QtWidgets.QWidget):
         self.vol_n_spin.valueChanged.connect(self._update_volatility_stats)
         self.plot.scene().sigMouseClicked.connect(self._scene_clicked)
         self.plot.sigRangeChanged.connect(self._on_view_range_changed)
+        self.plot.sigRangeChanged.connect(self._position_order_plan_labels)
         self._mouse_proxy = pg.SignalProxy(self.graphics.scene().sigMouseMoved, rateLimit=60, slot=self._mouse_moved)
         self.graphics.setFocusPolicy(QtCore.Qt.StrongFocus)
         try:
@@ -1062,22 +1064,70 @@ class ChartWidget(QtWidgets.QWidget):
             self._render_order_plan()
 
     def _clear_order_plan_items(self) -> None:
-        for item in self.order_plan_items.values():
+        for item in (*self.order_plan_items.values(), *self.order_plan_labels.values()):
             try:
                 self.plot.removeItem(item)
             except Exception:
                 pass
         self.order_plan_items = {}
+        self.order_plan_labels = {}
+
+    def _order_plan_label_html(self, field: str, price: float) -> str:
+        def fmt(value, digits=2):
+            try:
+                return f"{float(value):,.{digits}f}"
+            except (TypeError, ValueError):
+                return "--"
+
+        if field == "entry":
+            side = str(self.order_plan.get("side") or "long").lower()
+            order_type = str(self.order_plan.get("order_type") or "--").upper()
+            if order_type == "STOP MARKET":
+                order_type = "STOP"
+            action = "SELL" if side == "short" else "BUY"
+            lots = self.order_plan.get("lots")
+            lots_text = "--" if lots is None else fmt(lots, 2)
+            return (
+                f'<span style="color:#e6edf7">{action} {order_type} | {fmt(price)}</span>'
+                f'<span style="color:#53d8c5"> | Lots {lots_text}</span>'
+            )
+        if field == "sl":
+            loss = self.order_plan.get("est_loss")
+            loss_text = "--" if loss is None else f"{fmt(loss)} USD"
+            return f'<span style="color:#ff6b70">SL {fmt(price)} | {loss_text}</span>'
+
+        profit = self.order_plan.get("est_profit")
+        rr = self.order_plan.get("rr")
+        profit_text = "--" if profit is None else f"{fmt(profit)} USD"
+        rr_text = "--" if rr is None else f"{fmt(rr)}R"
+        return (
+            f'<span style="color:#e6edf7">TP {fmt(price)}</span>'
+            f'<span style="color:#50d6a0"> | {profit_text}</span>'
+            f'<span style="color:#62c9ff"> | {rr_text}</span>'
+        )
+
+    def _position_order_plan_labels(self, *_args) -> None:
+        if not self.order_plan_labels:
+            return
+        try:
+            x_range = self.plot.viewRange()[0]
+            x = float(x_range[0]) + (float(x_range[1]) - float(x_range[0])) * self.ORDER_PLAN_LABEL_POSITION
+        except Exception:
+            return
+        for field, label in self.order_plan_labels.items():
+            line = self.order_plan_items.get(field)
+            if line is not None:
+                label.setPos(x, float(line.value()))
 
     def _render_order_plan(self) -> None:
         if self.replay is None:
             return
         styles = {
-            "entry": ("Entry", "#e6edf7"),
-            "sl": ("SL", "#ef5350"),
-            "tp": ("TP", "#f5a623"),
+            "entry": ("#e6edf7"),
+            "sl": ("#ef5350"),
+            "tp": ("#f5a623"),
         }
-        for field, (label, color) in styles.items():
+        for field, color in styles.items():
             try:
                 price = float(self.order_plan.get(field) or 0.0)
             except (TypeError, ValueError):
@@ -1091,12 +1141,6 @@ class ChartWidget(QtWidgets.QWidget):
                 movable=movable,
                 pen=pg.mkPen(color, width=1.4, style=QtCore.Qt.DashLine),
                 hoverPen=pg.mkPen(color, width=2.2),
-                label=label + "  {value:.2f}",
-                labelOpts={
-                    "position": self.ORDER_PLAN_LABEL_POSITION,
-                    "color": color,
-                    "fill": (18, 24, 35, 210),
-                },
             )
             line.setZValue(90)
             line.sigPositionChangeFinished.connect(
@@ -1104,6 +1148,15 @@ class ChartWidget(QtWidgets.QWidget):
             )
             self.plot.addItem(line, ignoreBounds=True)
             self.order_plan_items[field] = line
+            label = pg.TextItem(
+                html=self._order_plan_label_html(field, price),
+                anchor=(1, 0.5),
+                fill=pg.mkBrush(18, 24, 35, 225),
+            )
+            label.setZValue(91)
+            self.plot.addItem(label, ignoreBounds=True)
+            self.order_plan_labels[field] = label
+        self._position_order_plan_labels()
 
     def _order_plan_line_finished(self, field: str, item=None) -> None:
         line = item or self.order_plan_items.get(field)
@@ -1129,6 +1182,7 @@ class ChartWidget(QtWidgets.QWidget):
         old_range = self.plot.viewRange()[0]
         self.plot.clear()
         self.order_plan_items = {}
+        self.order_plan_labels = {}
         # Dynamic all-note callouts were removed by plot.clear(); drop stale refs.
         self._all_note_callout_items = []
         self.plot.addItem(self.vline, ignoreBounds=True)

@@ -51,6 +51,11 @@ def test_chart_draws_and_updates_transient_order_plan_lines():
         "entry": 100.0,
         "sl": 95.0,
         "tp": 110.0,
+        "order_type": "limit",
+        "lots": 20.0,
+        "est_loss": 100.0,
+        "est_profit": 200.0,
+        "rr": 2.0,
     })
 
     assert set(chart.order_plan_items) == {"entry", "sl", "tp"}
@@ -58,6 +63,12 @@ def test_chart_draws_and_updates_transient_order_plan_lines():
     assert chart.order_plan_items["entry"].value() == 100.0
     assert chart.order_plan_items["sl"].value() == 95.0
     assert chart.order_plan_items["tp"].value() == 110.0
+    entry_html = chart.order_plan_labels["entry"].textItem.toHtml()
+    sl_html = chart.order_plan_labels["sl"].textItem.toHtml()
+    tp_html = chart.order_plan_labels["tp"].textItem.toHtml()
+    assert "BUY LIMIT" in entry_html and "Lots 20.00" in entry_html
+    assert "SL 95.00" in sl_html and "100.00 USD" in sl_html
+    assert "TP 110.00" in tp_html and "200.00 USD" in tp_html and "2.00R" in tp_html
 
     line = chart.order_plan_items["sl"]
     line.setValue(94.0)

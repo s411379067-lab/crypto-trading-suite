@@ -345,6 +345,10 @@ class OrderPanel(QtWidgets.QWidget):
             "sl": sl,
             "tp": tp,
             "order_type": order_type,
+            "lots": lots,
+            "est_loss": est_loss,
+            "est_profit": est_profit,
+            "rr": rr,
         })
 
     def set_plan_price_from_chart(self, field: str, price: float) -> None:
