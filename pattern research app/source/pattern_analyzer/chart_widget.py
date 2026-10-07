@@ -768,8 +768,6 @@ class ChartWidget(QtWidgets.QWidget):
         tb.setSpacing(2)
         tool_row = QtWidgets.QHBoxLayout()
         tool_row.setSpacing(5)
-        settings_row = QtWidgets.QHBoxLayout()
-        settings_row.setSpacing(5)
         stats_row = QtWidgets.QHBoxLayout()
         stats_row.setSpacing(5)
 
@@ -781,9 +779,11 @@ class ChartWidget(QtWidgets.QWidget):
         self.btn_fibo = QtWidgets.QPushButton("Fibo")
         self.show_drawings_checkbox = QtWidgets.QCheckBox("顯示全部圖形")
         self.show_drawings_checkbox.setChecked(True)
+        self.show_drawings_checkbox.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Preferred)
         self.show_drawings_checkbox.setToolTip("一次顯示 / 隱藏所有 Drawing；不刪除也不修改 Case JSON")
         self.show_orders_checkbox = QtWidgets.QCheckBox("顯示全部 Order")
         self.show_orders_checkbox.setChecked(False)
+        self.show_orders_checkbox.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Preferred)
         self.show_orders_checkbox.setToolTip("顯示已揭露成交的紅綠三角形，以及已完成交易的 Open → Close PnL 點線；不修改 Case JSON")
         self.btn_shot = QtWidgets.QPushButton("Shot")
         self.btn_auto = QtWidgets.QPushButton("Auto")
@@ -832,23 +832,34 @@ class ChartWidget(QtWidgets.QWidget):
         tool_row.addWidget(self.show_orders_checkbox)
         for w in (self.btn_shot, self.btn_auto, self.btn_auto_all, self.timeframe_combo):
             tool_row.addWidget(w)
-        settings_row.addWidget(QtWidgets.QLabel("X刻度"))
-        settings_row.addWidget(self.x_tick_combo)
-        settings_row.addWidget(self.timezone_combo)
-        settings_row.addSpacing(8)
-        settings_row.addWidget(self.vol_n_label)
-        settings_row.addWidget(self.vol_n_spin)
+        self.x_tick_label = QtWidgets.QLabel("X刻度")
+        self.x_tick_label.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Preferred)
+        self.vol_n_label.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Preferred)
+        for w in (self.x_tick_label, self.x_tick_combo, self.timezone_combo, self.vol_n_label, self.vol_n_spin):
+            tool_row.addWidget(w)
         self.measure_status = QtWidgets.QLabel("MEASURE")
         self.measure_status.setStyleSheet(
             "background-color:#2a3952; border:1px solid #ffcc80; border-radius:3px; "
             "color:#ffcc80; padding:3px 8px; font-weight:700;"
         )
         self.measure_status.setVisible(False)
+        first_row_controls = (
+            self.btn_h, self.btn_l, self.btn_t, self.btn_rect, self.btn_fibo,
+            self.show_drawings_checkbox, self.show_orders_checkbox,
+            self.btn_shot, self.btn_auto, self.btn_auto_all, self.timeframe_combo,
+            self.x_tick_label, self.x_tick_combo, self.timezone_combo,
+            self.vol_n_label, self.vol_n_spin,
+        )
+        for widget in first_row_controls:
+            widget.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Preferred)
+        for w in (self.vol_stats_label, self.current_range_label, self.measure_status):
+            w.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Preferred)
         stats_row.addWidget(self.vol_stats_label)
         stats_row.addWidget(self.current_range_label)
         stats_row.addWidget(self.measure_status)
+        tool_row.addStretch(1)
+        stats_row.addStretch(1)
         tb.addLayout(tool_row)
-        tool_row.addLayout(settings_row)
         tb.addLayout(stats_row)
         outer.addWidget(self.toolbar)
 
