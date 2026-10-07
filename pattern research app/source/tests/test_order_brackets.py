@@ -2,6 +2,7 @@ import pytest
 import pandas as pd
 from pyqtgraph.Qt import QtWidgets
 
+from pattern_analyzer.chart_widget import ChartWidget
 from pattern_analyzer.order_panel import OrderPanel
 from shared_core.order_brackets import (
     available_bracket_qty,
@@ -211,3 +212,34 @@ def test_cancel_pending_bracket_clears_the_unsent_plan():
     panel.cancel_pending_bracket()
 
     assert panel.pending_bracket is None
+
+
+def test_pending_group_x_click_passes_group_id_not_qt_checked_bool():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    chart = ChartWidget()
+    chart.pending_bracket = create_pending_bracket("short", 100.0, 1.0)
+    edited = []
+    chart.pending_bracket_edited.connect(edited.append)
+
+    chart._render_pending_bracket()
+    x_buttons = [widget for widget, _price in chart._pending_qty_controls if isinstance(widget, QtWidgets.QPushButton) and widget.text() == "X"]
+    assert len(x_buttons) == 3  # Entry, SL, and TP
+    x_buttons[1].click()
+
+    assert len(edited) == 1
+    assert edited[0]["groups"] == []
+
+
+def test_submitted_group_x_click_emits_group_id_not_qt_checked_bool():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    chart = ChartWidget()
+    chart.submitted_bracket = create_pending_bracket("short", 100.0, 1.0)
+    deleted = []
+    chart.submitted_group_cancel_requested.connect(deleted.append)
+
+    chart._render_submitted_bracket()
+    x_buttons = [widget for widget, _price in chart._pending_qty_controls if isinstance(widget, QtWidgets.QPushButton) and widget.text() == "X"]
+    assert len(x_buttons) == 3  # Entry, SL, and TP
+    x_buttons[1].click()
+
+    assert deleted == [chart.submitted_bracket["groups"][0]["id"]]

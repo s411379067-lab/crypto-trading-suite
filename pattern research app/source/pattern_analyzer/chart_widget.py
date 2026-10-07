@@ -1646,7 +1646,13 @@ class ChartWidget(QtWidgets.QWidget):
         )
         if callback:
             control.setToolTip("雙擊修改 lots；同組 SL 與 TP 會同步" if double_click else "點擊執行")
-            (control.double_clicked if double_click else control.clicked).connect(callback)
+            if double_click:
+                control.double_clicked.connect(callback)
+            else:
+                # QPushButton.clicked supplies a checked bool. Consume it here so
+                # callbacks with default-captured arguments (such as group_id)
+                # do not accidentally receive True/False instead.
+                control.clicked.connect(lambda _checked=False, action=callback: action())
         else:
             control.setToolTip("SL/TP lots 由 Entry 分配；不可直接修改")
             control.setAlignment(QtCore.Qt.AlignCenter)
