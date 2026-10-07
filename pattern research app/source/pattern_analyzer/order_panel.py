@@ -61,16 +61,43 @@ class OrderPanel(QtWidgets.QWidget):
         form.setHorizontalSpacing(6)
         form.setVerticalSpacing(4)
 
-        self.side_combo = QtWidgets.QComboBox(); self.side_combo.addItems(["long", "short"])
         self.type_combo = QtWidgets.QComboBox(); self.type_combo.addItems(["market", "limit", "stop market"])
         self.price_edit = QtWidgets.QLineEdit(); self.price_edit.setPlaceholderText("Price")
         self.qty_spin = QtWidgets.QDoubleSpinBox()
         self.qty_spin.setDecimals(4); self.qty_spin.setRange(0.0, 1_000_000.0); self.qty_spin.setValue(1.0)
 
-        form.addWidget(QtWidgets.QLabel("Side"), 0, 0); form.addWidget(self.side_combo, 0, 1)
-        form.addWidget(QtWidgets.QLabel("Type"), 1, 0); form.addWidget(self.type_combo, 1, 1)
-        form.addWidget(QtWidgets.QLabel("Price"), 2, 0); form.addWidget(self.price_edit, 2, 1)
-        form.addWidget(QtWidgets.QLabel("Quantity"), 3, 0); form.addWidget(self.qty_spin, 3, 1)
+        self.mode_pending = QtWidgets.QPushButton("Pending")
+        self.mode_market = QtWidgets.QPushButton("Market")
+        for button in (self.mode_pending, self.mode_market):
+            button.setCheckable(True)
+        self.mode_group = QtWidgets.QButtonGroup(self)
+        self.mode_group.setExclusive(True)
+        self.mode_group.addButton(self.mode_pending)
+        self.mode_group.addButton(self.mode_market)
+        mode_row = QtWidgets.QHBoxLayout()
+        mode_row.addWidget(self.mode_pending)
+        mode_row.addWidget(self.mode_market)
+        outer.addLayout(mode_row)
+
+        self.btn_long = QtWidgets.QPushButton("LONG")
+        self.btn_short = QtWidgets.QPushButton("SHORT")
+        for button in (self.btn_long, self.btn_short):
+            button.setCheckable(True)
+        self.side_group = QtWidgets.QButtonGroup(self)
+        self.side_group.setExclusive(True)
+        self.side_group.addButton(self.btn_long)
+        self.side_group.addButton(self.btn_short)
+        side_row = QtWidgets.QHBoxLayout()
+        side_row.addWidget(self.btn_long)
+        side_row.addWidget(self.btn_short)
+        outer.addLayout(side_row)
+        self._selected_side = "long"
+        self.btn_long.setChecked(True)
+        self.mode_pending.setChecked(True)
+
+        form.addWidget(QtWidgets.QLabel("Pending type"), 0, 0); form.addWidget(self.type_combo, 0, 1)
+        form.addWidget(QtWidgets.QLabel("Price"), 1, 0); form.addWidget(self.price_edit, 1, 1)
+        form.addWidget(QtWidgets.QLabel("Quantity"), 2, 0); form.addWidget(self.qty_spin, 2, 1)
         outer.addLayout(form)
 
         ratio_row = QtWidgets.QHBoxLayout()
@@ -125,6 +152,10 @@ class OrderPanel(QtWidgets.QWidget):
         outer.addWidget(records_box, 1)
 
         self.btn_place.clicked.connect(self.place_order)
+        self.mode_pending.clicked.connect(lambda: self.set_order_mode("pending"))
+        self.mode_market.clicked.connect(lambda: self.set_order_mode("market"))
+        self.btn_long.clicked.connect(lambda: self.set_side("long"))
+        self.btn_short.clicked.connect(lambda: self.set_side("short"))
         self.btn_close.clicked.connect(self.close_position)
         self.btn_cancel.clicked.connect(self.cancel_selected)
         self.btn_delete_record.clicked.connect(self.delete_selected_record)
@@ -133,6 +164,30 @@ class OrderPanel(QtWidgets.QWidget):
         self.btn_1_3.clicked.connect(lambda: self._fill_qty_ratio(1.0 / 3.0))
         self.btn_1_2.clicked.connect(lambda: self._fill_qty_ratio(1.0 / 2.0))
         self.btn_full.clicked.connect(lambda: self._fill_qty_ratio(1.0))
+        self.set_order_mode("pending")
+
+    @property
+    def selected_side(self) -> str:
+        return self._selected_side
+
+    def set_side(self, side: str) -> None:
+        self._selected_side = "short" if side == "short" else "long"
+        self.btn_long.setChecked(self._selected_side == "long")
+        self.btn_short.setChecked(self._selected_side == "short")
+
+    def set_order_mode(self, mode: str) -> None:
+        market = mode == "market"
+        self.mode_market.setChecked(market)
+        self.mode_pending.setChecked(not market)
+        if market:
+            self.type_combo.setCurrentText("market")
+            self.type_combo.setEnabled(False)
+            self.btn_place.setText("Send Market")
+        else:
+            self.type_combo.setEnabled(True)
+            if self.type_combo.currentText() == "market":
+                self.type_combo.setCurrentText("limit")
+            self.btn_place.setText("Send Pending")
 
     def set_context(self, case, raw_df: pd.DataFrame, replay):
         self.case = case
@@ -175,21 +230,6 @@ class OrderPanel(QtWidgets.QWidget):
             return 2
         return 4 if abs(float(value)) < 10 else 2
 
-    def prefill_from_chart(self, side: str, price: float):
-        """Legacy S/L axis-button behavior: choose limit vs stop-market from current price."""
-        cp = self.current_price()
-        if cp is None:
-            return
-        side = "short" if side == "short" else "long"
-        price = float(price)
-        if cp > price:
-            order_type = "stop market" if side == "short" else "limit"
-        else:
-            order_type = "limit" if side == "short" else "stop market"
-        self.side_combo.setCurrentText(side)
-        self.type_combo.setCurrentText(order_type)
-        self.price_edit.setText(f"{price:.{self._price_precision(price)}f}")
-
     def _new_order_record(self, side: str, order_type: str, requested_price, qty: float, origin="place"):
         ts = self._current_ts()
         return {
@@ -216,7 +256,7 @@ class OrderPanel(QtWidgets.QWidget):
     def place_order(self):
         if self.case is None or self.replay is None:
             return
-        side = self.side_combo.currentText()
+        side = self.selected_side
         order_type = self.type_combo.currentText()
         qty = float(self.qty_spin.value())
         if qty <= 0:

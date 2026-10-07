@@ -691,7 +691,6 @@ class ChartWidget(QtWidgets.QWidget):
     history_committed = QtCore.Signal(str)
     view_timeframe_changed = QtCore.Signal(str)
     timezone_changed = QtCore.Signal(str)
-    order_prefill_requested = QtCore.Signal(str, float)
 
     def __init__(self, parent=None, *, drawing_interaction_enabled: bool = True):
         super().__init__(parent)
@@ -890,17 +889,6 @@ class ChartWidget(QtWidgets.QWidget):
         self.price_coord_label.hide()
         self.price_coord_label.raise_()
 
-        # Legacy S/L buttons beside the Y-axis crosshair price. They only prefill the Order panel.
-        self.btn_short_axis = QtWidgets.QPushButton("S", self.graphics)
-        self.btn_long_axis = QtWidgets.QPushButton("L", self.graphics)
-        self.btn_short_axis.setFixedSize(24, 24); self.btn_long_axis.setFixedSize(24, 24)
-        self.btn_short_axis.setStyleSheet("background-color:#c41e3a; border:1px solid #8b0000; border-radius:2px; color:#fff; font-weight:bold;")
-        self.btn_long_axis.setStyleSheet("background-color:#1e5a96; border:1px solid #0d3d73; border-radius:2px; color:#fff; font-weight:bold;")
-        self.btn_short_axis.hide(); self.btn_long_axis.hide()
-        self.btn_short_axis.raise_(); self.btn_long_axis.raise_()
-        self.btn_short_axis.clicked.connect(lambda: self.order_prefill_requested.emit("short", float(self.hline.value())))
-        self.btn_long_axis.clicked.connect(lambda: self.order_prefill_requested.emit("long", float(self.hline.value())))
-
         self.time_coord_label = QtWidgets.QLabel(self.graphics)
         self.time_coord_label.setStyleSheet(coord_style)
         self.time_coord_label.setAlignment(QtCore.Qt.AlignCenter)
@@ -1088,7 +1076,6 @@ class ChartWidget(QtWidgets.QWidget):
         if not self._measure_dragging:
             self.measure_line.hide(); self.measure_label.hide()
         self.price_coord_label.hide(); self.time_coord_label.hide()
-        self.btn_short_axis.hide(); self.btn_long_axis.hide()
 
         bars = self.visible_bars()
         self._last_bars = bars
@@ -1641,7 +1628,6 @@ class ChartWidget(QtWidgets.QWidget):
         if not self.plot.sceneBoundingRect().contains(pos):
             self.vline.hide(); self.hline.hide()
             self.price_coord_label.hide(); self.time_coord_label.hide()
-            self.btn_short_axis.hide(); self.btn_long_axis.hide()
             self._restore_latest_ohlc()
             return
         p = self.plot.vb.mapSceneToView(pos)
@@ -1692,15 +1678,6 @@ class ChartWidget(QtWidgets.QWidget):
         self.price_coord_label.move(px, py)
         self.price_coord_label.show()
 
-        btn_size = 24
-        btn_spacing = 2
-        total_btn_w = btn_size * 2 + btn_spacing
-        btn_x = max(0, px - total_btn_w - 3)
-        btn_y = max(0, min(int(py + (ph - btn_size) * 0.5), self.graphics.height() - btn_size))
-        self.btn_short_axis.move(btn_x, btn_y)
-        self.btn_long_axis.move(btn_x + btn_size + btn_spacing, btn_y)
-        self.btn_short_axis.show(); self.btn_long_axis.show()
-
         # X label sits on the bottom axis and follows the snapped candle time.
         scene_x = self.plot.vb.mapViewToScene(QtCore.QPointF(x, vr[1][0]))
         widget_x = self.graphics.mapFromScene(scene_x)
@@ -1709,7 +1686,7 @@ class ChartWidget(QtWidgets.QWidget):
         ty = max(0, self.graphics.height() - th - 2)
         self.time_coord_label.move(tx, ty)
         self.time_coord_label.show()
-        self.price_coord_label.raise_(); self.time_coord_label.raise_(); self.btn_short_axis.raise_(); self.btn_long_axis.raise_()
+        self.price_coord_label.raise_(); self.time_coord_label.raise_()
 
     @staticmethod
     def _is_double_click(evt) -> bool:
