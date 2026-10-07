@@ -14,6 +14,17 @@ def _app():
     return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 
+def _attach_replay(panel):
+    panel.case = SimpleNamespace(orders=[], display={"timezone": "UTC"}, touch=lambda: None)
+    panel.raw_df = pd.DataFrame([
+        {"timestamp": 1_000.0, "open": 99.0, "high": 101.0, "low": 98.0, "close": 100.0},
+    ])
+    panel.replay = SimpleNamespace(current_ts=1_000.0)
+    panel.entry_edit.setText("100")
+    panel.sl_edit.setText("95")
+    panel.tp_edit.setText("110")
+
+
 def test_panel_emits_transient_plan_and_accepts_chart_price_edits():
     app = _app()
     panel = OrderPanel()
@@ -36,6 +47,67 @@ def test_panel_emits_transient_plan_and_accepts_chart_price_edits():
     panel.set_order_mode("market")
     panel.set_plan_price_from_chart("entry", 99)
     assert panel.entry_edit.text() != "99.0000"
+
+
+def test_send_creates_pending_order_with_bracket_and_risk_size():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+
+    panel.btn_place.click()
+
+    assert len(panel.pending_orders) == 1
+    record = panel.pending_orders[0]
+    assert record["side"] == "long"
+    assert record["order_type"] == "limit"
+    assert record["requested_price"] == 100.0
+    assert record["qty"] == 20.0
+    assert record["stop_loss"] == 95.0
+    assert record["take_profit"] == 110.0
+    assert panel.case.orders == []
+    assert "order sent" in panel.status_label.text()
+
+
+def test_send_market_fills_at_replay_price_and_emits_updates():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    panel.set_side("short")
+    panel.sl_edit.setText("105")
+    panel.tp_edit.setText("90")
+    panel.set_order_mode("market")
+    changed = []
+    fills = []
+    panel.changed.connect(lambda: changed.append(True))
+    panel.fills_changed.connect(lambda: fills.append(True))
+
+    panel.btn_place.click()
+
+    assert panel.pending_orders == []
+    assert len(panel.case.orders) == 1
+    record = panel.case.orders[0]
+    assert record["side"] == "short"
+    assert record["order_type"] == "market"
+    assert record["requested_price"] is None
+    assert record["fill_price"] == 100.0
+    assert record["qty"] == 20.0
+    assert record["stop_loss"] == 105.0
+    assert record["take_profit"] == 90.0
+    assert changed and fills
+    assert "filled at 100" in panel.status_label.text()
+
+
+def test_send_rejects_invalid_bracket_without_creating_order():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    panel.sl_edit.setText("105")
+
+    panel.btn_place.click()
+
+    assert panel.pending_orders == []
+    assert panel.case.orders == []
+    assert "SL must be below Entry" in panel.status_label.text()
 
 
 def test_chart_draws_and_updates_transient_order_plan_lines():

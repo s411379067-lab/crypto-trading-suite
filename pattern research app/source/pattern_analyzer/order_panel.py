@@ -133,7 +133,7 @@ class OrderPanel(QtWidgets.QWidget):
         self.btn_place = QtWidgets.QPushButton("SEND")
         self.btn_cancel_plan = QtWidgets.QPushButton("CANCEL")
         outer.addWidget(self.btn_place); outer.addWidget(self.btn_cancel_plan)
-        self.btn_place.setToolTip("送單接線將在下一階段加入；本階段只預覽下單參數。")
+        self.btn_place.setToolTip("送出目前的下單計畫")
 
         self.pending_table = QtWidgets.QTableWidget(0, 6)
         self.pending_table.setHorizontalHeaderLabels(["ID", "Side", "Type", "Price", "Qty", "Status"])
@@ -183,7 +183,7 @@ class OrderPanel(QtWidgets.QWidget):
         self.lbl_pos = QtWidgets.QLabel()
         self.btn_close = QtWidgets.QPushButton()
 
-        self.btn_place.clicked.connect(self._send_not_ready)
+        self.btn_place.clicked.connect(self.submit_plan)
         self.btn_cancel_plan.clicked.connect(self.cancel_plan)
         self.btn_cancel.clicked.connect(self.cancel_selected)
         self.btn_delete_record.clicked.connect(self.delete_selected_record)
@@ -258,9 +258,72 @@ class OrderPanel(QtWidgets.QWidget):
         self.status_label.setText(f"{mode}  •  {side}")
         self.status_label.setStyleSheet(f"color:{color}; font-weight:700;")
 
-    def _send_not_ready(self) -> None:
-        self.status_label.setText("Preview only — order submission will be connected in the next step")
-        self.status_label.setStyleSheet("color:#f5a623;")
+    def _set_send_status(self, message: str, color: str) -> None:
+        self.status_label.setText(message)
+        self.status_label.setStyleSheet(f"color:{color}; font-weight:700;")
+
+    def submit_plan(self) -> bool:
+        """Submit the panel plan through the existing simulated-order lifecycle."""
+        if self.case is None or self.replay is None:
+            self._set_send_status("Open a Case and start replay before sending", "#f5a623")
+            return False
+
+        entry = self._entry_price()
+        sl = self._read_price(self.sl_edit.text())
+        tp = self._read_price(self.tp_edit.text())
+        qty = float(self.qty_spin.value())
+        if entry is None:
+            self._set_send_status("Enter a valid Entry price", "#ef5350")
+            return False
+        if sl is None or tp is None:
+            self._set_send_status("Enter valid SL and TP prices", "#ef5350")
+            return False
+        is_long = self.selected_side == "long"
+        if (sl >= entry if is_long else sl <= entry):
+            self._set_send_status("SL must be below Entry for Long and above Entry for Short", "#ef5350")
+            return False
+        if (tp <= entry if is_long else tp >= entry):
+            self._set_send_status("TP must be above Entry for Long and below Entry for Short", "#ef5350")
+            return False
+        if qty <= 0:
+            self._set_send_status("Lots must be greater than 0 (check Risk and SL)", "#ef5350")
+            return False
+
+        current_price = self.current_price()
+        if current_price is None:
+            self._set_send_status("No replay price is available", "#ef5350")
+            return False
+
+        market = self.mode_market.isChecked()
+        order_type = "market" if market else self._order_type(entry)
+        if order_type not in ("market", "limit", "stop market"):
+            self._set_send_status("Could not determine pending order type", "#ef5350")
+            return False
+
+        record = self._new_order_record(
+            self.selected_side,
+            order_type,
+            None if market else entry,
+            qty,
+        )
+        # Keep the bracket attached to its entry event for the follow-up execution stage.
+        record["stop_loss"] = float(sl)
+        record["take_profit"] = float(tp)
+        record["est_loss"] = float(self._risk_target())
+        if market:
+            self._fill_record(record, current_price, self._current_ts())
+            self.case.orders.append(record)
+            self.case.touch()
+            self.refresh()
+            self.changed.emit()
+            self.fills_changed.emit()
+            self._set_send_status(f"Market {self.selected_side.upper()} filled at {current_price:g}", "#7bd88f")
+            return True
+
+        self.pending_orders.append(record)
+        self.refresh()
+        self._set_send_status(f"{self.selected_side.upper()} {order_type.upper()} order sent", "#7bd88f")
+        return True
 
     def cancel_plan(self) -> None:
         self.entry_edit.setText("0")
