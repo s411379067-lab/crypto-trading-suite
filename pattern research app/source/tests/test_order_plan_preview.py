@@ -331,6 +331,51 @@ def test_full_close_preserves_exact_legacy_position_quantity():
     assert panel._position is None
 
 
+def test_manual_close_cancels_active_protection_orders():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    panel.case.orders = [{
+        "id": "live-entry", "status": "filled", "side": "long",
+        "fill_ts": 1_000.0, "created_ts": 1_000.0, "fill_price": 100.0,
+        "qty": 0.6, "stop_loss": 95.0, "take_profit": 110.0,
+        "bracket_status": "active", "bracket_order_ids": ["sl-live", "tp-live"],
+    }]
+    panel._active_entry_id = "live-entry"
+    panel._confirmed_bracket = (95.0, 110.0)
+    panel.pending_orders = [
+        {"id": "sl-live", "parent_order_id": "live-entry", "role": "stop_loss", "status": "open"},
+        {"id": "tp-live", "parent_order_id": "live-entry", "role": "take_profit", "status": "open"},
+    ]
+
+    panel.close_position()
+
+    assert panel._position is None
+    assert panel.pending_orders == []
+    assert panel._active_entry_id is None
+    assert panel.case.orders[0]["bracket_status"] == "closed"
+    assert panel.case.orders[-1]["origin"] == "manual-close"
+
+
+def test_live_entry_chart_exposes_close_x_but_pending_entry_does_not():
+    app = _app()
+    chart = ChartWidget()
+    chart.replay = object()
+    chart.set_order_plan({"mode": "pending", "entry": 100.0, "sl": 95.0, "tp": 110.0})
+    assert "close" not in chart.order_plan_actions
+
+    requested = []
+    chart.position_close_requested.connect(lambda: requested.append(True))
+    chart.set_order_plan({
+        "mode": "market", "entry": 100.0, "sl": 95.0, "tp": 110.0,
+        "bracket_edit_enabled": True,
+    })
+    assert "close" in chart.order_plan_actions
+    chart.order_plan_actions["close"].clicked.emit("close")
+    app.processEvents()
+    assert requested == [True]
+
+
 def test_chart_draws_and_updates_transient_order_plan_lines():
     app = _app()
     chart = ChartWidget()
@@ -365,7 +410,7 @@ def test_chart_draws_and_updates_transient_order_plan_lines():
 
     chart.set_order_plan({"mode": "market", "entry": 100, "sl": 95, "tp": 110,
                           "bracket_edit_enabled": True, "bracket_dirty": False})
-    assert set(chart.order_plan_actions) == {"confirm", "cancel"}
+    assert set(chart.order_plan_actions) == {"confirm", "cancel", "close"}
     requested = []
     chart.bracket_action_requested.connect(requested.append)
     chart.order_plan_actions["confirm"].clicked.emit("confirm")
@@ -384,8 +429,10 @@ def test_chart_draws_and_updates_transient_order_plan_lines():
     entry_left = entry_label.pos().x() - entry_label.textItem.boundingRect().width() * pixel_size
     cancel = chart.order_plan_actions["cancel"]
     confirm = chart.order_plan_actions["confirm"]
+    close = chart.order_plan_actions["close"]
     assert pixel_size > 0
-    assert abs(cancel.pos().x() - (entry_left - 6.0 * pixel_size)) < 1e-6
+    assert abs(close.pos().x() - (entry_left - 6.0 * pixel_size)) < 1e-6
+    assert cancel.pos().x() < close.pos().x()
     assert confirm.pos().x() < cancel.pos().x()
 
     line = chart.order_plan_items["sl"]

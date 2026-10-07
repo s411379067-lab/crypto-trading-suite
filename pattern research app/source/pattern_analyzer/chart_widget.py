@@ -712,6 +712,7 @@ class ChartWidget(QtWidgets.QWidget):
     timezone_changed = QtCore.Signal(str)
     order_plan_price_changed = QtCore.Signal(str, float)
     bracket_action_requested = QtCore.Signal(str)
+    position_close_requested = QtCore.Signal()
 
     def __init__(self, parent=None, *, drawing_interaction_enabled: bool = True):
         super().__init__(parent)
@@ -1094,6 +1095,9 @@ class ChartWidget(QtWidgets.QWidget):
         self.order_plan_actions = {}
 
     def _order_plan_action_clicked(self, action: str) -> None:
+        if action == "close" and self.order_plan.get("bracket_edit_enabled"):
+            QtCore.QTimer.singleShot(0, self.position_close_requested.emit)
+            return
         if self.order_plan.get("bracket_edit_enabled") and self.order_plan.get("bracket_dirty"):
             QtCore.QTimer.singleShot(0, lambda key=action: self.bracket_action_requested.emit(key))
 
@@ -1118,6 +1122,17 @@ class ChartWidget(QtWidgets.QWidget):
             self.plot.addItem(label, ignoreBounds=True)
             label.setPos(float(x_range[0]) + span * fraction, entry_price)
             self.order_plan_actions[action] = label
+        close_color = QtGui.QColor("#ef5350")
+        close = OrderPlanActionItem(
+            "close",
+            '<span style="color:#ffffff">X</span>',
+            pg.mkBrush(close_color),
+            pg.mkPen(close_color),
+        )
+        close.setZValue(96)
+        close.clicked.connect(self._order_plan_action_clicked)
+        self.plot.addItem(close, ignoreBounds=True)
+        self.order_plan_actions["close"] = close
 
     def _order_plan_label_html(self, field: str, price: float) -> str:
         def fmt(value, digits=2):
@@ -1193,10 +1208,15 @@ class ChartWidget(QtWidgets.QWidget):
                     gap = 6.0 * pixel_size
                     cancel = self.order_plan_actions.get("cancel")
                     confirm = self.order_plan_actions.get("confirm")
+                    close = self.order_plan_actions.get("close")
+                    controls_right = label_left - gap
+                    if close is not None:
+                        close.setPos(controls_right, entry_y)
+                        controls_right -= close.textItem.boundingRect().width() * pixel_size + gap
                     if cancel is not None and confirm is not None:
-                        cancel_right = label_left - gap
-                        cancel.setPos(cancel_right, entry_y)
-                        confirm.setPos(cancel_right - cancel.textItem.boundingRect().width() * pixel_size - gap, entry_y)
+                        cancel.setPos(controls_right, entry_y)
+                        controls_right -= cancel.textItem.boundingRect().width() * pixel_size + gap
+                        confirm.setPos(controls_right, entry_y)
                 else:
                     for action, fraction in (("confirm", 0.68), ("cancel", 0.76)):
                         item = self.order_plan_actions.get(action)

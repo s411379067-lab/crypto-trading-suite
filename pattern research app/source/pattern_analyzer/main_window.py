@@ -127,6 +127,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.order.order_plan_changed.connect(self.chart.set_order_plan)
         self.chart.order_plan_price_changed.connect(self.order.set_plan_price_from_chart)
         self.chart.bracket_action_requested.connect(self._handle_bracket_action)
+        self.chart.position_close_requested.connect(self.order.close_position)
         self.btn_forward.clicked.connect(self.step_forward)
         self.btn_back.clicked.connect(self.step_backward)
         self.btn_reset.clicked.connect(self.reset_replay)
