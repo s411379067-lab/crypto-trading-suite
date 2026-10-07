@@ -49,3 +49,12 @@ def test_viewer_exposes_pattern_presence_and_exclusion_filters():
     assert 'self.combine_combo.addItem("AND — 全部符合", "AND")' in VIEWER_WINDOW
     assert 'self.combine_combo.addItem("OR — 任一符合", "OR")' in VIEWER_WINDOW
     assert 'self.btn_add_filter = QtWidgets.QPushButton("+ Filter")' in VIEWER_WINDOW
+
+
+def test_viewer_filter_selection_and_side_panels_are_resizable():
+    assert "self.selected_rows_layout.addWidget(row)" in VIEWER_WINDOW
+    assert "self.filter_rows_scroll.setMinimumHeight(280)" in VIEWER_WINDOW
+    assert "self.sidebar_splitter.setChildrenCollapsible(False)" in VIEWER_WINDOW
+    assert "self.case_content_splitter.setChildrenCollapsible(False)" in VIEWER_WINDOW
+    assert "self.inspector_splitter.setChildrenCollapsible(False)" in VIEWER_WINDOW
+    assert "splitter.setHandleWidth(7)" in VIEWER_WINDOW

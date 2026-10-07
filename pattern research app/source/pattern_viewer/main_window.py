@@ -24,15 +24,27 @@ from .metrics import calculate_viewer_metrics
 from .read_only_chart import ReadOnlyChartWidget
 
 
-class PatternFilterButton(QtWidgets.QPushButton):
+class PatternFilterButton(QtWidgets.QWidget):
     changed = QtCore.Signal()
 
     def __init__(self, parent=None):
-        super().__init__("選擇 Pattern…", parent)
+        super().__init__(parent)
         self.patterns: list[str] = []
         self.selected: set[str] = set()
         self._query = ""
-        self.clicked.connect(self._show_menu)
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(3)
+        self.selection_button = QtWidgets.QPushButton("+ 選擇 Pattern")
+        self.selection_button.setMinimumHeight(32)
+        self.selection_button.clicked.connect(self._show_menu)
+        layout.addWidget(self.selection_button)
+        self.selected_rows_host = QtWidgets.QWidget(self)
+        self.selected_rows_layout = QtWidgets.QVBoxLayout(self.selected_rows_host)
+        self.selected_rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.selected_rows_layout.setSpacing(2)
+        layout.addWidget(self.selected_rows_host)
+        self.selected_rows_host.hide()
 
     def set_patterns(self, patterns: list[str]):
         self.patterns = list(patterns)
@@ -44,13 +56,29 @@ class PatternFilterButton(QtWidgets.QPushButton):
 
     def _update_text(self):
         selected = sorted(self.selected, key=str.casefold)
-        if not selected:
-            self.setText("選擇 Pattern…")
-        elif len(selected) <= 2:
-            self.setText("、".join(selected))
-        else:
-            self.setText(f"已選 {len(selected)} 個 Pattern")
+        while self.selected_rows_layout.count():
+            item = self.selected_rows_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        for pattern in selected:
+            row = QtWidgets.QWidget(self.selected_rows_host)
+            row.setMinimumHeight(30)
+            row_layout = QtWidgets.QHBoxLayout(row)
+            row_layout.setContentsMargins(6, 0, 4, 0)
+            row_layout.setSpacing(4)
+            label = QtWidgets.QLabel(pattern)
+            label.setMinimumHeight(28)
+            remove = QtWidgets.QPushButton("×")
+            remove.setFixedSize(24, 24)
+            remove.clicked.connect(lambda _checked=False, item=pattern: self._set_selected(item, False))
+            row_layout.addWidget(label, 1)
+            row_layout.addWidget(remove)
+            row.setStyleSheet("background:#172233; border:1px solid #394a64; border-radius:3px;")
+            self.selected_rows_layout.addWidget(row)
+        self.selected_rows_host.setVisible(bool(selected))
         self.setToolTip("\n".join(selected) if selected else "尚未選擇 Pattern")
+        self.updateGeometry()
 
     def _show_menu(self):
         menu = QtWidgets.QMenu(self)
@@ -108,15 +136,19 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         outer.setSpacing(4)
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(7)
         outer.addWidget(splitter, 1)
 
         self.sidebar = self._build_sidebar()
         self.chart = ReadOnlyChartWidget()
+        self.chart.setMinimumWidth(650)
         self.inspector = self._build_inspector()
         splitter.addWidget(self.sidebar)
         splitter.addWidget(self.chart)
         splitter.addWidget(self.inspector)
         splitter.setSizes([360, 930, 310])
+        splitter.setStretchFactor(1, 1)
 
         status = QtWidgets.QWidget()
         sl = QtWidgets.QHBoxLayout(status)
@@ -160,12 +192,18 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         root_row.addWidget(self.btn_refresh)
         layout.addLayout(root_row)
 
+        self.sidebar_splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        self.sidebar_splitter.setChildrenCollapsible(False)
+        self.sidebar_splitter.setHandleWidth(7)
+        layout.addWidget(self.sidebar_splitter, 1)
+
         filter_box = QtWidgets.QGroupBox("Filters")
         fl = QtWidgets.QVBoxLayout(filter_box)
         fl.setSpacing(5)
 
         self.pattern_search = QtWidgets.QLineEdit()
         self.pattern_search.setPlaceholderText("搜尋 Pattern 名稱…")
+        self.pattern_search.setMinimumHeight(32)
         fl.addWidget(self.pattern_search)
 
         combine_row = QtWidgets.QHBoxLayout()
@@ -173,6 +211,7 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.combine_combo = QtWidgets.QComboBox()
         self.combine_combo.addItem("AND — 全部符合", "AND")
         self.combine_combo.addItem("OR — 任一符合", "OR")
+        self.combine_combo.setMinimumHeight(32)
         combine_row.addWidget(self.combine_combo, 1)
         self.btn_clear_patterns = QtWidgets.QPushButton("清除條件")
         combine_row.addWidget(self.btn_clear_patterns)
@@ -185,7 +224,8 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.filter_rows_scroll = QtWidgets.QScrollArea()
         self.filter_rows_scroll.setWidgetResizable(True)
         self.filter_rows_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
-        self.filter_rows_scroll.setMaximumHeight(220)
+        self.filter_rows_scroll.setMinimumHeight(280)
+        self.filter_rows_scroll.setMaximumHeight(340)
         self.filter_rows_scroll.setWidget(self.filter_rows_host)
         fl.addWidget(self.filter_rows_scroll)
         add_filter_row = QtWidgets.QHBoxLayout()
@@ -194,7 +234,6 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         add_filter_row.addWidget(self.btn_add_filter)
         add_filter_row.addStretch(1)
         fl.addLayout(add_filter_row)
-        layout.addWidget(filter_box)
         self.filter_rows: list[dict] = []
 
         view_box = QtWidgets.QGroupBox("Viewer Overlay")
@@ -210,11 +249,16 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         vl.addWidget(self.show_rth_checkbox)
         vl.addWidget(self.show_orders_checkbox)
         vl.addStretch(1)
-        layout.addWidget(view_box)
+        filter_area = QtWidgets.QWidget()
+        filter_area_layout = QtWidgets.QVBoxLayout(filter_area)
+        filter_area_layout.setContentsMargins(0, 0, 0, 0)
+        filter_area_layout.setSpacing(5)
+        filter_area_layout.addWidget(filter_box, 1)
+        filter_area_layout.addWidget(view_box)
+        self.sidebar_splitter.addWidget(filter_area)
 
         self.case_count_label = QtWidgets.QLabel("Cases: 0")
         self.case_count_label.setStyleSheet("font-weight:700; color:#cfd7e6;")
-        layout.addWidget(self.case_count_label)
 
         self.case_list = QtWidgets.QListWidget()
         self.case_list.setAlternatingRowColors(True)
@@ -235,8 +279,6 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
             "QListWidget::item:selected { background:#2b4a73; color:#ffffff; }"
             "QListWidget::item:selected:!active { background:#263f61; color:#ffffff; }"
         )
-        layout.addWidget(self.case_list, 1)
-
         self.pattern_edit_box = QtWidgets.QGroupBox("Case Pattern 編輯")
         pel = QtWidgets.QVBoxLayout(self.pattern_edit_box)
         pel.setSpacing(5)
@@ -264,7 +306,21 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         edit_btn_row.addWidget(self.btn_delete_case_pattern)
         pel.addLayout(edit_btn_row)
         self.pattern_edit_box.setEnabled(False)
-        layout.addWidget(self.pattern_edit_box)
+
+        self.case_content_splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        self.case_content_splitter.setChildrenCollapsible(False)
+        self.case_content_splitter.setHandleWidth(7)
+        self.case_content_splitter.addWidget(self.case_list)
+        self.case_content_splitter.addWidget(self.pattern_edit_box)
+        self.case_content_splitter.setSizes([650, 210])
+        case_area = QtWidgets.QWidget()
+        case_area_layout = QtWidgets.QVBoxLayout(case_area)
+        case_area_layout.setContentsMargins(0, 0, 0, 0)
+        case_area_layout.setSpacing(4)
+        case_area_layout.addWidget(self.case_count_label)
+        case_area_layout.addWidget(self.case_content_splitter, 1)
+        self.sidebar_splitter.addWidget(case_area)
+        self.sidebar_splitter.setSizes([500, 500])
 
         self.btn_folder.clicked.connect(self.choose_folder)
         self.btn_refresh.clicked.connect(lambda: self.refresh_cases(select_first=False))
@@ -290,6 +346,9 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(panel)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(7)
+        self.inspector_splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        self.inspector_splitter.setChildrenCollapsible(False)
+        self.inspector_splitter.setHandleWidth(7)
 
         metrics_box = QtWidgets.QGroupBox("Filtered Case Metrics")
         metrics_layout = QtWidgets.QFormLayout(metrics_box)
@@ -310,7 +369,7 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.metric_summary_label = QtWidgets.QLabel("0 trades · 0 days")
         self.metric_summary_label.setStyleSheet("color:#aebbd0;")
         metrics_layout.addRow("Sample", self.metric_summary_label)
-        layout.addWidget(metrics_box)
+        self.inspector_splitter.addWidget(metrics_box)
 
         detail_box = QtWidgets.QGroupBox("Selected Case")
         detail_layout = QtWidgets.QVBoxLayout(detail_box)
@@ -323,8 +382,9 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         detail_layout.addWidget(self.selected_path_label)
         detail_layout.addWidget(self.selected_patterns_label)
         detail_layout.addWidget(self.selected_pnl_label)
-        layout.addWidget(detail_box)
-        layout.addStretch(1)
+        self.inspector_splitter.addWidget(detail_box)
+        self.inspector_splitter.setSizes([220, 500])
+        layout.addWidget(self.inspector_splitter, 1)
         return panel
 
     def _refresh_case_pattern_editor(self, select_row: int | None = None):
@@ -460,6 +520,7 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(4)
         field_combo = QtWidgets.QComboBox()
+        field_combo.setMinimumHeight(32)
         for label, key in (
             ("Pattern", "PATTERN"),
             ("Symbol", "SYMBOL"),
@@ -470,12 +531,13 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         field_index = field_combo.findData(field)
         field_combo.setCurrentIndex(max(0, field_index))
         operator_combo = QtWidgets.QComboBox()
+        operator_combo.setMinimumHeight(32)
         value_slot = QtWidgets.QWidget()
         value_layout = QtWidgets.QHBoxLayout(value_slot)
         value_layout.setContentsMargins(0, 0, 0, 0)
         value_layout.setSpacing(3)
         remove_button = QtWidgets.QPushButton("×")
-        remove_button.setFixedWidth(28)
+        remove_button.setFixedSize(32, 32)
         header_layout.addWidget(field_combo)
         header_layout.addWidget(operator_combo, 1)
         header_layout.addWidget(remove_button)
@@ -527,6 +589,7 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
             row["operator"].addItem("不包含", "NOT_CONTAINS")
             value = QtWidgets.QLineEdit(row["value_slot"])
             value.setPlaceholderText("輸入 Symbol")
+            value.setMinimumHeight(32)
             value.textChanged.connect(self.apply_filter)
             value_layout.addWidget(value)
         elif field == "DATE":
@@ -541,10 +604,12 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
             start.setCalendarPopup(True)
             start.setDisplayFormat("yyyy-MM-dd")
             start.setDate(QtCore.QDate(1900, 1, 1))
+            start.setMinimumHeight(30)
             end = QtWidgets.QDateEdit(value)
             end.setCalendarPopup(True)
             end.setDisplayFormat("yyyy-MM-dd")
             end.setDate(QtCore.QDate(9999, 12, 31))
+            end.setMinimumHeight(30)
             date_layout.addWidget(start)
             date_layout.addWidget(end)
             start.dateChanged.connect(self.apply_filter)
