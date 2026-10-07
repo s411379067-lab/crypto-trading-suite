@@ -24,6 +24,7 @@ class OrderPanel(QtWidgets.QWidget):
     pending_bracket_changed = QtCore.Signal(object)
     active_position_changed = QtCore.Signal(object)
     submitted_bracket_changed = QtCore.Signal(object)
+    submitted_bracket_draft_changed = QtCore.Signal(object)
 
     R_VALUE = 60.0
 
@@ -53,6 +54,7 @@ class OrderPanel(QtWidgets.QWidget):
         self.pending_orders: list[dict] = []
         self.pending_bracket: dict | None = None
         self.submitted_bracket: dict | None = None
+        self.submitted_bracket_draft: dict | None = None
 
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -148,6 +150,7 @@ class OrderPanel(QtWidgets.QWidget):
         self.pending_orders.clear()
         self.pending_bracket = None
         self.submitted_bracket = None
+        self.submitted_bracket_draft = None
         self.pending_bracket_changed.emit(None)
         self.submitted_bracket_changed.emit(None)
         # Compatibility cleanup for v0.1.3 cases that may contain open/cancelled rows.
@@ -275,10 +278,65 @@ class OrderPanel(QtWidgets.QWidget):
             records.append(record)
         self.pending_orders.extend(records)
         self.submitted_bracket = dict(self.pending_bracket)
+        self.submitted_bracket_draft = None
         self.pending_bracket = None
         self.pending_bracket_changed.emit(None)
         self.submitted_bracket_changed.emit(dict(self.submitted_bracket))
         self.refresh()
+
+    def update_submitted_bracket_draft(self, bracket: dict):
+        if not isinstance(bracket, dict) or not self.submitted_bracket:
+            return
+        self.submitted_bracket_draft = dict(bracket)
+        self.submitted_bracket_draft_changed.emit(dict(self.submitted_bracket_draft))
+
+    def cancel_submitted_bracket_draft(self):
+        self.submitted_bracket_draft = None
+        self.submitted_bracket_changed.emit(dict(self.submitted_bracket) if self.submitted_bracket else None)
+
+    def apply_submitted_bracket_draft(self):
+        """Apply edited Entry/SL/TP prices and lots to outstanding bracket orders."""
+        draft = self.submitted_bracket_draft
+        if not draft or not self.submitted_bracket or self.case is None:
+            return
+        bracket_id = str(draft.get("id", ""))
+        entry_order = next((o for o in self.pending_orders if o.get("bracket_id") == bracket_id and o.get("bracket_role") == "entry"), None)
+        if entry_order is None:
+            entry_order = next((o for o in self.case.orders if o.get("bracket_id") == bracket_id and o.get("bracket_role") == "entry"), None)
+        if entry_order is None:
+            return
+        try:
+            specs = pending_bracket_order_specs(draft)
+        except (KeyError, TypeError, ValueError):
+            return
+
+        if entry_order.get("status") != "filled":
+            entry_order["requested_price"] = float(draft["entry_price"])
+            entry_order["qty"] = float(draft["qty"])
+        self.pending_orders = [
+            o for o in self.pending_orders
+            if not (o.get("bracket_id") == bracket_id and o.get("bracket_role") in ("stop", "target"))
+        ]
+        parent_id = str(entry_order.get("id", ""))
+        for spec in specs[1:]:
+            record = self._new_order_record(
+                spec["side"], spec["order_type"], spec["price"], spec["qty"], origin=f"bracket-{spec['role']}",
+            )
+            record.update({
+                "bracket_id": bracket_id,
+                "bracket_role": spec["role"],
+                "group_id": spec["group_id"],
+                "parent_order_id": parent_id,
+            })
+            self.pending_orders.append(record)
+        self.submitted_bracket = dict(draft)
+        self.submitted_bracket_draft = None
+        self.submitted_bracket_changed.emit(dict(self.submitted_bracket))
+        self.refresh()
+
+    def add_active_bracket_group(self, bracket: dict):
+        """Queue a newly configured protection group for the live position."""
+        self.update_submitted_bracket_draft(bracket)
 
     def _new_order_record(self, side: str, order_type: str, requested_price, qty: float, origin="place"):
         ts = self._current_ts()

@@ -17,6 +17,7 @@ from shared_core.rth import summarize_intraday_volatility_payload
 from shared_core.replay_stats import summarize_current_replay_range
 from shared_core.ohlc import format_ohlc_text
 from shared_core.order_brackets import (
+    add_bracket_group,
     available_bracket_qty,
     estimated_bracket_pnl,
     move_bracket_entry,
@@ -715,6 +716,9 @@ class ChartWidget(QtWidgets.QWidget):
     pending_bracket_edited = QtCore.Signal(object)
     pending_bracket_submit_requested = QtCore.Signal()
     pending_bracket_cancel_requested = QtCore.Signal()
+    submitted_bracket_draft_changed = QtCore.Signal(object)
+    submitted_bracket_apply_requested = QtCore.Signal()
+    submitted_bracket_revert_requested = QtCore.Signal()
     active_position_close_requested = QtCore.Signal()
     submitted_bracket_cancel_requested = QtCore.Signal()
     submitted_group_cancel_requested = QtCore.Signal(str)
@@ -744,7 +748,11 @@ class ChartWidget(QtWidgets.QWidget):
         self.order_events: list[dict] = []
         self.order_segments: list[dict] = []
         self.pending_bracket: dict | None = None
+        self._pending_bracket_baseline: dict | None = None
+        self._pending_bracket_dirty = False
         self.submitted_bracket: dict | None = None
+        self._submitted_bracket_baseline: dict | None = None
+        self._submitted_bracket_dirty = False
         self.active_position: dict | None = None
         self._pending_qty_controls: list[tuple[QtWidgets.QWidget, float]] = []
         self.show_all_orders = False
@@ -1093,7 +1101,16 @@ class ChartWidget(QtWidgets.QWidget):
 
     def set_pending_bracket(self, bracket: dict | None, render: bool = True):
         """Set the transient Entry + SL/TP plan shown before an order is filled."""
-        self.pending_bracket = dict(bracket) if isinstance(bracket, dict) else None
+        value = deepcopy(bracket) if isinstance(bracket, dict) else None
+        if value is None:
+            self._pending_bracket_baseline = None
+            self._pending_bracket_dirty = False
+        elif not self._pending_bracket_baseline or str(self._pending_bracket_baseline.get("id")) != str(value.get("id")):
+            self._pending_bracket_baseline = deepcopy(value)
+            self._pending_bracket_dirty = False
+        else:
+            self._pending_bracket_dirty = value != self._pending_bracket_baseline
+        self.pending_bracket = value
         if render and self.replay is not None:
             self.render(reset_x=False)
             self._ensure_pending_bracket_visible()
@@ -1104,9 +1121,46 @@ class ChartWidget(QtWidgets.QWidget):
             self.render(reset_x=False)
 
     def set_submitted_bracket(self, bracket: dict | None, render: bool = True):
-        self.submitted_bracket = dict(bracket) if isinstance(bracket, dict) else None
+        self.submitted_bracket = deepcopy(bracket) if isinstance(bracket, dict) else None
+        self._submitted_bracket_baseline = deepcopy(self.submitted_bracket)
+        self._submitted_bracket_dirty = False
         if render and self.replay is not None:
             self.render(reset_x=False)
+
+    def set_submitted_bracket_draft(self, bracket: dict | None, render: bool = True):
+        self.submitted_bracket = deepcopy(bracket) if isinstance(bracket, dict) else None
+        self._submitted_bracket_dirty = self.submitted_bracket != self._submitted_bracket_baseline
+        if render and self.replay is not None:
+            self.render(reset_x=False)
+
+    def _revert_pending_bracket_edits(self):
+        if not self._pending_bracket_baseline:
+            return
+        self.pending_bracket_edited.emit(deepcopy(self._pending_bracket_baseline))
+
+    def _revert_submitted_bracket_edits(self):
+        if not self._submitted_bracket_baseline:
+            return
+        self.submitted_bracket_revert_requested.emit()
+
+    def _add_pending_bracket_group(self):
+        if not self.pending_bracket:
+            return
+        try:
+            self.pending_bracket_edited.emit(add_bracket_group(self.pending_bracket))
+        except ValueError:
+            return
+
+    def _add_submitted_bracket_group(self):
+        if not self.submitted_bracket:
+            return
+        bracket = deepcopy(self.submitted_bracket)
+        if self.active_position:
+            bracket["qty"] = float(self.active_position.get("qty", bracket.get("qty", 0.0)))
+        try:
+            self.submitted_bracket_draft_changed.emit(add_bracket_group(bracket))
+        except ValueError:
+            return
 
     def _ensure_pending_bracket_visible(self):
         """Expand only the Y range when a newly created bracket sits off-screen."""
@@ -1535,7 +1589,14 @@ class ChartWidget(QtWidgets.QWidget):
         self._add_pending_qty_control(
             "Pending", entry, entry_color,
             self.pending_bracket_submit_requested.emit,
+            enabled=self._pending_bracket_dirty,
         )
+        self._add_pending_qty_control(
+            "Cancel", entry, entry_color, self._revert_pending_bracket_edits,
+            enabled=self._pending_bracket_dirty,
+        )
+        if available_bracket_qty(bracket) > 1e-9:
+            self._add_pending_qty_control("+SLTP", entry, entry_color, self._add_pending_bracket_group)
 
         for group in groups:
             try:
@@ -1605,11 +1666,22 @@ class ChartWidget(QtWidgets.QWidget):
             return
         if self.active_position is None:
             entry_color = (255, 82, 95) if side == "short" else (31, 121, 245)
-            self.plot.addItem(pg.InfiniteLine(pos=entry, angle=0, movable=False, pen=pg.mkPen(entry_color, width=1, style=QtCore.Qt.DashLine)))
+            entry_line = pg.InfiniteLine(pos=entry, angle=0, movable=True, pen=pg.mkPen(entry_color, width=1, style=QtCore.Qt.DashLine))
+            entry_line.sigPositionChangeFinished.connect(lambda line=entry_line: self._submitted_entry_drag_finished(line))
+            self.plot.addItem(entry_line)
             self._add_pending_qty_control(
                 f"Entry {float(bracket.get('qty', 0.0)):.4f}", entry, entry_color,
             )
             self._add_pending_qty_control("X", entry, entry_color, self.submitted_bracket_cancel_requested.emit)
+            if available_bracket_qty(bracket) > 1e-9:
+                self._add_pending_qty_control("+SLTP", entry, entry_color, self._add_submitted_bracket_group)
+            self._add_submitted_edit_actions(entry, entry_color)
+        else:
+            active_qty = float(self.active_position.get("qty", 0.0))
+            allocated_qty = sum(float(group.get("qty", 0.0)) for group in groups)
+            if active_qty > allocated_qty + 1e-9:
+                self._add_pending_qty_control("+SLTP", entry, (0, 196, 168), self._add_submitted_bracket_group)
+            self._add_submitted_edit_actions(entry, (0, 196, 168))
         for group in groups:
             try:
                 group_id = str(group["id"])
@@ -1617,18 +1689,32 @@ class ChartWidget(QtWidgets.QWidget):
                 stop = float(group["stop_price"]); target = float(group["target_price"])
             except (KeyError, TypeError, ValueError):
                 continue
-            self.plot.addItem(pg.InfiniteLine(pos=stop, angle=0, movable=False, pen=pg.mkPen((255, 179, 0), width=1, style=QtCore.Qt.DashLine)))
-            self.plot.addItem(pg.InfiniteLine(pos=target, angle=0, movable=False, pen=pg.mkPen((0, 196, 168), width=1, style=QtCore.Qt.DashLine)))
+            stop_line = pg.InfiniteLine(pos=stop, angle=0, movable=True, pen=pg.mkPen((255, 179, 0), width=1, style=QtCore.Qt.DashLine))
+            target_line = pg.InfiniteLine(pos=target, angle=0, movable=True, pen=pg.mkPen((0, 196, 168), width=1, style=QtCore.Qt.DashLine))
+            stop_line.sigPositionChangeFinished.connect(lambda line=stop_line, gid=group_id: self._submitted_leg_drag_finished(line, gid, "stop"))
+            target_line.sigPositionChangeFinished.connect(lambda line=target_line, gid=group_id: self._submitted_leg_drag_finished(line, gid, "target"))
+            self.plot.addItem(stop_line)
+            self.plot.addItem(target_line)
             self._add_pending_qty_control(
                 f"SL {group_qty:.4f}  ${estimated_bracket_pnl(bracket, stop, group_qty):+.2f}",
-                stop, (255, 179, 0),
+                stop, (255, 179, 0), lambda gid=group_id: self._edit_pending_group_qty(gid), double_click=True,
             )
             self._add_pending_qty_control("X", stop, (255, 179, 0), lambda gid=group_id: self.submitted_group_cancel_requested.emit(gid))
             self._add_pending_qty_control(
                 f"TP {group_qty:.4f}  ${estimated_bracket_pnl(bracket, target, group_qty):+.2f}",
-                target, (0, 196, 168),
+                target, (0, 196, 168), lambda gid=group_id: self._edit_pending_group_qty(gid), double_click=True,
             )
             self._add_pending_qty_control("X", target, (0, 196, 168), lambda gid=group_id: self.submitted_group_cancel_requested.emit(gid))
+
+    def _add_submitted_edit_actions(self, entry: float, color):
+        self._add_pending_qty_control(
+            "Pending", entry, color, self.submitted_bracket_apply_requested.emit,
+            enabled=self._submitted_bracket_dirty,
+        )
+        self._add_pending_qty_control(
+            "Cancel", entry, color, self._revert_submitted_bracket_edits,
+            enabled=self._submitted_bracket_dirty,
+        )
 
     def _clear_pending_qty_controls(self):
         for button, _price in self._pending_qty_controls:
@@ -1636,7 +1722,7 @@ class ChartWidget(QtWidgets.QWidget):
             button.deleteLater()
         self._pending_qty_controls = []
 
-    def _add_pending_qty_control(self, text: str, price: float, color, callback=None, *, double_click=False, offset_x=0):
+    def _add_pending_qty_control(self, text: str, price: float, color, callback=None, *, double_click=False, offset_x=0, enabled=True):
         """Create the boxed lot label attached to a pending-order line."""
         control = (DoubleClickButton(text, self.graphics) if double_click else QtWidgets.QPushButton(text, self.graphics)) if callback else QtWidgets.QLabel(text, self.graphics)
         control.setFixedHeight(22)
@@ -1653,12 +1739,14 @@ class ChartWidget(QtWidgets.QWidget):
                 # callbacks with default-captured arguments (such as group_id)
                 # do not accidentally receive True/False instead.
                 control.clicked.connect(lambda _checked=False, action=callback: action())
+            control.setEnabled(bool(enabled))
         else:
             control.setToolTip("SL/TP lots 由 Entry 分配；不可直接修改")
             control.setAlignment(QtCore.Qt.AlignCenter)
         control.hide()
         control._pending_control_offset_x = int(offset_x)
         self._pending_qty_controls.append((control, float(price)))
+        return control
 
     def _position_pending_qty_controls(self):
         if not self.pending_bracket and not self.active_position and not self.submitted_bracket:
@@ -1703,21 +1791,29 @@ class ChartWidget(QtWidgets.QWidget):
             self.pending_bracket_edited.emit(set_bracket_qty(self.pending_bracket, qty))
 
     def _edit_pending_group_qty(self, group_id: str):
-        if not self.pending_bracket:
+        bracket = self.pending_bracket or self.submitted_bracket
+        if not bracket:
             return
-        group = next((g for g in self.pending_bracket.get("groups", []) if str(g.get("id")) == group_id), None)
+        group = next((g for g in bracket.get("groups", []) if str(g.get("id")) == group_id), None)
         if group is None:
             return
         try:
             current = float(group["qty"])
-            maximum = current + available_bracket_qty(self.pending_bracket)
+            available_bracket = dict(bracket)
+            if self.pending_bracket is None and self.active_position:
+                available_bracket["qty"] = float(self.active_position.get("qty", bracket.get("qty", 0.0)))
+            maximum = current + available_bracket_qty(available_bracket)
         except (KeyError, TypeError, ValueError):
             return
         qty, accepted = QtWidgets.QInputDialog.getDouble(
             self, "SL/TP lots", "Lots", current, 0.0001, maximum, 4,
         )
         if accepted:
-            self.pending_bracket_edited.emit(set_bracket_group_qty(self.pending_bracket, group_id, qty))
+            updated = set_bracket_group_qty(available_bracket, group_id, qty)
+            if self.pending_bracket is not None:
+                self.pending_bracket_edited.emit(updated)
+            else:
+                self.submitted_bracket_draft_changed.emit(updated)
 
     def _delete_pending_group(self, group_id: str):
         if not self.pending_bracket:
@@ -1737,6 +1833,26 @@ class ChartWidget(QtWidgets.QWidget):
 
     def _pending_leg_drag_finished(self, item, group_id: str, leg: str):
         if not self.pending_bracket:
+            return
+        try:
+            self.pending_bracket_edited.emit(move_bracket_leg(self.pending_bracket, group_id, leg, float(item.value())))
+        except (TypeError, ValueError, KeyError):
+            return
+
+    def _submitted_entry_drag_finished(self, item):
+        if not self.submitted_bracket:
+            return
+        try:
+            self.submitted_bracket_draft_changed.emit(move_bracket_entry(self.submitted_bracket, float(item.value())))
+        except (TypeError, ValueError, KeyError):
+            return
+
+    def _submitted_leg_drag_finished(self, item, group_id: str, leg: str):
+        if not self.submitted_bracket:
+            return
+        try:
+            self.submitted_bracket_draft_changed.emit(move_bracket_leg(self.submitted_bracket, group_id, leg, float(item.value())))
+        except (TypeError, ValueError, KeyError):
             return
         try:
             self.pending_bracket_edited.emit(move_bracket_leg(self.pending_bracket, group_id, leg, float(item.value())))

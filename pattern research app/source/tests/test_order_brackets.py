@@ -5,6 +5,7 @@ from pyqtgraph.Qt import QtWidgets
 from pattern_analyzer.chart_widget import ChartWidget
 from pattern_analyzer.order_panel import OrderPanel
 from shared_core.order_brackets import (
+    add_bracket_group,
     available_bracket_qty,
     create_pending_bracket,
     estimated_bracket_pnl,
@@ -70,6 +71,18 @@ def test_entry_lots_can_increase_without_changing_existing_group_lots():
 
     assert edited["groups"][0]["qty"] == 1.0
     assert available_bracket_qty(edited) == 1.5
+
+
+def test_add_group_uses_remaining_lots_and_disables_when_fully_allocated():
+    bracket = create_pending_bracket("long", 100.0, 2.0)
+    bracket["groups"][0]["qty"] = 0.75
+    updated = add_bracket_group(bracket)
+
+    assert len(updated["groups"]) == 2
+    assert updated["groups"][1]["qty"] == 1.25
+    assert available_bracket_qty(updated) == 0.0
+    with pytest.raises(ValueError, match="No unallocated"):
+        add_bracket_group(updated)
 
 
 def test_sl_and_tp_share_one_editable_group_lot_value():
@@ -243,3 +256,76 @@ def test_submitted_group_x_click_emits_group_id_not_qt_checked_bool():
     x_buttons[1].click()
 
     assert deleted == [chart.submitted_bracket["groups"][0]["id"]]
+
+
+def test_pending_and_cancel_buttons_enable_only_after_bracket_edit():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    chart = ChartWidget()
+    original = create_pending_bracket("short", 100.0, 1.0)
+    chart.set_pending_bracket(original, render=False)
+    chart._render_pending_bracket()
+    action_buttons = [
+        widget for widget, _price in chart._pending_qty_controls
+        if isinstance(widget, QtWidgets.QPushButton) and widget.text() in ("Pending", "Cancel")
+    ]
+    assert len(action_buttons) == 2 and not any(button.isEnabled() for button in action_buttons)
+
+    edited = set_bracket_group_qty(original, original["groups"][0]["id"], 0.5)
+    chart.set_pending_bracket(edited, render=False)
+    assert chart._pending_bracket_dirty is True
+    chart._clear_pending_qty_controls()
+    chart._render_pending_bracket()
+    enabled_actions = [
+        widget for widget, _price in chart._pending_qty_controls
+        if isinstance(widget, QtWidgets.QPushButton) and widget.text() in ("Pending", "Cancel")
+    ]
+    assert len(enabled_actions) == 2 and all(button.isEnabled() for button in enabled_actions)
+
+
+def test_live_position_add_group_button_uses_unallocated_position_lots():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    chart = ChartWidget()
+    bracket = create_pending_bracket("long", 100.0, 2.0)
+    bracket["groups"][0]["qty"] = 0.75
+    chart.set_submitted_bracket(bracket, render=False)
+    chart.active_position = {"side": "long", "entry": 100.0, "qty": 2.0, "pnl": 0.0}
+    chart.submitted_bracket_draft_changed.connect(chart.set_submitted_bracket_draft)
+
+    chart._add_submitted_bracket_group()
+
+    assert len(chart.submitted_bracket["groups"]) == 2
+    assert chart.submitted_bracket["groups"][1]["qty"] == 1.25
+    assert chart._submitted_bracket_dirty is True
+
+
+def test_submitted_bracket_apply_replaces_pending_sl_tp_and_cancel_restores_snapshot():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    class Case:
+        orders = []
+        display = {"timezone": "UTC"}
+
+        def touch(self):
+            pass
+
+    class Replay:
+        current_ts = 0.0
+
+    panel = OrderPanel()
+    panel.case = Case()
+    panel.replay = Replay()
+    panel.pending_bracket = create_pending_bracket("short", 100.0, 1.0)
+    panel.submit_pending_bracket()
+    original = panel.submitted_bracket.copy()
+    group_id = original["groups"][0]["id"]
+    edited = move_bracket_leg(original, group_id, "stop", 103.0)
+    panel.update_submitted_bracket_draft(edited)
+    panel.apply_submitted_bracket_draft()
+
+    stop_order = next(o for o in panel.pending_orders if o.get("bracket_role") == "stop")
+    assert stop_order["requested_price"] == 103.0
+    assert panel.submitted_bracket["groups"][0]["stop_price"] == 103.0
+
+    panel.update_submitted_bracket_draft(move_bracket_leg(edited, group_id, "stop", 105.0))
+    panel.cancel_submitted_bracket_draft()
+    assert panel.submitted_bracket["groups"][0]["stop_price"] == 103.0

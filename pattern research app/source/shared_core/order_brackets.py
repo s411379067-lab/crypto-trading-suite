@@ -110,6 +110,30 @@ def remove_bracket_group(bracket: dict, group_id: str) -> dict:
     return updated
 
 
+def add_bracket_group(bracket: dict, qty: float | None = None) -> dict:
+    """Add an SL/TP pair using available lots and the initial symmetric distance."""
+    updated = deepcopy(bracket)
+    available = available_bracket_qty(updated)
+    qty = available if qty is None else float(qty)
+    if qty <= 0:
+        raise ValueError("No unallocated lots are available for another SL/TP group")
+    if qty > available + 1e-9:
+        raise ValueError("Group quantity exceeds available Entry lots")
+    entry = float(updated["entry_price"])
+    distance = max(abs(entry) * 0.01, 0.0001)
+    if str(updated.get("side")) == "short":
+        stop, target = entry + distance, entry - distance
+    else:
+        stop, target = entry - distance, entry + distance
+    updated.setdefault("groups", []).append({
+        "id": f"bracket-group-{uuid.uuid4().hex[:12]}",
+        "qty": qty,
+        "stop_price": stop,
+        "target_price": target,
+    })
+    return updated
+
+
 def estimated_bracket_pnl(bracket: dict, price: float, qty: float) -> float:
     """Estimate linear PnL at a bracket price, in quote currency dollars."""
     direction = 1.0 if str(bracket.get("side")) == "long" else -1.0
