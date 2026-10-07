@@ -24,6 +24,7 @@ class OrderPanel(QtWidgets.QWidget):
     order_plan_changed = QtCore.Signal(dict)
 
     R_VALUE = 60.0
+    DEFAULT_BRACKET_DISTANCE = 0.001
     LOT_QUANTUM = Decimal("0.1")
 
     @classmethod
@@ -69,6 +70,8 @@ class OrderPanel(QtWidgets.QWidget):
         self._next_take_profit_number = 1
         self._tp_allocation_manual = False
         self._updating_tp_rows = False
+        self._bracket_defaults_auto = True
+        self._applying_default_bracket = False
         self._bracket_edit_active = False
         self._bracket_edit_dirty = False
         # Pending orders are intentionally session-only.
@@ -251,8 +254,8 @@ class OrderPanel(QtWidgets.QWidget):
         self.btn_short.clicked.connect(lambda: self.set_side("short"))
         for widget in (self.equity_spin, self.risk_input):
             widget.valueChanged.connect(self.update_metrics)
-        for widget in (self.entry_edit, self.sl_edit):
-            widget.textChanged.connect(self.update_metrics)
+        self.entry_edit.textChanged.connect(self._on_entry_text_changed)
+        self.sl_edit.textChanged.connect(self._on_bracket_level_edited)
         self.set_order_mode("pending")
         self.set_side("long")
         self._update_selection_styles()
@@ -267,6 +270,7 @@ class OrderPanel(QtWidgets.QWidget):
         self._side_selected = True
         self.btn_long.setChecked(self._selected_side == "long")
         self.btn_short.setChecked(self._selected_side == "short")
+        self._apply_default_bracket()
         self._update_selection_styles()
         self.update_metrics()
         self._update_status()
@@ -276,6 +280,7 @@ class OrderPanel(QtWidgets.QWidget):
         self.mode_market.setChecked(market)
         self.mode_pending.setChecked(not market)
         self.entry_edit.setEnabled(not market)
+        self._apply_default_bracket()
         self._update_selection_styles()
         self.update_metrics()
         self._update_status()
@@ -293,6 +298,47 @@ class OrderPanel(QtWidgets.QWidget):
         self.btn_long.setChecked(False)
         self.btn_short.setChecked(False)
         self.side_group.setExclusive(True)
+
+    def _on_entry_text_changed(self, *_args) -> None:
+        self._apply_default_bracket()
+        self.update_metrics()
+
+    def _on_bracket_level_edited(self, *_args) -> None:
+        if not self._applying_default_bracket and not self._updating_tp_rows:
+            self._bracket_defaults_auto = False
+        self.update_metrics()
+
+    def _apply_default_bracket(self) -> None:
+        if (
+            not self._bracket_defaults_auto
+            or self._applying_default_bracket
+            or self._active_entry_id is not None
+            or self._position is not None
+            or not self._side_selected
+            or not (self.mode_pending.isChecked() or self.mode_market.isChecked())
+        ):
+            return
+        entry = self._entry_price()
+        if entry is None or entry <= 0:
+            return
+        direction = 1.0 if self.selected_side == "long" else -1.0
+        stop_distance = entry * self.DEFAULT_BRACKET_DISTANCE
+        stop_price = entry - direction * stop_distance
+        self._applying_default_bracket = True
+        try:
+            self.sl_edit.setText(self._format_default_level(stop_price, stop_distance))
+            for index, row in enumerate(self._take_profit_rows, start=1):
+                target_distance = stop_distance * index
+                target_price = entry + direction * target_distance
+                row["price"].setText(self._format_default_level(target_price, target_distance))
+        finally:
+            self._applying_default_bracket = False
+
+    def _format_default_level(self, price: float, distance: float) -> str:
+        decimals = self._price_precision(price)
+        while decimals < 10 and round(distance, decimals) == 0:
+            decimals += 1
+        return f"{price:.{decimals}f}"
 
     def _update_selection_styles(self) -> None:
         pending = "#2962ff"
@@ -609,6 +655,7 @@ class OrderPanel(QtWidgets.QWidget):
         self._reset_take_profit_rows()
         self._clear_order_mode_selection()
         self._clear_side_selection()
+        self._bracket_defaults_auto = True
         self._update_selection_styles()
         self.status_label.setText("Plan cancelled")
         self.status_label.setStyleSheet("color:#9aa9bf;")
@@ -835,7 +882,7 @@ class OrderPanel(QtWidgets.QWidget):
                "price": price, "qty": lots, "remove": remove}
         self._take_profit_rows.append(row)
         self.tp_targets_layout.insertWidget(max(1, self.tp_targets_layout.count() - 1), widget)
-        price.textChanged.connect(self.update_metrics)
+        price.textChanged.connect(self._on_bracket_level_edited)
         lots.valueChanged.connect(lambda _value, key=row_id: self._take_profit_qty_changed(key))
         remove.clicked.connect(lambda _checked=False, key=row_id: self.remove_take_profit_target(key))
         return row
@@ -880,6 +927,7 @@ class OrderPanel(QtWidgets.QWidget):
         self._updating_tp_rows = False
         new_row["remove"].show()
         self._tp_allocation_manual = True
+        self._apply_default_bracket()
         self.update_metrics()
         return True
 
@@ -900,6 +948,7 @@ class OrderPanel(QtWidgets.QWidget):
         self._updating_tp_rows = False
         if len(self._take_profit_rows) == 1:
             self._take_profit_rows[0]["remove"].hide()
+        self._apply_default_bracket()
         self.update_metrics()
         return True
 
@@ -927,6 +976,7 @@ class OrderPanel(QtWidgets.QWidget):
             first["remove"].hide()
         self._tp_allocation_manual = False
         self._updating_tp_rows = False
+        self._bracket_defaults_auto = True
 
     def _current_ts(self) -> float:
         return float(self.replay.current_ts) if self.replay is not None else 0.0

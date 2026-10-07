@@ -513,6 +513,47 @@ def test_market_position_updates_entry_line_pnl_as_replay_price_moves():
     assert "#ef5350" in negative_html
 
 
+def test_default_bracket_levels_are_one_tenth_percent_and_follow_side_and_entry():
+    app = _app()
+    panel = OrderPanel()
+    chart = ChartWidget()
+    chart.replay = object()
+    panel.order_plan_changed.connect(chart.set_order_plan)
+    panel.raw_df = pd.DataFrame([{"timestamp": 1_000.0, "close": 100.0}])
+    panel.replay = SimpleNamespace(current_ts=1_000.0)
+
+    panel.entry_edit.setText("100")
+    assert panel.sl_edit.text() == "99.90"
+    assert panel.tp_edit.text() == "100.10"
+    assert chart.order_plan_items["sl"].value() == 99.9
+    assert chart.order_plan_items["tp"].value() == 100.1
+
+    panel.entry_edit.setText("200")
+    assert panel.sl_edit.text() == "199.80"
+    assert panel.tp_edit.text() == "200.20"
+
+    panel.btn_short.click()
+    assert panel.sl_edit.text() == "200.20"
+    assert panel.tp_edit.text() == "199.80"
+
+    panel.sl_edit.setText("201")
+    panel.entry_edit.setText("210")
+    assert panel.sl_edit.text() == "201"
+    assert panel.tp_edit.text() == "199.80"
+
+
+def test_default_multiple_take_profits_are_staggered_by_one_tenth_percent():
+    app = _app()
+    panel = OrderPanel()
+    panel.raw_df = pd.DataFrame([{"timestamp": 1_000.0, "close": 100.0}])
+    panel.replay = SimpleNamespace(current_ts=1_000.0)
+    panel.entry_edit.setText("100")
+
+    assert panel.add_take_profit_target()
+    assert panel._take_profit_rows[0]["price"].text() == "100.10"
+    assert panel._take_profit_rows[1]["price"].text() == "100.20"
+
+
 def test_chart_draws_and_updates_transient_order_plan_lines():
     app = _app()
     chart = ChartWidget()
