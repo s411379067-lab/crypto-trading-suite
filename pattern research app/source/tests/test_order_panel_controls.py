@@ -121,7 +121,12 @@ def test_main_splitter_panels_fit_screen_and_resize_without_collapsing(tmp_path)
     assert window.left_splitter.minimumWidth() == 430
     assert window.chart.minimumWidth() == 870
     assert window.research.minimumWidth() == 380
-    assert window.chart.toolbar.layout().count() == 3
+    assert window.chart.toolbar.layout().count() == 2
+    tool_row = window.chart.toolbar.layout().itemAt(0).layout()
+    settings_row = tool_row.itemAt(tool_row.count() - 1).layout()
+    stats_row = window.chart.toolbar.layout().itemAt(1).layout()
+    assert any(settings_row.itemAt(i).widget() is window.chart.x_tick_combo for i in range(settings_row.count()))
+    assert any(stats_row.itemAt(i).widget() is window.chart.btn_shot for i in range(stats_row.count()))
     assert window.minimumSizeHint().width() < 1920
 
     window.close()
