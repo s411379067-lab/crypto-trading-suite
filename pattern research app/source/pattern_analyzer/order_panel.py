@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 import pandas as pd
 from pyqtgraph.Qt import QtCore, QtWidgets
-from shared_core.order_brackets import create_pending_bracket, pending_bracket_order_specs
+from shared_core.order_brackets import create_pending_bracket, pending_bracket_order_specs, remove_bracket_group
 from shared_core.order_overlay import build_order_overlay
 
 
@@ -210,6 +210,42 @@ class OrderPanel(QtWidgets.QWidget):
         self.pending_bracket = dict(bracket)
         self.pending_bracket_changed.emit(dict(self.pending_bracket))
 
+    def cancel_pending_bracket(self):
+        """Discard an unsent Entry/SL/TP plan and remove all its chart lines."""
+        self.pending_bracket = None
+        self.pending_bracket_changed.emit(None)
+
+    def cancel_submitted_bracket(self):
+        """Cancel an unfilled Entry and all outstanding SL/TP orders for its bracket."""
+        bracket_id = str((self.submitted_bracket or {}).get("id", ""))
+        if bracket_id:
+            self.pending_orders = [o for o in self.pending_orders if str(o.get("bracket_id", "")) != bracket_id]
+        self.submitted_bracket = None
+        self.submitted_bracket_changed.emit(None)
+        self.refresh()
+
+    def cancel_submitted_group(self, group_id: str):
+        """Cancel a single SL/TP group while leaving its sibling groups intact."""
+        bracket = self.submitted_bracket
+        if not bracket:
+            return
+        bracket_id = str(bracket.get("id", ""))
+        self.pending_orders = [
+            o for o in self.pending_orders
+            if not (
+                str(o.get("bracket_id", "")) == bracket_id
+                and str(o.get("group_id", "")) == str(group_id)
+                and o.get("bracket_role") in ("stop", "target")
+            )
+        ]
+        try:
+            updated = remove_bracket_group(bracket, group_id)
+        except ValueError:
+            return
+        self.submitted_bracket = updated if updated.get("groups") else None
+        self.submitted_bracket_changed.emit(dict(self.submitted_bracket) if self.submitted_bracket else None)
+        self.refresh()
+
     def submit_pending_bracket(self):
         """Send the adjusted Entry and its linked SL/TP orders to pending orders."""
         if self.case is None or self.replay is None or not self.pending_bracket:
@@ -385,8 +421,12 @@ class OrderPanel(QtWidgets.QWidget):
                             )
                         ]
                         if str((self.submitted_bracket or {}).get("id", "")) == str(record.get("bracket_id", "")):
-                            self.submitted_bracket = None
-                            self.submitted_bracket_changed.emit(None)
+                            try:
+                                updated = remove_bracket_group(self.submitted_bracket, str(record.get("group_id", "")))
+                            except ValueError:
+                                updated = self.submitted_bracket
+                            self.submitted_bracket = updated if updated.get("groups") else None
+                            self.submitted_bracket_changed.emit(dict(self.submitted_bracket) if self.submitted_bracket else None)
                     changed = True
         if changed:
             self.case.touch()

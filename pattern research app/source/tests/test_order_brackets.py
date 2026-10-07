@@ -6,9 +6,11 @@ from pattern_analyzer.order_panel import OrderPanel
 from shared_core.order_brackets import (
     available_bracket_qty,
     create_pending_bracket,
+    estimated_bracket_pnl,
     move_bracket_entry,
     move_bracket_leg,
     pending_bracket_order_specs,
+    remove_bracket_group,
     set_bracket_group_qty,
     set_bracket_qty,
 )
@@ -132,6 +134,19 @@ def test_pending_submit_keeps_brackets_linked_until_entry_then_oco_exits():
     assert panel.pending_orders == []
 
 
+def test_removing_one_bracket_group_keeps_other_groups_and_estimates_pnl_by_side():
+    bracket = create_pending_bracket("short", 100.0, 2.0)
+    second = create_pending_bracket("short", 100.0, 2.0)["groups"][0]
+    bracket["groups"].append(second)
+    removed = remove_bracket_group(bracket, bracket["groups"][0]["id"])
+
+    assert len(removed["groups"]) == 1
+    assert removed["groups"][0]["id"] == second["id"]
+    assert estimated_bracket_pnl(bracket, 101.0, 0.5) == -0.5
+    long_bracket = create_pending_bracket("long", 100.0, 1.0)
+    assert estimated_bracket_pnl(long_bracket, 101.0, 0.5) == 0.5
+
+
 def test_manual_market_close_cancels_submitted_bracket_protection():
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
@@ -158,3 +173,41 @@ def test_manual_market_close_cancels_submitted_bracket_protection():
 
     assert panel.pending_orders == []
     assert panel.submitted_bracket is None
+
+
+def test_canceling_one_submitted_group_preserves_other_groups():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    class Case:
+        orders = []
+        display = {"timezone": "UTC"}
+
+        def touch(self):
+            pass
+
+    class Replay:
+        current_ts = 0.0
+
+    panel = OrderPanel()
+    panel.case = Case()
+    panel.replay = Replay()
+    bracket = create_pending_bracket("long", 100.0, 2.0)
+    second = create_pending_bracket("long", 100.0, 2.0)["groups"][0]
+    bracket["groups"].append(second)
+    panel.pending_bracket = bracket
+    panel.submit_pending_bracket()
+
+    panel.cancel_submitted_group(bracket["groups"][0]["id"])
+
+    assert [group["id"] for group in panel.submitted_bracket["groups"]] == [second["id"]]
+    assert {order["group_id"] for order in panel.pending_orders if order.get("bracket_role") in ("stop", "target")} == {second["id"]}
+
+
+def test_cancel_pending_bracket_clears_the_unsent_plan():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    panel = OrderPanel()
+    panel.pending_bracket = create_pending_bracket("short", 100.0, 1.0)
+
+    panel.cancel_pending_bracket()
+
+    assert panel.pending_bracket is None

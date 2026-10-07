@@ -100,6 +100,22 @@ def set_bracket_group_qty(bracket: dict, group_id: str, qty: float) -> dict:
     raise ValueError("Bracket group was not found")
 
 
+def remove_bracket_group(bracket: dict, group_id: str) -> dict:
+    """Return a bracket without the selected SL/TP group."""
+    updated = deepcopy(bracket)
+    before = len(updated.get("groups", []))
+    updated["groups"] = [g for g in updated.get("groups", []) if str(g.get("id")) != str(group_id)]
+    if len(updated["groups"]) == before:
+        raise ValueError("Bracket group was not found")
+    return updated
+
+
+def estimated_bracket_pnl(bracket: dict, price: float, qty: float) -> float:
+    """Estimate linear PnL at a bracket price, in quote currency dollars."""
+    direction = 1.0 if str(bracket.get("side")) == "long" else -1.0
+    return (float(price) - float(bracket["entry_price"])) * direction * float(qty)
+
+
 def pending_bracket_order_specs(bracket: dict) -> list[dict]:
     """Build the Entry plus linked SL/TP pending-order instructions."""
     side = "short" if str(bracket.get("side")) == "short" else "long"
