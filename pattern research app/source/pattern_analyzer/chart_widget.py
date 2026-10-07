@@ -687,7 +687,8 @@ class FiboSettingsDialog(QtWidgets.QDialog):
 
 
 class ChartWidget(QtWidgets.QWidget):
-    ORDER_PLAN_LABEL_POSITION = 0.82
+    # Keep the label's right edge just inside the plot boundary, clear of the price axis.
+    ORDER_PLAN_LABEL_POSITION = 0.985
 
     dirty = QtCore.Signal()
     history_committed = QtCore.Signal(str)
