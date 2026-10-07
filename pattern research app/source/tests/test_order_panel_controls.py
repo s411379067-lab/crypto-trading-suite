@@ -87,6 +87,9 @@ def test_pending_orders_and_order_records_sections_remain_available():
 
     assert panel.pending_box.isVisible()
     assert panel.records_box.isVisible()
+    assert panel.history_splitter.count() == 2
+    assert panel.history_splitter.widget(0) is panel.pending_box
+    assert panel.history_splitter.widget(1) is panel.records_box
     assert panel.pending_table.columnCount() == 6
     assert panel.records_table.columnCount() == 8
     assert panel.btn_cancel.text() == "Cancel Selected"
