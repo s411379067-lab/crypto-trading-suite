@@ -1644,7 +1644,7 @@ class ChartWidget(QtWidgets.QWidget):
             qty = float(position["qty"])
         except (KeyError, TypeError, ValueError):
             return
-        color = (0, 196, 168) if pnl >= 0 else (247, 82, 95)
+        color = (255, 82, 95) if side == "short" else (31, 121, 245)
         item = pg.InfiniteLine(pos=entry, angle=0, movable=False, pen=pg.mkPen(color=color, width=1, style=QtCore.Qt.DashLine))
         item.setZValue(30)
         self.plot.addItem(item)
@@ -1730,6 +1730,14 @@ class ChartWidget(QtWidgets.QWidget):
             f"background-color:#0d1420; border:1px solid rgb{tuple(color)}; border-radius:2px; "
             f"color:rgb{tuple(color)}; padding:1px 5px; font-weight:600;"
         )
+        if text in ("Pending", "Cancel"):
+            control.setStyleSheet(
+                "QPushButton { background-color: rgba(123, 77, 204, 255); border:1px solid #a98be8; "
+                "border-radius:2px; color:#ffffff; padding:1px 5px; font-weight:700; }"
+                "QPushButton:hover { background-color: rgba(143, 98, 223, 255); }"
+                "QPushButton:disabled { background-color: rgba(130, 130, 140, 100); "
+                "border:1px solid rgba(180, 180, 190, 100); color: rgba(225, 225, 230, 125); }"
+            )
         if callback:
             control.setToolTip("雙擊修改 lots；同組 SL 與 TP 會同步" if double_click else "點擊執行")
             if double_click:
@@ -1852,10 +1860,6 @@ class ChartWidget(QtWidgets.QWidget):
             return
         try:
             self.submitted_bracket_draft_changed.emit(move_bracket_leg(self.submitted_bracket, group_id, leg, float(item.value())))
-        except (TypeError, ValueError, KeyError):
-            return
-        try:
-            self.pending_bracket_edited.emit(move_bracket_leg(self.pending_bracket, group_id, leg, float(item.value())))
         except (TypeError, ValueError, KeyError):
             return
 

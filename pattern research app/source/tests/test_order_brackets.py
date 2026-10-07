@@ -1,5 +1,6 @@
 import pytest
 import pandas as pd
+import pyqtgraph as pg
 from pyqtgraph.Qt import QtWidgets
 
 from pattern_analyzer.chart_widget import ChartWidget
@@ -296,6 +297,57 @@ def test_live_position_add_group_button_uses_unallocated_position_lots():
     assert len(chart.submitted_bracket["groups"]) == 2
     assert chart.submitted_bracket["groups"][1]["qty"] == 1.25
     assert chart._submitted_bracket_dirty is True
+
+
+def test_submitted_leg_drag_never_uses_missing_pending_bracket():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    chart = ChartWidget()
+    bracket = create_pending_bracket("short", 100.0, 1.0)
+    chart.set_submitted_bracket(bracket, render=False)
+    updated = []
+    chart.submitted_bracket_draft_changed.connect(updated.append)
+    item = pg.InfiniteLine(pos=103.0, angle=0)
+
+    chart._submitted_leg_drag_finished(item, bracket["groups"][0]["id"], "stop")
+
+    assert len(updated) == 1
+    assert updated[0]["groups"][0]["stop_price"] == 103.0
+
+
+@pytest.mark.parametrize(
+    ("side", "expected_color"),
+    [("short", (255, 82, 95)), ("long", (31, 121, 245))],
+)
+def test_active_entry_line_color_is_based_on_side_not_pnl(side, expected_color):
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    chart = ChartWidget()
+    chart.active_position = {"side": side, "entry": 100.0, "qty": 1.0, "pnl": -25.0 if side == "long" else 25.0}
+
+    chart._render_active_position()
+
+    line = next(
+        item for item in chart.plot.items
+        if isinstance(item, pg.InfiniteLine) and item.angle == 0 and float(item.value()) == 100.0
+    )
+    assert line.pen.color().getRgb()[:3] == expected_color
+
+
+def test_pending_and_cancel_buttons_use_fixed_purple_and_translucent_disabled_gray():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    chart = ChartWidget()
+    chart.set_pending_bracket(create_pending_bracket("long", 100.0, 1.0), render=False)
+    chart._render_pending_bracket()
+    actions = {
+        widget.text(): widget for widget, _price in chart._pending_qty_controls
+        if isinstance(widget, QtWidgets.QPushButton) and widget.text() in ("Pending", "Cancel")
+    }
+
+    assert set(actions) == {"Pending", "Cancel"}
+    for button in actions.values():
+        style = button.styleSheet()
+        assert "rgba(123, 77, 204, 255)" in style
+        assert "rgba(130, 130, 140, 100)" in style
+        assert not button.isEnabled()
 
 
 def test_submitted_bracket_apply_replaces_pending_sl_tp_and_cancel_restores_snapshot():
