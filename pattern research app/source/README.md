@@ -1,4 +1,13 @@
-# Pattern Research v2.11.1
+# Pattern Research v2.12.0
+
+## v2.12.0 — Viewer metrics, composable filters, and layout improvements
+
+- Viewer now calculates filtered-Case trade metrics: Profit Factor, win rate (`wins/all`), PnL per active trading day, and PnL per trade.
+- Viewer filters can be added as rows and combined with AND / OR logic, including Pattern, Symbol, date, and Pattern-presence conditions.
+- Selected Pattern filters are shown one per row; filter controls have more usable height, and the Viewer side panels can be resized.
+- The Case Pattern editor is placed in the right panel. Selected Case is compacted to Case name and Realized PnL.
+- Analyzer and Viewer chart toolbars now use two left-aligned rows: controls on the first row and chart statistics on the second row.
+
 
 ## v2.11.1 — Analyzer metrics and responsive panels
 
