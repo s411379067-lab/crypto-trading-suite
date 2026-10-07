@@ -20,6 +20,7 @@ from .filtering import (
     save_case_patterns,
     scan_case_entries,
 )
+from .metrics import calculate_viewer_metrics
 from .read_only_chart import ReadOnlyChartWidget
 
 
@@ -59,9 +60,11 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
 
         self.sidebar = self._build_sidebar()
         self.chart = ReadOnlyChartWidget()
+        self.inspector = self._build_inspector()
         splitter.addWidget(self.sidebar)
         splitter.addWidget(self.chart)
-        splitter.setSizes([390, 1210])
+        splitter.addWidget(self.inspector)
+        splitter.setSizes([360, 930, 310])
 
         status = QtWidgets.QWidget()
         sl = QtWidgets.QHBoxLayout(status)
@@ -177,19 +180,6 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         )
         layout.addWidget(self.case_list, 1)
 
-        detail_box = QtWidgets.QGroupBox("Selected Case")
-        dl = QtWidgets.QVBoxLayout(detail_box)
-        self.selected_path_label = QtWidgets.QLabel("--")
-        self.selected_path_label.setWordWrap(True)
-        self.selected_patterns_label = QtWidgets.QLabel("Pattern: --")
-        self.selected_patterns_label.setWordWrap(True)
-        self.selected_pnl_label = QtWidgets.QLabel("Realized PnL: --")
-        self.selected_pnl_label.setStyleSheet("color:#cfd7e6; font-weight:700;")
-        dl.addWidget(self.selected_path_label)
-        dl.addWidget(self.selected_patterns_label)
-        dl.addWidget(self.selected_pnl_label)
-        layout.addWidget(detail_box)
-
         self.pattern_edit_box = QtWidgets.QGroupBox("Case Pattern 編輯")
         pel = QtWidgets.QVBoxLayout(self.pattern_edit_box)
         pel.setSpacing(5)
@@ -235,6 +225,49 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.btn_add_case_pattern.clicked.connect(self.add_case_pattern)
         self.btn_rename_case_pattern.clicked.connect(self.rename_case_pattern)
         self.btn_delete_case_pattern.clicked.connect(self.delete_case_pattern)
+        return panel
+
+    def _build_inspector(self) -> QtWidgets.QWidget:
+        panel = QtWidgets.QWidget()
+        panel.setMinimumWidth(260)
+        layout = QtWidgets.QVBoxLayout(panel)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(7)
+
+        metrics_box = QtWidgets.QGroupBox("Filtered Case Metrics")
+        metrics_layout = QtWidgets.QFormLayout(metrics_box)
+        metrics_layout.setLabelAlignment(QtCore.Qt.AlignLeft)
+        metrics_layout.setFormAlignment(QtCore.Qt.AlignTop)
+        self.metric_labels: dict[str, QtWidgets.QLabel] = {}
+        for key, title in (
+            ("profit_factor", "PF"),
+            ("win_rate", "Win Rate"),
+            ("pnl_per_day", "PnL / Day"),
+            ("pnl_per_trade", "PnL / Trade"),
+        ):
+            value = QtWidgets.QLabel("--")
+            value.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+            value.setStyleSheet("font-weight:700; color:#dbe9ff;")
+            self.metric_labels[key] = value
+            metrics_layout.addRow(title, value)
+        self.metric_summary_label = QtWidgets.QLabel("0 trades · 0 days")
+        self.metric_summary_label.setStyleSheet("color:#aebbd0;")
+        metrics_layout.addRow("Sample", self.metric_summary_label)
+        layout.addWidget(metrics_box)
+
+        detail_box = QtWidgets.QGroupBox("Selected Case")
+        detail_layout = QtWidgets.QVBoxLayout(detail_box)
+        self.selected_path_label = QtWidgets.QLabel("--")
+        self.selected_path_label.setWordWrap(True)
+        self.selected_patterns_label = QtWidgets.QLabel("Pattern: --")
+        self.selected_patterns_label.setWordWrap(True)
+        self.selected_pnl_label = QtWidgets.QLabel("Realized PnL: --")
+        self.selected_pnl_label.setStyleSheet("color:#cfd7e6; font-weight:700;")
+        detail_layout.addWidget(self.selected_path_label)
+        detail_layout.addWidget(self.selected_patterns_label)
+        detail_layout.addWidget(self.selected_pnl_label)
+        layout.addWidget(detail_box)
+        layout.addStretch(1)
         return panel
 
     def _refresh_case_pattern_editor(self, select_row: int | None = None):
@@ -412,6 +445,7 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         mode = str(self.mode_combo.currentData() or "ANY")
         has_patterns_only = self.has_patterns_only_checkbox.isChecked()
         self.filtered_entries = filter_case_entries(self.entries, selected, mode, has_patterns_only)
+        self._update_filtered_metrics()
 
         target_path = preferred_path or self.current_case_path
         self._updating_case_list = True
@@ -534,3 +568,21 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.case_status.setText("沒有符合條件的 Case")
         self.range_status.setText("")
         self.setWindowTitle("Pattern Viewer v2.8")
+
+    def _update_filtered_metrics(self):
+        metrics = calculate_viewer_metrics(
+            (entry.research_date, entry.trade_pnls) for entry in self.filtered_entries
+        )
+        self.metric_labels["profit_factor"].setText(
+            "∞" if metrics.profit_factor == float("inf") else self._format_metric(metrics.profit_factor)
+        )
+        self.metric_labels["win_rate"].setText(
+            "--" if metrics.win_rate is None else f"{metrics.win_rate * 100:.1f}% ({metrics.wins}/{metrics.trades})"
+        )
+        self.metric_labels["pnl_per_day"].setText(self._format_metric(metrics.pnl_per_day))
+        self.metric_labels["pnl_per_trade"].setText(self._format_metric(metrics.pnl_per_trade))
+        self.metric_summary_label.setText(f"{metrics.trades} trades · {metrics.trading_days} days")
+
+    @staticmethod
+    def _format_metric(value: float | None) -> str:
+        return "--" if value is None else f"{value:,.2f}"

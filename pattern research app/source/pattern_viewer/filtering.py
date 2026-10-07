@@ -6,6 +6,7 @@ import json
 import os
 
 from shared_core.models import utc_now_iso
+from .metrics import completed_trade_pnls
 
 
 @dataclass(frozen=True)
@@ -14,6 +15,7 @@ class ViewerCaseEntry:
     symbol: str
     research_date: str
     patterns: tuple[str, ...]
+    trade_pnls: tuple[float, ...] = ()
 
     @property
     def display_name(self) -> str:
@@ -62,6 +64,7 @@ def load_case_entry(path: str | Path) -> ViewerCaseEntry | None:
         symbol=str(case.get("symbol", "")),
         research_date=str(case.get("research_date", "")),
         patterns=tuple(patterns),
+        trade_pnls=tuple(completed_trade_pnls(data.get("orders", []))),
     )
 
 
