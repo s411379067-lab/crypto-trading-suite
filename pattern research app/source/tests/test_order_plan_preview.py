@@ -56,14 +56,19 @@ def test_send_creates_pending_order_with_bracket_and_risk_size():
 
     panel.btn_place.click()
 
-    assert len(panel.pending_orders) == 1
-    record = panel.pending_orders[0]
+    assert len(panel.pending_orders) == 3
+    record = next(order for order in panel.pending_orders if not order.get("role"))
     assert record["side"] == "long"
     assert record["order_type"] == "limit"
     assert record["requested_price"] == 100.0
     assert record["qty"] == 20.0
     assert record["stop_loss"] == 95.0
     assert record["take_profit"] == 110.0
+    protections = [order for order in panel.pending_orders if order.get("role")]
+    assert {order["role"] for order in protections} == {"stop_loss", "take_profit"}
+    assert all(not order["armed"] for order in protections)
+    assert all(order["parent_order_id"] == record["id"] for order in protections)
+    assert all(panel.pending_table.item(row, 5).text() == "WAIT ENTRY" for row in (1, 2))
     assert panel.case.orders == []
     assert "order sent" in panel.status_label.text()
 
@@ -83,7 +88,7 @@ def test_send_market_fills_at_replay_price_and_emits_updates():
 
     panel.btn_place.click()
 
-    assert panel.pending_orders == []
+    assert len(panel.pending_orders) == 2
     assert len(panel.case.orders) == 1
     record = panel.case.orders[0]
     assert record["side"] == "short"
@@ -93,6 +98,8 @@ def test_send_market_fills_at_replay_price_and_emits_updates():
     assert record["qty"] == 20.0
     assert record["stop_loss"] == 105.0
     assert record["take_profit"] == 90.0
+    assert all(order["armed"] for order in panel.pending_orders)
+    assert all(panel.pending_table.item(row, 5).text() == "ACTIVE" for row in (0, 1))
     assert changed and fills
     assert "filled at 100" in panel.status_label.text()
 
@@ -108,6 +115,109 @@ def test_send_rejects_invalid_bracket_without_creating_order():
     assert panel.pending_orders == []
     assert panel.case.orders == []
     assert "SL must be below Entry" in panel.status_label.text()
+
+
+def test_pending_entry_arms_protection_only_after_entry_fill():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    panel.entry_edit.setText("99")
+    assert panel.submit_plan()
+    entry = next(order for order in panel.pending_orders if not order.get("role"))
+
+    panel.replay.current_ts = 1_060.0
+    panel.raw_df = pd.concat([panel.raw_df, pd.DataFrame([
+        {"timestamp": 1_060.0, "open": 100.0, "high": 101.0, "low": 98.0, "close": 100.0},
+    ])], ignore_index=True)
+    panel.process_replay_advance(1_000.0, 1_060.0)
+
+    assert entry["status"] == "filled"
+    protections = [order for order in panel.pending_orders if order.get("role")]
+    assert len(protections) == 2
+    assert all(order["armed"] for order in protections)
+    assert all(order["active_from_ts"] == 1_060.0 for order in protections)
+
+
+def test_cancelling_pending_entry_removes_its_waiting_protection_pair():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    assert panel.submit_plan()
+    entry = next(order for order in panel.pending_orders if not order.get("role"))
+    panel.pending_table.selectRow(0)
+
+    panel.cancel_selected()
+
+    assert panel.pending_orders == []
+    assert panel._active_entry_id is None
+
+
+def test_confirm_and_cancel_bracket_edits_apply_or_restore_prices():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    plans = []
+    panel.order_plan_changed.connect(plans.append)
+    panel.set_order_mode("market")
+    assert panel.submit_plan()
+    entry = panel.case.orders[0]
+    panel.sl_edit.setText("94")
+    panel.tp_edit.setText("112")
+
+    assert panel.confirm_bracket_update()
+    assert entry["stop_loss"] == 94.0
+    assert entry["take_profit"] == 112.0
+    assert {order["requested_price"] for order in panel.pending_orders} == {94.0, 112.0}
+    assert plans[-1]["bracket_dirty"] is False
+    assert panel.cancel_bracket_update() is False
+
+    panel.sl_edit.setText("93")
+    assert plans[-1]["bracket_dirty"] is True
+    assert panel.cancel_bracket_update()
+    assert panel.sl_edit.text() == "94.00"
+    assert panel.tp_edit.text() == "112.00"
+
+
+def test_active_protection_orders_are_rebuilt_when_case_is_reopened():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    panel.set_order_mode("market")
+    assert panel.submit_plan()
+    case = panel.case
+    raw_df = panel.raw_df
+    replay = panel.replay
+
+    reopened = OrderPanel()
+    reopened.set_context(case, raw_df, replay)
+
+    assert reopened._active_entry_id == case.orders[0]["id"]
+    assert len(reopened.pending_orders) == 2
+    assert all(order["armed"] for order in reopened.pending_orders)
+
+
+def test_take_profit_trigger_closes_trade_and_cancels_stop_loss_sibling():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    panel.set_order_mode("market")
+    assert panel.submit_plan()
+    parent = panel.case.orders[0]
+
+    panel.raw_df = pd.concat([panel.raw_df, pd.DataFrame([
+        {"timestamp": 1_060.0, "open": 100.0, "high": 111.0, "low": 99.0, "close": 110.0},
+    ])], ignore_index=True)
+    panel.replay.current_ts = 1_060.0
+    panel.process_replay_advance(1_000.0, 1_060.0)
+
+    assert parent["bracket_status"] == "closed"
+    assert len(panel.case.orders) == 2
+    close = panel.case.orders[1]
+    assert close["order_type"] == "take profit"
+    assert close["fill_price"] == 110.0
+    assert close["computed_action"] == "CLOSE"
+    assert panel.pending_orders == []
+    assert panel._position is None
 
 
 def test_chart_draws_and_updates_transient_order_plan_lines():
@@ -141,6 +251,19 @@ def test_chart_draws_and_updates_transient_order_plan_lines():
     assert "BUY LIMIT" in entry_html and "Lots 20.00" in entry_html
     assert "SL 95.00" in sl_html and "100.00 USD" in sl_html
     assert "TP 110.00" in tp_html and "200.00 USD" in tp_html and "2.00R" in tp_html
+
+    chart.set_order_plan({"mode": "market", "entry": 100, "sl": 95, "tp": 110,
+                          "bracket_edit_enabled": True, "bracket_dirty": False})
+    assert set(chart.order_plan_actions) == {"confirm", "cancel"}
+    requested = []
+    chart.bracket_action_requested.connect(requested.append)
+    chart.order_plan_actions["confirm"].clicked.emit("confirm")
+    assert requested == []
+    chart.set_order_plan({"mode": "market", "entry": 100, "sl": 94, "tp": 112,
+                          "bracket_edit_enabled": True, "bracket_dirty": True})
+    chart.order_plan_actions["confirm"].clicked.emit("confirm")
+    app.processEvents()
+    assert requested == ["confirm"]
 
     line = chart.order_plan_items["sl"]
     line.setValue(94.0)

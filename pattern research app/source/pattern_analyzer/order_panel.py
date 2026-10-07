@@ -45,6 +45,8 @@ class OrderPanel(QtWidgets.QWidget):
         self._position = None
         self._realized_pnl = 0.0
         self._realized_r = 0.0
+        self._active_entry_id: str | None = None
+        self._confirmed_bracket: tuple[float, float] | None = None
         # Pending orders are intentionally session-only.
         # Only actual fills are persisted to ResearchCase.orders.
         self.pending_orders: list[dict] = []
@@ -267,6 +269,10 @@ class OrderPanel(QtWidgets.QWidget):
         if self.case is None or self.replay is None:
             self._set_send_status("Open a Case and start replay before sending", "#f5a623")
             return False
+        self._recompute_state()
+        if self._active_entry_id is not None or self._position is not None:
+            self._set_send_status("Manage or close the current position before sending another", "#f5a623")
+            return False
 
         entry = self._entry_price()
         sl = self._read_price(self.sl_edit.text())
@@ -310,9 +316,13 @@ class OrderPanel(QtWidgets.QWidget):
         record["stop_loss"] = float(sl)
         record["take_profit"] = float(tp)
         record["est_loss"] = float(self._risk_target())
+        record["bracket_status"] = "waiting-entry" if not market else "active"
+        self._active_entry_id = record["id"]
+        self._confirmed_bracket = (float(sl), float(tp))
         if market:
             self._fill_record(record, current_price, self._current_ts())
             self.case.orders.append(record)
+            self._create_protection_orders(record, active=True, active_ts=self._current_ts())
             self.case.touch()
             self.refresh()
             self.changed.emit()
@@ -321,11 +331,164 @@ class OrderPanel(QtWidgets.QWidget):
             return True
 
         self.pending_orders.append(record)
+        self._create_protection_orders(record, active=False)
         self.refresh()
         self._set_send_status(f"{self.selected_side.upper()} {order_type.upper()} order sent", "#7bd88f")
         return True
 
+    def _create_protection_orders(self, entry: dict, *, active: bool, active_ts: float | None = None) -> None:
+        """Create SL/TP rows tied to one entry; pending-entry brackets stay unarmed."""
+        close_side = "short" if entry["side"] == "long" else "long"
+        entry["bracket_order_ids"] = []
+        for role, order_type, key in (
+            ("stop_loss", "stop market", "stop_loss"),
+            ("take_profit", "limit", "take_profit"),
+        ):
+            order = self._new_order_record(close_side, order_type, entry[key], entry["qty"], origin=f"bracket-{role}")
+            order.update({
+                "role": role,
+                "parent_order_id": entry["id"],
+                "status": "open",
+                "armed": bool(active),
+                "active_from_ts": active_ts,
+            })
+            entry["bracket_order_ids"].append(order["id"])
+            self.pending_orders.append(order)
+
+    def confirm_bracket_update(self) -> bool:
+        entry = self._active_entry_record()
+        if (
+            entry is None
+            or entry.get("status") != "filled"
+            or entry.get("bracket_status") != "active"
+            or self._confirmed_bracket is None
+        ):
+            return False
+        sl = self._read_price(self.sl_edit.text())
+        tp = self._read_price(self.tp_edit.text())
+        if sl is None or tp is None:
+            self._set_send_status("Enter valid SL and TP prices", "#ef5350")
+            return False
+        if abs(sl - self._confirmed_bracket[0]) <= 1e-9 and abs(tp - self._confirmed_bracket[1]) <= 1e-9:
+            return False
+        entry_price = float(entry.get("fill_price") or entry.get("requested_price") or 0.0)
+        is_long = entry.get("side") == "long"
+        if (sl >= entry_price if is_long else sl <= entry_price):
+            self._set_send_status("SL is on the wrong side of Entry", "#ef5350")
+            return False
+        if (tp <= entry_price if is_long else tp >= entry_price):
+            self._set_send_status("TP is on the wrong side of Entry", "#ef5350")
+            return False
+
+        entry["stop_loss"] = float(sl)
+        entry["take_profit"] = float(tp)
+        for order in self.pending_orders:
+            if order.get("parent_order_id") != entry["id"]:
+                continue
+            order["requested_price"] = float(sl if order.get("role") == "stop_loss" else tp)
+        entry["bracket_status"] = "active"
+        self._confirmed_bracket = (float(sl), float(tp))
+        self.case.touch()
+        self.refresh()
+        self.changed.emit()
+        self._set_send_status("SL / TP changes confirmed", "#7bd88f")
+        return True
+
+    def cancel_bracket_update(self) -> bool:
+        entry = self._active_entry_record()
+        if (
+            entry is None
+            or entry.get("status") != "filled"
+            or entry.get("bracket_status") != "active"
+            or self._confirmed_bracket is None
+        ):
+            return False
+        sl, tp = self._confirmed_bracket
+        current_sl = self._read_price(self.sl_edit.text())
+        current_tp = self._read_price(self.tp_edit.text())
+        if current_sl is not None and current_tp is not None and abs(current_sl - sl) <= 1e-9 and abs(current_tp - tp) <= 1e-9:
+            return False
+        self.sl_edit.setText(f"{sl:.{self._price_precision(sl)}f}")
+        self.tp_edit.setText(f"{tp:.{self._price_precision(tp)}f}")
+        self.refresh()
+        self._set_send_status("SL / TP changes cancelled", "#9aa9bf")
+        return True
+
+    def _active_entry_record(self) -> dict | None:
+        if self.case is None or self._active_entry_id is None:
+            return None
+        for record in self.case.orders:
+            if record.get("id") == self._active_entry_id:
+                return record
+        for record in self.pending_orders:
+            if record.get("id") == self._active_entry_id:
+                return record
+        return None
+
+    def _set_active_bracket(self, entry: dict, active: bool, active_ts: float | None = None) -> None:
+        entry["bracket_status"] = "active" if active else "waiting-entry"
+        self._active_entry_id = entry.get("id") if active else None
+        self._confirmed_bracket = (
+            (float(entry["stop_loss"]), float(entry["take_profit"])) if active else None
+        )
+        for order in self.pending_orders:
+            if order.get("parent_order_id") == entry.get("id"):
+                order["armed"] = bool(active)
+                order["active_from_ts"] = active_ts if active else None
+
+    def _remove_bracket_orders(self, parent_id: str) -> None:
+        self.pending_orders = [
+            order for order in self.pending_orders
+            if order.get("parent_order_id") != parent_id
+        ]
+
+    def _find_entry_by_id(self, order_id: str | None) -> dict | None:
+        if self.case is None or not order_id:
+            return None
+        for order in self.case.orders:
+            if order.get("id") == order_id:
+                return order
+        for order in self.pending_orders:
+            if order.get("id") == order_id and not order.get("role"):
+                return order
+        return None
+
+    def _finish_active_bracket(self, parent_id: str, status: str) -> None:
+        parent = self._find_entry_by_id(parent_id)
+        if parent is not None:
+            parent["bracket_status"] = status
+        self._remove_bracket_orders(parent_id)
+        if self._active_entry_id == parent_id:
+            self._active_entry_id = None
+            self._confirmed_bracket = None
+
+    def _restore_active_bracket(self) -> None:
+        """Rebuild session-only protection rows for the currently open saved position."""
+        if self._active_entry_id is not None:
+            return
+        self._recompute_state()
+        if self._position is None or self.case is None:
+            return
+        for entry in reversed(self.case.orders):
+            if (
+                entry.get("status") == "filled"
+                and entry.get("bracket_status") == "active"
+                and entry.get("side") == self._position["side"]
+                and float(entry.get("fill_ts") or 0.0) <= self._current_ts()
+            ):
+                self._active_entry_id = entry.get("id")
+                self._confirmed_bracket = (float(entry["stop_loss"]), float(entry["take_profit"]))
+                self._create_protection_orders(entry, active=True, active_ts=float(entry.get("fill_ts") or 0.0))
+                break
+
     def cancel_plan(self) -> None:
+        active_entry = self._active_entry_record()
+        if active_entry is not None:
+            if active_entry.get("status") == "filled" and active_entry.get("bracket_status") == "active":
+                self.cancel_bracket_update()
+            else:
+                self._set_send_status("Cancel the pending entry from Pending Orders", "#f5a623")
+            return
         self.entry_edit.setText("0")
         self.sl_edit.setText("0")
         self.tp_edit.setText("0")
@@ -365,6 +528,14 @@ class OrderPanel(QtWidgets.QWidget):
 
     def update_metrics(self, *_args) -> None:
         entry = self._entry_price()
+        active_entry = self._active_entry_record()
+        bracket_active = bool(
+            active_entry
+            and active_entry.get("status") == "filled"
+            and active_entry.get("bracket_status") == "active"
+        )
+        if bracket_active:
+            entry = float(active_entry.get("fill_price") or entry or 0.0)
         if self.mode_market.isChecked() and entry is not None:
             blocked = self.entry_edit.blockSignals(True)
             self.entry_edit.setText(f"{entry:.{self._price_precision(entry)}f}")
@@ -374,18 +545,26 @@ class OrderPanel(QtWidgets.QWidget):
         risk_target = self._risk_target()
         entry_edit = entry if entry is not None else 0.0
         self.price_edit.setText(str(entry_edit))
-        order_type = self._order_type(entry)
+        plan_side = str(active_entry.get("side")) if bracket_active else self.selected_side
+        order_type = str(active_entry.get("order_type")) if bracket_active else self._order_type(entry)
         self.order_type_label.setText(f"Order Type: {order_type}")
         if order_type in ("market", "limit", "stop market"):
             self.type_combo.setCurrentText(order_type)
 
-        multiplier = _side_mult(self.selected_side)
+        multiplier = _side_mult(plan_side)
         stop_valid = sl is not None and entry is not None and (sl < entry if multiplier > 0 else sl > entry)
         lots = None
         est_loss = None
         est_profit = None
         rr = None
-        if risk_target > 0 and stop_valid:
+        if bracket_active:
+            lots = float(active_entry.get("qty") or 0.0)
+            if sl is not None and entry is not None:
+                est_loss = abs(entry - sl) * lots
+                if tp is not None and (tp > entry if multiplier > 0 else tp < entry):
+                    est_profit = abs(tp - entry) * lots
+                    rr = abs(tp - entry) / abs(entry - sl) if abs(entry - sl) else None
+        elif risk_target > 0 and stop_valid:
             per_lot_loss = abs(entry - sl)
             if per_lot_loss > 0:
                 lots = risk_target / per_lot_loss
@@ -403,7 +582,7 @@ class OrderPanel(QtWidgets.QWidget):
 
         self.order_plan_changed.emit({
             "mode": "market" if self.mode_market.isChecked() else "pending",
-            "side": self.selected_side,
+            "side": plan_side,
             "entry": entry,
             "sl": sl,
             "tp": tp,
@@ -412,6 +591,15 @@ class OrderPanel(QtWidgets.QWidget):
             "est_loss": est_loss,
             "est_profit": est_profit,
             "rr": rr,
+            "bracket_edit_enabled": bracket_active,
+            "entry_locked": bracket_active,
+            "bracket_dirty": bool(
+                bracket_active
+                and self._confirmed_bracket is not None
+                and sl is not None
+                and tp is not None
+                and (abs(sl - self._confirmed_bracket[0]) > 1e-9 or abs(tp - self._confirmed_bracket[1]) > 1e-9)
+            ),
         })
 
     def set_plan_price_from_chart(self, field: str, price: float) -> None:
@@ -427,6 +615,8 @@ class OrderPanel(QtWidgets.QWidget):
         self.case = case
         self.raw_df = raw_df
         self.replay = replay
+        self._active_entry_id = None
+        self._confirmed_bracket = None
         for widget in (self.entry_edit, self.sl_edit, self.tp_edit):
             widget.setText("0")
         # Unfilled orders are not research records and are never restored.
@@ -438,6 +628,7 @@ class OrderPanel(QtWidgets.QWidget):
                 self.case.orders = filled_only
                 self.case.touch()
                 self.changed.emit()
+        self._restore_active_bracket()
         self.refresh()
 
     def _current_ts(self) -> float:
@@ -540,6 +731,8 @@ class OrderPanel(QtWidgets.QWidget):
         record = self._new_order_record(side, "market", None, qty, origin="manual-close")
         self._fill_record(record, cp, self._current_ts())
         self.case.orders.append(record)
+        if self._active_entry_id is not None:
+            self._finish_active_bracket(self._active_entry_id, "closed")
         self.case.touch()
         self.refresh()
         self.changed.emit(); self.fills_changed.emit()
@@ -555,16 +748,22 @@ class OrderPanel(QtWidgets.QWidget):
             record["fill_time"] = pd.Timestamp(fill_ts, unit="s", tz="UTC").isoformat()
 
     def process_replay_advance(self, previous_ts: float, current_ts: float):
-        """Fill legacy limit/stop orders when a newly revealed M1 bar touches the order price."""
+        """Advance entries and their linked protection orders through newly revealed bars."""
         if self.case is None or self.raw_df.empty or current_ts <= previous_ts:
             self.refresh()
             return
+        self._restore_active_bracket()
         bars = self.raw_df[(self.raw_df["timestamp"] > previous_ts) & (self.raw_df["timestamp"] <= current_ts)]
         changed = False
+        closed_parent_ids: set[str] = set()
         for _, bar in bars.iterrows():
             bar_ts = float(bar["timestamp"])
             low = float(bar["low"]); high = float(bar["high"])
+            # Entry fills happen first; attached protection cannot trigger on the same
+            # OHLC bar because its intrabar event order is unknowable.
             for record in list(self.pending_orders):
+                if record.get("role"):
+                    continue
                 if float(record.get("created_ts") or 0.0) > bar_ts:
                     continue
                 if record.get("order_type") not in ("limit", "stop market"):
@@ -577,10 +776,49 @@ class OrderPanel(QtWidgets.QWidget):
                     self._fill_record(record, price, bar_ts)
                     self.pending_orders.remove(record)
                     self.case.orders.append(record)
+                    if record.get("bracket_order_ids"):
+                        self._set_active_bracket(record, True, active_ts=bar_ts)
                     changed = True
+            for protection in list(self.pending_orders):
+                role = protection.get("role")
+                if role not in ("stop_loss", "take_profit") or not protection.get("armed"):
+                    continue
+                parent_id = protection.get("parent_order_id")
+                if parent_id in closed_parent_ids:
+                    continue
+                active_from = protection.get("active_from_ts")
+                if active_from is not None and bar_ts <= float(active_from):
+                    continue
+                price = protection.get("requested_price")
+                parent = self._find_entry_by_id(parent_id)
+                if price is None or parent is None:
+                    continue
+                price = float(price)
+                is_long = parent.get("side") == "long"
+                if role == "stop_loss":
+                    touched = low <= price if is_long else high >= price
+                else:
+                    touched = high >= price if is_long else low <= price
+                if not touched:
+                    continue
+
+                protection["side"] = "short" if is_long else "long"
+                protection["order_type"] = "stop loss" if role == "stop_loss" else "take profit"
+                protection["origin"] = f"bracket-{role}"
+                self._fill_record(protection, price, bar_ts)
+                self.pending_orders.remove(protection)
+                self.case.orders.append(protection)
+                parent["bracket_exit_id"] = protection["id"]
+                closed_parent_ids.add(parent_id)
+                self._finish_active_bracket(parent_id, "closed")
+                changed = True
         if changed:
             self.case.touch()
             self.changed.emit(); self.fills_changed.emit()
+            if closed_parent_ids:
+                self.entry_edit.setText("0")
+                self.sl_edit.setText("0")
+                self.tp_edit.setText("0")
         self.refresh()
 
     def cancel_selected(self):
@@ -595,7 +833,20 @@ class OrderPanel(QtWidgets.QWidget):
         order_id = item.data(QtCore.Qt.UserRole) or item.text()
         for record in list(self.pending_orders):
             if record.get("id") == order_id:
-                self.pending_orders.remove(record)
+                if record.get("role"):
+                    parent_id = record.get("parent_order_id")
+                    self._finish_active_bracket(parent_id, "cancelled")
+                    self._set_send_status("SL / TP protection cancelled; position remains open", "#f5a623")
+                    if self.case is not None:
+                        self.case.touch()
+                        self.changed.emit()
+                else:
+                    self._remove_bracket_orders(record.get("id"))
+                    if self._active_entry_id == record.get("id"):
+                        self._active_entry_id = None
+                        self._confirmed_bracket = None
+                    if record in self.pending_orders:
+                        self.pending_orders.remove(record)
                 self.refresh()
                 return
 
@@ -611,6 +862,8 @@ class OrderPanel(QtWidgets.QWidget):
         order_id = item.data(QtCore.Qt.UserRole)
         if not order_id:
             return
+        if self._active_entry_id == order_id:
+            self._finish_active_bracket(order_id, "cancelled")
         self.case.orders = [o for o in self.case.orders if o.get("id") != order_id]
         self.case.touch()
         self.refresh()
@@ -639,6 +892,9 @@ class OrderPanel(QtWidgets.QWidget):
         if answer != QtWidgets.QMessageBox.Yes:
             return
         self.case.orders.clear()
+        self.pending_orders.clear()
+        self._active_entry_id = None
+        self._confirmed_bracket = None
         self.case.touch()
         self.refresh()
         self.changed.emit(); self.fills_changed.emit()
@@ -720,10 +976,19 @@ class OrderPanel(QtWidgets.QWidget):
         pending = list(self.pending_orders)
         self.pending_table.setRowCount(len(pending))
         for r, o in enumerate(pending):
+            role = o.get("role")
+            type_text = o.get("order_type", "")
+            status_text = o.get("status", "")
+            if role == "stop_loss":
+                type_text = f"SL stop market ({str(o.get('parent_order_id', ''))[-6:]})"
+                status_text = "ACTIVE" if o.get("armed") else "WAIT ENTRY"
+            elif role == "take_profit":
+                type_text = f"TP limit ({str(o.get('parent_order_id', ''))[-6:]})"
+                status_text = "ACTIVE" if o.get("armed") else "WAIT ENTRY"
             vals = [
-                str(o.get("id", ""))[-6:], o.get("side", ""), o.get("order_type", ""),
+                str(o.get("id", ""))[-6:], o.get("side", ""), type_text,
                 "-" if o.get("requested_price") is None else f"{float(o['requested_price']):.{self._price_precision(o.get('requested_price'))}f}",
-                f"{float(o.get('qty') or 0):.4f}", o.get("status", ""),
+                f"{float(o.get('qty') or 0):.4f}", status_text,
             ]
             for c, value in enumerate(vals):
                 item = QtWidgets.QTableWidgetItem(str(value))

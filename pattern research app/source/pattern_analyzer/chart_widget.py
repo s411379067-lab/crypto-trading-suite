@@ -686,6 +686,22 @@ class FiboSettingsDialog(QtWidgets.QDialog):
         self._save_template_callback({"levels": levels, "style": style})
 
 
+class OrderPlanActionItem(pg.TextItem):
+    clicked = QtCore.Signal(str)
+
+    def __init__(self, action: str, html: str, fill, border):
+        super().__init__(html=html, anchor=(1, 0.5), fill=fill, border=border)
+        self.action = action
+        self.setAcceptedMouseButtons(QtCore.Qt.LeftButton)
+
+    def mouseClickEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self.clicked.emit(self.action)
+            event.accept()
+        else:
+            event.ignore()
+
+
 class ChartWidget(QtWidgets.QWidget):
     # Keep the label's right edge just inside the plot boundary, clear of the price axis.
     ORDER_PLAN_LABEL_POSITION = 0.985
@@ -695,6 +711,7 @@ class ChartWidget(QtWidgets.QWidget):
     view_timeframe_changed = QtCore.Signal(str)
     timezone_changed = QtCore.Signal(str)
     order_plan_price_changed = QtCore.Signal(str, float)
+    bracket_action_requested = QtCore.Signal(str)
 
     def __init__(self, parent=None, *, drawing_interaction_enabled: bool = True):
         super().__init__(parent)
@@ -723,6 +740,7 @@ class ChartWidget(QtWidgets.QWidget):
         self.order_plan: dict = {}
         self.order_plan_items: dict[str, object] = {}
         self.order_plan_labels: dict[str, object] = {}
+        self.order_plan_actions: dict[str, object] = {}
         self.show_all_orders = False
         self.show_previous_rth = False
         self.show_all_drawings = True
@@ -1065,13 +1083,40 @@ class ChartWidget(QtWidgets.QWidget):
             self._render_order_plan()
 
     def _clear_order_plan_items(self) -> None:
-        for item in (*self.order_plan_items.values(), *self.order_plan_labels.values()):
+        for item in (*self.order_plan_items.values(), *self.order_plan_labels.values(), *self.order_plan_actions.values()):
             try:
                 self.plot.removeItem(item)
             except Exception:
                 pass
         self.order_plan_items = {}
         self.order_plan_labels = {}
+        self.order_plan_actions = {}
+
+    def _order_plan_action_clicked(self, action: str) -> None:
+        if self.order_plan.get("bracket_edit_enabled") and self.order_plan.get("bracket_dirty"):
+            QtCore.QTimer.singleShot(0, lambda key=action: self.bracket_action_requested.emit(key))
+
+    def _add_order_plan_actions(self, entry_price: float) -> None:
+        if not self.order_plan.get("bracket_edit_enabled"):
+            return
+        dirty = bool(self.order_plan.get("bracket_dirty"))
+        enabled_color = QtGui.QColor("#8b5cf6")
+        disabled_color = QtGui.QColor(120, 130, 145, 72)
+        x_range = self.plot.viewRange()[0]
+        span = float(x_range[1]) - float(x_range[0])
+        for action, text, fraction in (("confirm", "CONFIRM", 0.25), ("cancel", "CANCEL", 0.42)):
+            color = enabled_color if dirty else disabled_color
+            label = OrderPlanActionItem(
+                action,
+                f'<span style="color:#ffffff">{text}</span>',
+                pg.mkBrush(color),
+                pg.mkPen(color),
+            )
+            label.setZValue(95)
+            label.clicked.connect(self._order_plan_action_clicked)
+            self.plot.addItem(label, ignoreBounds=True)
+            label.setPos(float(x_range[0]) + span * fraction, entry_price)
+            self.order_plan_actions[action] = label
 
     def _order_plan_label_html(self, field: str, price: float) -> str:
         def fmt(value, digits=2):
@@ -1119,6 +1164,17 @@ class ChartWidget(QtWidgets.QWidget):
             line = self.order_plan_items.get(field)
             if line is not None:
                 label.setPos(x, float(line.value()))
+        entry_line = self.order_plan_items.get("entry")
+        if entry_line is not None:
+            try:
+                x_range = self.plot.viewRange()[0]
+                left, right = float(x_range[0]), float(x_range[1])
+                for action, fraction in (("confirm", 0.25), ("cancel", 0.42)):
+                    item = self.order_plan_actions.get(action)
+                    if item is not None:
+                        item.setPos(left + (right - left) * fraction, float(entry_line.value()))
+            except Exception:
+                pass
 
     def _render_order_plan(self) -> None:
         if self.replay is None:
@@ -1135,7 +1191,10 @@ class ChartWidget(QtWidgets.QWidget):
                 continue
             if price <= 0:
                 continue
-            movable = field != "entry" or self.order_plan.get("mode") != "market"
+            movable = field != "entry" or (
+                self.order_plan.get("mode") != "market"
+                and not self.order_plan.get("entry_locked", False)
+            )
             line = pg.InfiniteLine(
                 pos=price,
                 angle=0,
@@ -1157,6 +1216,9 @@ class ChartWidget(QtWidgets.QWidget):
             label.setZValue(91)
             self.plot.addItem(label, ignoreBounds=True)
             self.order_plan_labels[field] = label
+        entry_line = self.order_plan_items.get("entry")
+        if entry_line is not None:
+            self._add_order_plan_actions(float(entry_line.value()))
         self._position_order_plan_labels()
 
     def _order_plan_line_finished(self, field: str, item=None) -> None:
