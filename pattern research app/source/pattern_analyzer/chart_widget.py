@@ -938,6 +938,7 @@ class ChartWidget(QtWidgets.QWidget):
         self.plot.scene().sigMouseClicked.connect(self._scene_clicked)
         self.plot.sigRangeChanged.connect(self._on_view_range_changed)
         self.plot.sigRangeChanged.connect(self._position_order_plan_labels)
+        self.plot.getViewBox().sigResized.connect(self._position_order_plan_labels)
         self._mouse_proxy = pg.SignalProxy(self.graphics.scene().sigMouseMoved, rateLimit=60, slot=self._mouse_moved)
         self.graphics.setFocusPolicy(QtCore.Qt.StrongFocus)
         try:
@@ -1104,7 +1105,7 @@ class ChartWidget(QtWidgets.QWidget):
         disabled_color = QtGui.QColor(120, 130, 145, 72)
         x_range = self.plot.viewRange()[0]
         span = float(x_range[1]) - float(x_range[0])
-        for action, text, fraction in (("confirm", "CONFIRM", 0.25), ("cancel", "CANCEL", 0.42)):
+        for action, text, fraction in (("confirm", "CONFIRM", 0.68), ("cancel", "CANCEL", 0.76)):
             color = enabled_color if dirty else disabled_color
             label = OrderPlanActionItem(
                 action,
@@ -1169,10 +1170,25 @@ class ChartWidget(QtWidgets.QWidget):
             try:
                 x_range = self.plot.viewRange()[0]
                 left, right = float(x_range[0]), float(x_range[1])
-                for action, fraction in (("confirm", 0.25), ("cancel", 0.42)):
-                    item = self.order_plan_actions.get(action)
-                    if item is not None:
-                        item.setPos(left + (right - left) * fraction, float(entry_line.value()))
+                view_box = self.plot.getViewBox()
+                pixel_size = view_box.viewPixelSize()[0]
+                entry_label = self.order_plan_labels.get("entry")
+                entry_y = float(entry_line.value())
+                if pixel_size > 0 and entry_label is not None:
+                    text_rect = entry_label.textItem.boundingRect()
+                    label_left = entry_label.pos().x() - text_rect.width() * pixel_size
+                    gap = 6.0 * pixel_size
+                    cancel = self.order_plan_actions.get("cancel")
+                    confirm = self.order_plan_actions.get("confirm")
+                    if cancel is not None and confirm is not None:
+                        cancel_right = label_left - gap
+                        cancel.setPos(cancel_right, entry_y)
+                        confirm.setPos(cancel_right - cancel.textItem.boundingRect().width() * pixel_size - gap, entry_y)
+                else:
+                    for action, fraction in (("confirm", 0.68), ("cancel", 0.76)):
+                        item = self.order_plan_actions.get(action)
+                        if item is not None:
+                            item.setPos(left + (right - left) * fraction, entry_y)
             except Exception:
                 pass
 

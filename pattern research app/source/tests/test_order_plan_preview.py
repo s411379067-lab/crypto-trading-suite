@@ -264,6 +264,18 @@ def test_chart_draws_and_updates_transient_order_plan_lines():
     chart.order_plan_actions["confirm"].clicked.emit("confirm")
     app.processEvents()
     assert requested == ["confirm"]
+    chart.resize(900, 600)
+    chart.show()
+    app.processEvents()
+    chart._position_order_plan_labels()
+    pixel_size = chart.plot.getViewBox().viewPixelSize()[0]
+    entry_label = chart.order_plan_labels["entry"]
+    entry_left = entry_label.pos().x() - entry_label.textItem.boundingRect().width() * pixel_size
+    cancel = chart.order_plan_actions["cancel"]
+    confirm = chart.order_plan_actions["confirm"]
+    assert pixel_size > 0
+    assert abs(cancel.pos().x() - (entry_left - 6.0 * pixel_size)) < 1e-6
+    assert confirm.pos().x() < cancel.pos().x()
 
     line = chart.order_plan_items["sl"]
     line.setValue(94.0)
