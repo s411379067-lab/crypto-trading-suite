@@ -458,6 +458,10 @@ def test_cancel_plan_deselects_order_mode_and_removes_chart_plan_lines():
 
     assert not panel.mode_pending.isChecked()
     assert not panel.mode_market.isChecked()
+    assert not panel.btn_long.isChecked()
+    assert not panel.btn_short.isChecked()
+    assert "background:#202836" in panel.btn_long.styleSheet()
+    assert "background:#202836" in panel.btn_short.styleSheet()
     assert not panel.btn_place.isEnabled()
     assert panel.order_type_label.text() == "Order Type: --"
     assert chart.order_plan_items == {}
@@ -537,9 +541,16 @@ def test_chart_draws_and_updates_transient_order_plan_lines():
     entry_html = chart.order_plan_labels["entry"].textItem.toHtml()
     sl_html = chart.order_plan_labels["sl"].textItem.toHtml()
     tp_html = chart.order_plan_labels["tp"].textItem.toHtml()
-    assert "BUY LIMIT" in entry_html and "Lots 20.0" in entry_html
+    assert "LONG | 100.00" in entry_html and "LIMIT" not in entry_html and "Lots 20.0" in entry_html
+    assert chart.order_plan_items["entry"].pen.color().name() == "#26a69a"
     assert "SL 95.00" in sl_html and "100.00 USD" in sl_html
     assert "TP 110.00" in tp_html and "200.00 USD" in tp_html and "2.00R" in tp_html
+
+    chart.set_order_plan({"mode": "pending", "side": "short", "entry": 100, "sl": 105, "tp": 90,
+                          "order_type": "stop market", "lots": 20.0})
+    assert "SHORT | 100.00" in chart.order_plan_labels["entry"].textItem.toHtml()
+    assert "STOP" not in chart.order_plan_labels["entry"].textItem.toHtml()
+    assert chart.order_plan_items["entry"].pen.color().name() == "#ef5350"
 
     chart.set_order_plan({"mode": "market", "entry": 100, "sl": 95, "tp": 110,
                           "bracket_edit_enabled": True, "bracket_dirty": False})

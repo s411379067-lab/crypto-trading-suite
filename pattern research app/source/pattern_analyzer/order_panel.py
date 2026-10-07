@@ -93,6 +93,7 @@ class OrderPanel(QtWidgets.QWidget):
         self.type_combo.hide(); self.price_edit.hide(); self.qty_spin.hide()
 
         self._selected_side = "long"
+        self._side_selected = True
         self._risk_mode = "cash"
         self._risk_values = {"cash": 100.0, "percent": 0.5}
 
@@ -263,6 +264,7 @@ class OrderPanel(QtWidgets.QWidget):
 
     def set_side(self, side: str) -> None:
         self._selected_side = "short" if side == "short" else "long"
+        self._side_selected = True
         self.btn_long.setChecked(self._selected_side == "long")
         self.btn_short.setChecked(self._selected_side == "short")
         self._update_selection_styles()
@@ -284,6 +286,13 @@ class OrderPanel(QtWidgets.QWidget):
         self.mode_market.setChecked(False)
         self.mode_group.setExclusive(True)
         self.entry_edit.setEnabled(True)
+
+    def _clear_side_selection(self) -> None:
+        self._side_selected = False
+        self.side_group.setExclusive(False)
+        self.btn_long.setChecked(False)
+        self.btn_short.setChecked(False)
+        self.side_group.setExclusive(True)
 
     def _update_selection_styles(self) -> None:
         pending = "#2962ff"
@@ -322,7 +331,9 @@ class OrderPanel(QtWidgets.QWidget):
                 )
         else:
             self.btn_place.setText("SEND")
-            self.btn_place.setEnabled(self.mode_pending.isChecked() or self.mode_market.isChecked())
+            self.btn_place.setEnabled(
+                self._side_selected and (self.mode_pending.isChecked() or self.mode_market.isChecked())
+            )
             self.btn_cancel_plan.setEnabled(True)
             self.btn_place.setStyleSheet(
                 f"QPushButton {{ background:{side_color}; color:white; border:1px solid {side_color}; padding:8px; font-weight:700; }}"
@@ -345,7 +356,7 @@ class OrderPanel(QtWidgets.QWidget):
         self.update_metrics()
 
     def _update_status(self) -> None:
-        if not self.mode_pending.isChecked() and not self.mode_market.isChecked():
+        if not self._side_selected or not (self.mode_pending.isChecked() or self.mode_market.isChecked()):
             self.status_label.setText("Choose mode + direction")
             self.status_label.setStyleSheet("color:#9aa9bf;")
             return
@@ -364,7 +375,7 @@ class OrderPanel(QtWidgets.QWidget):
         if self.case is None or self.replay is None:
             self._set_send_status("Open a Case and start replay before sending", "#f5a623")
             return False
-        if not self.mode_pending.isChecked() and not self.mode_market.isChecked():
+        if not self._side_selected or (not self.mode_pending.isChecked() and not self.mode_market.isChecked()):
             self._set_send_status("Choose Pending or Market before sending", "#f5a623")
             return False
         self._recompute_state()
@@ -597,6 +608,8 @@ class OrderPanel(QtWidgets.QWidget):
         self.sl_edit.setText("0")
         self._reset_take_profit_rows()
         self._clear_order_mode_selection()
+        self._clear_side_selection()
+        self._update_selection_styles()
         self.status_label.setText("Plan cancelled")
         self.status_label.setStyleSheet("color:#9aa9bf;")
         self.update_metrics()

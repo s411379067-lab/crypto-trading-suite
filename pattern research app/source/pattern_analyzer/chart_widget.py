@@ -1121,14 +1121,12 @@ class ChartWidget(QtWidgets.QWidget):
 
         if field == "entry":
             side = str(self.order_plan.get("side") or "long").lower()
-            order_type = str(self.order_plan.get("order_type") or "--").upper()
-            if order_type == "STOP MARKET":
-                order_type = "STOP"
-            action = "SELL" if side == "short" else "BUY"
+            side_text = "SHORT" if side == "short" else "LONG"
+            side_color = "#ef5350" if side == "short" else "#26a69a"
             lots = self.order_plan.get("lots")
             lots_text = "--" if lots is None else fmt(lots, 1)
             html = (
-                f'<span style="color:#e6edf7">{action} {order_type} | {fmt(price)}</span>'
+                f'<span style="color:{side_color}">{side_text} | {fmt(price)}</span>'
                 f'<span style="color:#53d8c5"> | Lots {lots_text}</span>'
             )
             if self.order_plan.get("bracket_edit_enabled"):
@@ -1203,7 +1201,9 @@ class ChartWidget(QtWidgets.QWidget):
     def _render_order_plan(self) -> None:
         if self.replay is None:
             return
-        styles = [("entry", "#e6edf7"), ("sl", "#ef5350")]
+        side = str(self.order_plan.get("side") or "long").lower()
+        entry_color = "#ef5350" if side == "short" else "#26a69a"
+        styles = [("entry", entry_color), ("sl", "#ef5350")]
         targets = list(self.order_plan.get("take_profits") or [])
         if targets:
             for index, target in enumerate(targets):
