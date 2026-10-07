@@ -4,6 +4,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from pyqtgraph.Qt import QtWidgets
 
+from pattern_analyzer.main_window import MainWindow
 from pattern_analyzer.order_panel import OrderPanel
 
 
@@ -109,3 +110,18 @@ def test_pending_orders_and_order_records_sections_remain_available():
     assert panel.btn_delete_record.text() == "Delete Selected Record"
     assert panel.btn_export.text() == "Export Records"
     assert panel.btn_clean.text() == "Clean Records"
+
+
+def test_main_splitter_panels_fit_screen_and_resize_without_collapsing(tmp_path):
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    window = MainWindow(tmp_path)
+
+    assert window.splitter.count() == 3
+    assert all(not window.splitter.isCollapsible(index) for index in range(3))
+    assert window.left_splitter.minimumWidth() == 430
+    assert window.chart.minimumWidth() == 870
+    assert window.research.minimumWidth() == 380
+    assert window.chart.toolbar.layout().count() == 3
+    assert window.minimumSizeHint().width() < 1920
+
+    window.close()

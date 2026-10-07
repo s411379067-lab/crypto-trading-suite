@@ -110,13 +110,18 @@ class OrderPanel(QtWidgets.QWidget):
         self.equity_spin = QtWidgets.QDoubleSpinBox()
         self.equity_spin.setDecimals(2); self.equity_spin.setRange(0.0, 1_000_000_000_000.0)
         self.equity_spin.setValue(0.0); self.equity_spin.setGroupSeparatorShown(True)
+        self.equity_spin.setMaximumWidth(140)
         self.risk_mode_button = QtWidgets.QPushButton("Risk $")
         self.risk_mode_button.setFixedWidth(72)
         self.risk_input = QtWidgets.QDoubleSpinBox()
         self.risk_input.setDecimals(2); self.risk_input.setRange(0.0, 1_000_000_000.0)
         self.risk_input.setValue(100.0); self.risk_input.setGroupSeparatorShown(True)
+        self.risk_input.setMaximumWidth(140)
         self.entry_edit = QtWidgets.QLineEdit("0")
         self.sl_edit = QtWidgets.QLineEdit("0")
+        for edit in (self.entry_edit, self.sl_edit):
+            edit.setMinimumWidth(50)
+            edit.setMaximumWidth(150)
         self.tp_targets_widget = QtWidgets.QWidget()
         self.tp_targets_layout = QtWidgets.QVBoxLayout(self.tp_targets_widget)
         self.tp_targets_layout.setContentsMargins(0, 0, 0, 0)
@@ -130,21 +135,24 @@ class OrderPanel(QtWidgets.QWidget):
         self.tp_targets_layout.addLayout(self.tp_targets_header)
         self.tp_allocation_label = QtWidgets.QLabel("Allocated TP Lots: --")
         self.tp_targets_layout.addWidget(self.tp_allocation_label)
-        self.tp_targets_widget.setMinimumWidth(220)
+        self.tp_targets_widget.setMinimumWidth(0)
         for row, (name, widget) in enumerate((
             ("Equity", self.equity_spin), ("", self.risk_input), ("Entry", self.entry_edit),
-            ("SL", self.sl_edit), ("TP Targets", self.tp_targets_widget),
+            ("SL", self.sl_edit), ("TP", self.tp_targets_widget),
         )):
             if row == 1:
                 input_grid.addWidget(self.risk_mode_button, row, 0)
                 input_grid.addWidget(widget, row, 1)
             else:
-                input_grid.addWidget(QtWidgets.QLabel(name), row, 0)
+                label = QtWidgets.QLabel(name)
+                label.setMinimumWidth(0)
+                input_grid.addWidget(label, row, 0)
                 input_grid.addWidget(widget, row, 1)
+        input_grid.setColumnStretch(1, 1)
         first_tp = self._create_take_profit_row("0")
         self.tp_edit = first_tp["price"]
         self.tp_lots_spin = first_tp["qty"]
-        top.addWidget(input_box, 1)
+        top.addWidget(input_box, 3)
 
         metrics_box = QtWidgets.QGroupBox("TRADE METRICS")
         metrics_grid = QtWidgets.QGridLayout(metrics_box)
@@ -152,7 +160,13 @@ class OrderPanel(QtWidgets.QWidget):
         for row, key in enumerate(("Est Loss", "Est Profit", "RR", "Risk Target", "Lots")):
             value = QtWidgets.QLabel("--")
             value.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-            metrics_grid.addWidget(QtWidgets.QLabel(key), row, 0)
+            value.setWordWrap(True)
+            value.setMinimumWidth(0)
+            value.setMaximumWidth(135)
+            label = QtWidgets.QLabel(key)
+            label.setWordWrap(True)
+            label.setMinimumWidth(0)
+            metrics_grid.addWidget(label, row, 0)
             metrics_grid.addWidget(value, row, 1)
             self.metric_labels[key] = value
         self.metrics_separator = QtWidgets.QFrame()
@@ -162,10 +176,18 @@ class OrderPanel(QtWidgets.QWidget):
         for row, key in enumerate(("Realized PnL", "Unrealized PnL", "Win Rate"), start=6):
             value = QtWidgets.QLabel("$0.00")
             value.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-            metrics_grid.addWidget(QtWidgets.QLabel(key), row, 0)
+            value.setWordWrap(True)
+            value.setMinimumWidth(0)
+            value.setMaximumWidth(135)
+            label = QtWidgets.QLabel(key)
+            label.setWordWrap(True)
+            label.setMinimumWidth(0)
+            metrics_grid.addWidget(label, row, 0)
             metrics_grid.addWidget(value, row, 1)
             self.metric_labels[key] = value
-        top.addWidget(metrics_box, 1)
+        metrics_grid.setColumnStretch(0, 1)
+        metrics_grid.setColumnStretch(1, 1)
+        top.addWidget(metrics_box, 2)
         outer.addLayout(top)
 
         self.order_type_label = QtWidgets.QLabel("Order Type: --")
@@ -968,6 +990,8 @@ class OrderPanel(QtWidgets.QWidget):
         label.setMinimumWidth(28)
         price = QtWidgets.QLineEdit(price_text)
         price.setPlaceholderText("Price")
+        price.setMinimumWidth(50)
+        price.setMaximumWidth(150)
         lots = QtWidgets.QDoubleSpinBox()
         lots.setDecimals(1)
         lots.setSingleStep(0.1)

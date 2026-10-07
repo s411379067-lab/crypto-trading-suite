@@ -76,22 +76,37 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.setSpacing(4)
 
         self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        self.splitter.setHandleWidth(8)
+        self.splitter.setChildrenCollapsible(False)
 
         # Left side is intentionally split into two independently resizable blocks:
         # Order on top, Case Library on bottom.
         self.left_splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        self.left_splitter.setHandleWidth(7)
+        self.left_splitter.setChildrenCollapsible(False)
+        self.left_splitter.setMinimumWidth(430)
         self.order = OrderPanel()
+        self.order.setMinimumWidth(430)
         self.library = CaseLibraryWidget(case_root)
         self.left_splitter.addWidget(self.order)
         self.left_splitter.addWidget(self.library)
+        for index in range(self.left_splitter.count()):
+            self.left_splitter.setCollapsible(index, False)
         self.left_splitter.setSizes([560, 300])
 
         self.chart = ChartWidget()
+        self.chart.setMinimumWidth(870)
         self.research = ResearchPanel()
+        self.research.setMinimumWidth(380)
         self.splitter.addWidget(self.left_splitter)
         self.splitter.addWidget(self.chart)
         self.splitter.addWidget(self.research)
-        self.splitter.setSizes([390, 900, 330])
+        for index in range(self.splitter.count()):
+            self.splitter.setCollapsible(index, False)
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setStretchFactor(2, 0)
+        self.splitter.setSizes([470, 1000, 390])
         layout.addWidget(self.splitter, 1)
 
         replay_bar = QtWidgets.QWidget()
