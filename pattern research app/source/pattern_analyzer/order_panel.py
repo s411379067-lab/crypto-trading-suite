@@ -34,6 +34,14 @@ class OrderPanel(QtWidgets.QWidget):
         except Exception:
             return 0.0
 
+    @classmethod
+    def _lots_to_units(cls, value: float) -> int:
+        """Convert tenths of a Lot to integer units for exact allocation arithmetic."""
+        try:
+            return int((Decimal(str(value)) / cls.LOT_QUANTUM).to_integral_value(rounding=ROUND_DOWN))
+        except Exception:
+            return 0
+
     @staticmethod
     def _style_order_table(table: QtWidgets.QTableWidget) -> None:
         """Keep order tables readable on the dark application theme."""
@@ -609,7 +617,9 @@ class OrderPanel(QtWidgets.QWidget):
             self._take_profit_rows[0]["qty"].setValue(self._lots_down(lots))
             self._updating_tp_rows = False
         take_profits = self._take_profit_plan()
-        assigned_tp_lots = sum(item["qty"] for item in take_profits)
+        assigned_tp_units = sum(self._lots_to_units(item["qty"]) for item in take_profits)
+        assigned_tp_lots = assigned_tp_units / 10.0
+        position_lot_units = self._lots_to_units(lots) if lots is not None else 0
         est_profit_total = 0.0
         has_valid_tp = False
         if entry is not None:
@@ -624,12 +634,14 @@ class OrderPanel(QtWidgets.QWidget):
         rr = est_profit / est_loss if est_profit is not None and est_loss and est_loss > 1e-12 else None
         if lots is None:
             self.tp_allocation_label.setText("Allocated TP Lots: --")
-        elif assigned_tp_lots <= lots + 1e-9:
+        elif assigned_tp_units <= position_lot_units:
             self.tp_allocation_label.setText(
-                f"Allocated: {assigned_tp_lots:.1f} / {lots:.1f}  |  Runner: {max(0.0, lots - assigned_tp_lots):.1f}"
+                f"Allocated: {assigned_tp_lots:.1f} / {position_lot_units / 10.0:.1f}  |  Runner: {(position_lot_units - assigned_tp_units) / 10.0:.1f}"
             )
         else:
-            self.tp_allocation_label.setText(f"TP Lots exceed position by {assigned_tp_lots - lots:.1f}")
+            self.tp_allocation_label.setText(
+                f"TP Lots exceed position by {(assigned_tp_units - position_lot_units) / 10.0:.1f}"
+            )
         self.btn_add_tp.setEnabled(active_entry is None)
         for row in self._take_profit_rows:
             row["remove"].setEnabled(active_entry is None and len(self._take_profit_rows) > 1)
@@ -646,7 +658,7 @@ class OrderPanel(QtWidgets.QWidget):
             "sl": sl,
             "tp": tp,
             "take_profits": take_profits,
-            "tp_allocation_over": lots is not None and assigned_tp_lots > lots + 1e-9,
+            "tp_allocation_over": lots is not None and assigned_tp_units > position_lot_units,
             "order_type": order_type,
             "lots": lots,
             "est_loss": est_loss,
@@ -738,11 +750,12 @@ class OrderPanel(QtWidgets.QWidget):
         row = next((item for item in self._take_profit_rows if item["id"] == row_id), None)
         if row is None:
             return
-        total_lots = float(self.qty_spin.value())
-        assigned_elsewhere = sum(
-            float(item["qty"].value()) for item in self._take_profit_rows if item["id"] != row_id
+        total_units = self._lots_to_units(self.qty_spin.value())
+        assigned_elsewhere_units = sum(
+            self._lots_to_units(item["qty"].value())
+            for item in self._take_profit_rows if item["id"] != row_id
         )
-        allowed = max(0.0, self._lots_down(total_lots - assigned_elsewhere))
+        allowed = max(0, total_units - assigned_elsewhere_units) / 10.0
         value = float(row["qty"].value())
         if value > allowed + 1e-9:
             self._updating_tp_rows = True
@@ -759,14 +772,15 @@ class OrderPanel(QtWidgets.QWidget):
         if not self._take_profit_rows:
             return False
         source = max(self._take_profit_rows, key=lambda item: float(item["qty"].value()))
-        source_qty = float(source["qty"].value())
-        new_qty = self._lots_down(source_qty / 2.0)
-        if new_qty < 0.1 or source_qty - new_qty < 0.1:
+        source_units = self._lots_to_units(source["qty"].value())
+        new_units = source_units // 2
+        remaining_units = source_units - new_units
+        if new_units < 1 or remaining_units < 1:
             self._set_send_status("At least 0.2 Lots are needed to split another TP", "#f5a623")
             return False
         self._updating_tp_rows = True
-        source["qty"].setValue(source_qty - new_qty)
-        new_row = self._create_take_profit_row("0", new_qty)
+        source["qty"].setValue(remaining_units / 10.0)
+        new_row = self._create_take_profit_row("0", new_units / 10.0)
         self._updating_tp_rows = False
         new_row["remove"].show()
         self._tp_allocation_manual = True
@@ -780,11 +794,10 @@ class OrderPanel(QtWidgets.QWidget):
         if row is None:
             return False
         remaining_rows = [item for item in self._take_profit_rows if item["id"] != row_id]
-        removed_qty = float(row["qty"].value())
+        removed_units = self._lots_to_units(row["qty"].value())
         self._updating_tp_rows = True
-        remaining_rows[0]["qty"].setValue(
-            self._lots_down(float(remaining_rows[0]["qty"].value()) + removed_qty)
-        )
+        combined_units = self._lots_to_units(remaining_rows[0]["qty"].value()) + removed_units
+        remaining_rows[0]["qty"].setValue(combined_units / 10.0)
         self.tp_targets_layout.removeWidget(row["widget"])
         row["widget"].deleteLater()
         self._take_profit_rows = remaining_rows

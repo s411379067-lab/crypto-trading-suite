@@ -173,6 +173,30 @@ def test_tp_lots_cannot_exceed_position_and_remaining_is_shown_as_runner():
     assert "Runner: 3.0" in panel.tp_allocation_label.text()
 
 
+def test_tenths_allocation_can_reassign_remaining_runner_to_any_tp():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    panel.risk_input.setValue(3.0)
+    assert panel.add_take_profit_target()
+    assert panel.add_take_profit_target()
+    rows = panel._take_profit_rows
+
+    rows[1]["qty"].setValue(0.2)
+    rows[2]["qty"].setValue(0.0)
+    rows[0]["qty"].setValue(0.3)
+    assert [row["qty"].value() for row in rows] == [0.3, 0.2, 0.0]
+    assert "Runner: 0.1" in panel.tp_allocation_label.text()
+
+    rows[2]["qty"].setValue(0.1)
+    assert [row["qty"].value() for row in rows] == [0.3, 0.2, 0.1]
+    assert "Runner: 0.0" in panel.tp_allocation_label.text()
+
+    rows[2]["qty"].setValue(0.0)
+    rows[0]["qty"].setValue(0.4)
+    assert [row["qty"].value() for row in rows] == [0.4, 0.2, 0.0]
+
+
 def test_send_rejects_invalid_bracket_without_creating_order():
     app = _app()
     panel = OrderPanel()
