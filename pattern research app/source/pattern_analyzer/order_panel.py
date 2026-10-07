@@ -23,6 +23,7 @@ class OrderPanel(QtWidgets.QWidget):
     fills_changed = QtCore.Signal()
     pending_bracket_changed = QtCore.Signal(object)
     active_position_changed = QtCore.Signal(object)
+    submitted_bracket_changed = QtCore.Signal(object)
 
     R_VALUE = 60.0
 
@@ -51,6 +52,7 @@ class OrderPanel(QtWidgets.QWidget):
         # Only actual fills are persisted to ResearchCase.orders.
         self.pending_orders: list[dict] = []
         self.pending_bracket: dict | None = None
+        self.submitted_bracket: dict | None = None
 
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -145,7 +147,9 @@ class OrderPanel(QtWidgets.QWidget):
         # Unfilled orders are not research records and are never restored.
         self.pending_orders.clear()
         self.pending_bracket = None
+        self.submitted_bracket = None
         self.pending_bracket_changed.emit(None)
+        self.submitted_bracket_changed.emit(None)
         # Compatibility cleanup for v0.1.3 cases that may contain open/cancelled rows.
         if self.case is not None:
             filled_only = [o for o in self.case.orders if o.get("status") == "filled"]
@@ -234,8 +238,10 @@ class OrderPanel(QtWidgets.QWidget):
             })
             records.append(record)
         self.pending_orders.extend(records)
+        self.submitted_bracket = dict(self.pending_bracket)
         self.pending_bracket = None
         self.pending_bracket_changed.emit(None)
+        self.submitted_bracket_changed.emit(dict(self.submitted_bracket))
         self.refresh()
 
     def _new_order_record(self, side: str, order_type: str, requested_price, qty: float, origin="place"):

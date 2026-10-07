@@ -128,6 +128,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chart.pending_bracket_edited.connect(self.order.update_pending_bracket)
         self.chart.pending_bracket_submit_requested.connect(self.order.submit_pending_bracket)
         self.order.active_position_changed.connect(self.chart.set_active_position)
+        self.order.submitted_bracket_changed.connect(self.chart.set_submitted_bracket)
         self.chart.active_position_close_requested.connect(self.order.close_position)
         self.chart.order_prefill_requested.connect(self.order.prefill_from_chart)
         self.btn_forward.clicked.connect(self.step_forward)

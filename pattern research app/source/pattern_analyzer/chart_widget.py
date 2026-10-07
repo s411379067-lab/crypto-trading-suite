@@ -739,6 +739,7 @@ class ChartWidget(QtWidgets.QWidget):
         self.order_events: list[dict] = []
         self.order_segments: list[dict] = []
         self.pending_bracket: dict | None = None
+        self.submitted_bracket: dict | None = None
         self.active_position: dict | None = None
         self._pending_qty_controls: list[tuple[QtWidgets.QWidget, float]] = []
         self.show_all_orders = False
@@ -1097,6 +1098,11 @@ class ChartWidget(QtWidgets.QWidget):
         if render and self.replay is not None:
             self.render(reset_x=False)
 
+    def set_submitted_bracket(self, bracket: dict | None, render: bool = True):
+        self.submitted_bracket = dict(bracket) if isinstance(bracket, dict) else None
+        if render and self.replay is not None:
+            self.render(reset_x=False)
+
     def _ensure_pending_bracket_visible(self):
         """Expand only the Y range when a newly created bracket sits off-screen."""
         try:
@@ -1157,6 +1163,7 @@ class ChartWidget(QtWidgets.QWidget):
         self._render_drawing_items()
         self._render_order_overlay()
         self._render_pending_bracket()
+        self._render_submitted_bracket()
         self._render_active_position()
 
         if reset_x:
@@ -1574,10 +1581,30 @@ class ChartWidget(QtWidgets.QWidget):
         item = pg.InfiniteLine(pos=entry, angle=0, movable=False, pen=pg.mkPen(color=color, width=1, style=QtCore.Qt.DashLine))
         item.setZValue(30)
         self.plot.addItem(item)
-        self._add_pending_qty_control(
-            f"{'BUY' if side == 'long' else 'SELL'}  ${pnl:+.2f}", entry, color,
-            lambda: self.active_position_close_requested.emit(),
-        )
+        self._add_pending_qty_control(f"{'BUY' if side == 'long' else 'SELL'}  ${pnl:+.2f}", entry, color)
+        self._add_pending_qty_control("X", entry, color, lambda: self.active_position_close_requested.emit(), offset_x=108)
+
+    def _render_submitted_bracket(self):
+        """Keep submitted Entry/SL/TP levels visible after Pending is pressed."""
+        bracket = self.submitted_bracket
+        if not bracket:
+            return
+        try:
+            entry = float(bracket["entry_price"])
+            side = str(bracket["side"])
+            groups = list(bracket["groups"])
+        except (KeyError, TypeError, ValueError):
+            return
+        if self.active_position is None:
+            entry_color = (255, 82, 95) if side == "short" else (31, 121, 245)
+            self.plot.addItem(pg.InfiniteLine(pos=entry, angle=0, movable=False, pen=pg.mkPen(entry_color, width=1, style=QtCore.Qt.DashLine)))
+        for group in groups:
+            try:
+                stop = float(group["stop_price"]); target = float(group["target_price"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            self.plot.addItem(pg.InfiniteLine(pos=stop, angle=0, movable=False, pen=pg.mkPen((255, 179, 0), width=1, style=QtCore.Qt.DashLine)))
+            self.plot.addItem(pg.InfiniteLine(pos=target, angle=0, movable=False, pen=pg.mkPen((0, 196, 168), width=1, style=QtCore.Qt.DashLine)))
 
     def _clear_pending_qty_controls(self):
         for button, _price in self._pending_qty_controls:
@@ -1604,7 +1631,7 @@ class ChartWidget(QtWidgets.QWidget):
         self._pending_qty_controls.append((control, float(price)))
 
     def _position_pending_qty_controls(self):
-        if not self.pending_bracket and not self.active_position:
+        if not self.pending_bracket and not self.active_position and not self.submitted_bracket:
             return
         try:
             x_range = self.plot.vb.viewRange()[0]
