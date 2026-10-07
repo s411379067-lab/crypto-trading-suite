@@ -1127,10 +1127,16 @@ class ChartWidget(QtWidgets.QWidget):
             action = "SELL" if side == "short" else "BUY"
             lots = self.order_plan.get("lots")
             lots_text = "--" if lots is None else fmt(lots, 1)
-            return (
+            html = (
                 f'<span style="color:#e6edf7">{action} {order_type} | {fmt(price)}</span>'
                 f'<span style="color:#53d8c5"> | Lots {lots_text}</span>'
             )
+            if self.order_plan.get("bracket_edit_enabled"):
+                pnl = float(self.order_plan.get("unrealized_pnl") or 0.0)
+                pnl_color = "#26a69a" if pnl > 1e-12 else "#ef5350" if pnl < -1e-12 else "#9aa9bf"
+                pnl_text = f"+${pnl:,.2f}" if pnl > 1e-12 else f"-${abs(pnl):,.2f}" if pnl < -1e-12 else "$0.00"
+                html += f'<span style="color:{pnl_color}"> | PnL {pnl_text}</span>'
+            return html
         if field == "sl":
             loss = self.order_plan.get("est_loss")
             loss_text = "--" if loss is None else f"{fmt(loss)} USD"

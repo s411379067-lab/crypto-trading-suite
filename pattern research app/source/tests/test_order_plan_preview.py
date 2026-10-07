@@ -441,6 +441,74 @@ def test_trade_metrics_show_realized_and_unrealized_pnl_with_direction_colors():
     assert "#ef5350" in panel.metric_labels["Unrealized PnL"].styleSheet()
 
 
+def test_cancel_plan_deselects_order_mode_and_removes_chart_plan_lines():
+    app = _app()
+    panel = OrderPanel()
+    chart = ChartWidget()
+    chart.replay = object()
+    plans = []
+    panel.order_plan_changed.connect(plans.append)
+    panel.order_plan_changed.connect(chart.set_order_plan)
+    panel.entry_edit.setText("100")
+    panel.sl_edit.setText("95")
+    panel.tp_edit.setText("110")
+    assert set(chart.order_plan_items) == {"entry", "sl", "tp"}
+
+    panel.cancel_plan()
+
+    assert not panel.mode_pending.isChecked()
+    assert not panel.mode_market.isChecked()
+    assert not panel.btn_place.isEnabled()
+    assert panel.order_type_label.text() == "Order Type: --"
+    assert chart.order_plan_items == {}
+    assert plans[-1]["mode"] == "none"
+    assert plans[-1]["entry"] is None
+
+
+def test_live_entry_label_shows_replay_pnl_with_sign_color():
+    app = _app()
+    chart = ChartWidget()
+    chart.replay = object()
+    chart.set_order_plan({
+        "mode": "market", "side": "long", "entry": 100.0, "sl": 95.0, "tp": 110.0,
+        "lots": 1.0, "bracket_edit_enabled": True, "unrealized_pnl": 12.34,
+    })
+    positive_html = chart.order_plan_labels["entry"].textItem.toHtml()
+    assert "PnL +$12.34" in positive_html
+    assert "#26a69a" in positive_html
+
+    chart.set_order_plan({
+        "mode": "market", "side": "long", "entry": 100.0, "sl": 95.0, "tp": 110.0,
+        "lots": 1.0, "bracket_edit_enabled": True, "unrealized_pnl": -4.5,
+    })
+    negative_html = chart.order_plan_labels["entry"].textItem.toHtml()
+    assert "PnL -$4.50" in negative_html
+    assert "#ef5350" in negative_html
+
+
+def test_market_position_updates_entry_line_pnl_as_replay_price_moves():
+    app = _app()
+    panel = OrderPanel()
+    chart = ChartWidget()
+    chart.replay = object()
+    panel.order_plan_changed.connect(chart.set_order_plan)
+    _attach_replay(panel)
+    panel.set_order_mode("market")
+    assert panel.submit_plan()
+
+    panel.raw_df.loc[0, "close"] = 101.0
+    panel.refresh()
+    positive_html = chart.order_plan_labels["entry"].textItem.toHtml()
+    assert "PnL +$20.00" in positive_html
+    assert "#26a69a" in positive_html
+
+    panel.raw_df.loc[0, "close"] = 99.0
+    panel.refresh()
+    negative_html = chart.order_plan_labels["entry"].textItem.toHtml()
+    assert "PnL -$20.00" in negative_html
+    assert "#ef5350" in negative_html
+
+
 def test_chart_draws_and_updates_transient_order_plan_lines():
     app = _app()
     chart = ChartWidget()

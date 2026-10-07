@@ -278,6 +278,13 @@ class OrderPanel(QtWidgets.QWidget):
         self.update_metrics()
         self._update_status()
 
+    def _clear_order_mode_selection(self) -> None:
+        self.mode_group.setExclusive(False)
+        self.mode_pending.setChecked(False)
+        self.mode_market.setChecked(False)
+        self.mode_group.setExclusive(True)
+        self.entry_edit.setEnabled(True)
+
     def _update_selection_styles(self) -> None:
         pending = "#2962ff"
         market = "#f5a623"
@@ -315,7 +322,7 @@ class OrderPanel(QtWidgets.QWidget):
                 )
         else:
             self.btn_place.setText("SEND")
-            self.btn_place.setEnabled(True)
+            self.btn_place.setEnabled(self.mode_pending.isChecked() or self.mode_market.isChecked())
             self.btn_cancel_plan.setEnabled(True)
             self.btn_place.setStyleSheet(
                 f"QPushButton {{ background:{side_color}; color:white; border:1px solid {side_color}; padding:8px; font-weight:700; }}"
@@ -338,6 +345,10 @@ class OrderPanel(QtWidgets.QWidget):
         self.update_metrics()
 
     def _update_status(self) -> None:
+        if not self.mode_pending.isChecked() and not self.mode_market.isChecked():
+            self.status_label.setText("Choose mode + direction")
+            self.status_label.setStyleSheet("color:#9aa9bf;")
+            return
         mode = "PENDING" if self.mode_pending.isChecked() else "MARKET"
         side = self.selected_side.upper()
         color = "#ef5350" if side == "SHORT" else "#26a69a"
@@ -352,6 +363,9 @@ class OrderPanel(QtWidgets.QWidget):
         """Submit the panel plan through the existing simulated-order lifecycle."""
         if self.case is None or self.replay is None:
             self._set_send_status("Open a Case and start replay before sending", "#f5a623")
+            return False
+        if not self.mode_pending.isChecked() and not self.mode_market.isChecked():
+            self._set_send_status("Choose Pending or Market before sending", "#f5a623")
             return False
         self._recompute_state()
         if self._active_entry_id is not None or self._position is not None:
@@ -582,6 +596,7 @@ class OrderPanel(QtWidgets.QWidget):
         self.entry_edit.setText("0")
         self.sl_edit.setText("0")
         self._reset_take_profit_rows()
+        self._clear_order_mode_selection()
         self.status_label.setText("Plan cancelled")
         self.status_label.setStyleSheet("color:#9aa9bf;")
         self.update_metrics()
@@ -725,7 +740,7 @@ class OrderPanel(QtWidgets.QWidget):
         self._update_selection_styles()
 
         self.order_plan_changed.emit({
-            "mode": "market" if self.mode_market.isChecked() else "pending",
+            "mode": "market" if self.mode_market.isChecked() else "pending" if self.mode_pending.isChecked() else "none",
             "side": plan_side,
             "entry": entry,
             "sl": sl,
@@ -737,6 +752,7 @@ class OrderPanel(QtWidgets.QWidget):
             "est_loss": est_loss,
             "est_profit": est_profit,
             "rr": rr,
+            "unrealized_pnl": unrealized if bracket_active else None,
             "bracket_edit_enabled": bracket_active,
             "entry_locked": bracket_active,
             "bracket_dirty": bracket_dirty,
