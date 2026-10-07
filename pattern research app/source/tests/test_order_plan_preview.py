@@ -416,6 +416,46 @@ def test_panel_buttons_confirm_or_cancel_live_bracket_edits():
     assert not panel.btn_cancel_plan.isEnabled()
 
 
+def test_pending_entry_drag_enables_confirm_and_cancel_and_updates_order_on_confirm():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    assert panel.submit_plan()
+    entry = next(order for order in panel.pending_orders if not order.get("role"))
+    protections = [order for order in panel.pending_orders if order.get("parent_order_id") == entry["id"]]
+
+    assert panel.btn_place.text() == "CONFIRM"
+    assert not panel.btn_place.isEnabled()
+    assert not panel.btn_cancel_plan.isEnabled()
+    assert not panel.mode_pending.isEnabled()
+
+    panel.set_plan_price_from_chart("entry", 101.0)
+    assert panel.btn_place.isEnabled()
+    assert panel.btn_cancel_plan.isEnabled()
+    assert "#8b5cf6" in panel.btn_place.styleSheet()
+    assert "#8b5cf6" in panel.btn_cancel_plan.styleSheet()
+
+    panel.btn_cancel_plan.click()
+    assert panel.entry_edit.text() == "100.00"
+    assert panel.sl_edit.text() == "95.00"
+    assert panel.tp_edit.text() == "110.00"
+    assert not panel.btn_place.isEnabled()
+
+    panel.set_plan_price_from_chart("entry", 101.0)
+    panel.set_plan_price_from_chart("sl", 94.0)
+    panel.set_plan_price_from_chart("tp", 112.0)
+    panel.btn_place.click()
+
+    assert entry["requested_price"] == 101.0
+    assert entry["order_type"] == "stop market"
+    assert entry["stop_loss"] == 94.0
+    assert entry["take_profit"] == 112.0
+    assert all(order["requested_price"] == (94.0 if order["role"] == "stop_loss" else 112.0)
+               for order in protections)
+    assert all(order["qty"] == entry["qty"] for order in protections)
+    assert not panel.btn_place.isEnabled()
+
+
 def test_trade_metrics_show_realized_and_unrealized_pnl_with_direction_colors():
     app = _app()
     panel = OrderPanel()

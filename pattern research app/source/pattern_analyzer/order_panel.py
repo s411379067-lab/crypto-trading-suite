@@ -390,7 +390,11 @@ class OrderPanel(QtWidgets.QWidget):
     def _handle_primary_action(self) -> None:
         if self._bracket_edit_active:
             if self._bracket_edit_dirty:
-                self.confirm_bracket_update()
+                active_entry = self._active_entry_record()
+                if active_entry is not None and active_entry.get("status") == "open":
+                    self.confirm_pending_order_update()
+                else:
+                    self.confirm_bracket_update()
             return
         self.submit_plan()
 
@@ -555,6 +559,80 @@ class OrderPanel(QtWidgets.QWidget):
         self._set_send_status("SL / TP changes confirmed", "#7bd88f")
         return True
 
+    def confirm_pending_order_update(self) -> bool:
+        entry = self._active_entry_record()
+        if entry is None or entry.get("status") != "open" or entry.get("role"):
+            return False
+        entry_price = self._read_price(self.entry_edit.text())
+        sl = self._read_price(self.sl_edit.text())
+        tp = self._read_price(self.tp_edit.text())
+        if entry_price is None or sl is None or tp is None:
+            self._set_send_status("Enter valid Entry, SL and TP prices", "#ef5350")
+            return False
+        side = str(entry.get("side") or "long")
+        is_long = side == "long"
+        if (sl >= entry_price if is_long else sl <= entry_price):
+            self._set_send_status("SL is on the wrong side of Entry", "#ef5350")
+            return False
+        if (tp <= entry_price if is_long else tp >= entry_price):
+            self._set_send_status("TP is on the wrong side of Entry", "#ef5350")
+            return False
+        current_price = self.current_price()
+        if current_price is None:
+            self._set_send_status("No replay price is available", "#ef5350")
+            return False
+        if is_long:
+            order_type = "limit" if entry_price <= current_price else "stop market"
+        else:
+            order_type = "limit" if entry_price >= current_price else "stop market"
+        qty = self._lots_down(self.qty_spin.value())
+        if qty <= 0:
+            self._set_send_status("Lots must be greater than 0 (check Risk and SL)", "#ef5350")
+            return False
+
+        entry.update({
+            "requested_price": float(entry_price),
+            "order_type": order_type,
+            "qty": qty,
+            "stop_loss": float(sl),
+            "take_profit": float(tp),
+            "est_loss": abs(entry_price - sl) * qty,
+        })
+        self._confirmed_bracket = (float(sl), float(tp))
+        for order in self.pending_orders:
+            if order.get("parent_order_id") != entry["id"]:
+                continue
+            order["requested_price"] = float(sl if order.get("role") == "stop_loss" else tp)
+            order["qty"] = qty
+        self.refresh()
+        self._set_send_status("Pending order changes confirmed", "#7bd88f")
+        return True
+
+    def cancel_pending_order_update(self) -> bool:
+        entry = self._active_entry_record()
+        if entry is None or entry.get("status") != "open" or entry.get("role"):
+            return False
+        old_entry = entry.get("requested_price")
+        old_sl = entry.get("stop_loss")
+        old_tp = entry.get("take_profit")
+        if old_entry is None or old_sl is None or old_tp is None:
+            return False
+        current_entry = self._read_price(self.entry_edit.text())
+        current_sl = self._read_price(self.sl_edit.text())
+        current_tp = self._read_price(self.tp_edit.text())
+        if (
+            current_entry is not None and abs(current_entry - float(old_entry)) <= 1e-9
+            and current_sl is not None and abs(current_sl - float(old_sl)) <= 1e-9
+            and current_tp is not None and abs(current_tp - float(old_tp)) <= 1e-9
+        ):
+            return False
+        self.entry_edit.setText(f"{float(old_entry):.{self._price_precision(old_entry)}f}")
+        self.sl_edit.setText(f"{float(old_sl):.{self._price_precision(old_sl)}f}")
+        self.tp_edit.setText(f"{float(old_tp):.{self._price_precision(old_tp)}f}")
+        self.refresh()
+        self._set_send_status("Pending order changes cancelled", "#9aa9bf")
+        return True
+
     def cancel_bracket_update(self) -> bool:
         entry = self._active_entry_record()
         if (
@@ -647,6 +725,9 @@ class OrderPanel(QtWidgets.QWidget):
         if active_entry is not None:
             if active_entry.get("status") == "filled" and active_entry.get("bracket_status") == "active":
                 self.cancel_bracket_update()
+            elif active_entry.get("status") == "open" and not active_entry.get("role"):
+                if not self.cancel_pending_order_update():
+                    self._set_send_status("No pending order changes to cancel", "#9aa9bf")
             else:
                 self._set_send_status("Cancel the pending entry from Pending Orders", "#f5a623")
             return
@@ -699,6 +780,12 @@ class OrderPanel(QtWidgets.QWidget):
             and active_entry.get("status") == "filled"
             and active_entry.get("bracket_status") == "active"
         )
+        pending_order_active = bool(
+            active_entry
+            and active_entry.get("status") == "open"
+            and not active_entry.get("role")
+            and active_entry in self.pending_orders
+        )
         if bracket_active:
             entry = float(active_entry.get("fill_price") or entry or 0.0)
         if self.mode_market.isChecked() and entry is not None:
@@ -710,7 +797,7 @@ class OrderPanel(QtWidgets.QWidget):
         risk_target = self._risk_target()
         entry_edit = entry if entry is not None else 0.0
         self.price_edit.setText(str(entry_edit))
-        plan_side = str(active_entry.get("side")) if bracket_active else self.selected_side
+        plan_side = str(active_entry.get("side")) if bracket_active or pending_order_active else self.selected_side
         order_type = str(active_entry.get("order_type")) if bracket_active else self._order_type(entry)
         self.order_type_label.setText(f"Order Type: {order_type}")
         if order_type in ("market", "limit", "stop market"):
@@ -762,6 +849,8 @@ class OrderPanel(QtWidgets.QWidget):
                 f"TP Lots exceed position by {(assigned_tp_units - position_lot_units) / 10.0:.1f}"
             )
         self.btn_add_tp.setEnabled(active_entry is None)
+        for button in (self.mode_pending, self.mode_market, self.btn_long, self.btn_short):
+            button.setEnabled(active_entry is None)
         for row in self._take_profit_rows:
             row["remove"].setEnabled(active_entry is None and len(self._take_profit_rows) > 1)
         self.metric_labels["Est Loss"].setText("--" if est_loss is None else f"{est_loss:,.2f} USD")
@@ -795,8 +884,18 @@ class OrderPanel(QtWidgets.QWidget):
             and tp is not None
             and (abs(sl - self._confirmed_bracket[0]) > 1e-9 or abs(tp - self._confirmed_bracket[1]) > 1e-9)
         )
-        self._bracket_edit_active = bracket_active
-        self._bracket_edit_dirty = bracket_dirty
+        pending_dirty = False
+        if pending_order_active:
+            baseline_entry = active_entry.get("requested_price")
+            baseline_sl = active_entry.get("stop_loss")
+            baseline_tp = active_entry.get("take_profit")
+            pending_dirty = bool(
+                entry is None or baseline_entry is None or abs(entry - float(baseline_entry)) > 1e-9
+                or sl is None or baseline_sl is None or abs(sl - float(baseline_sl)) > 1e-9
+                or tp is None or baseline_tp is None or abs(tp - float(baseline_tp)) > 1e-9
+            )
+        self._bracket_edit_active = bracket_active or pending_order_active
+        self._bracket_edit_dirty = bracket_dirty or pending_dirty
         self._update_selection_styles()
 
         self.order_plan_changed.emit({
