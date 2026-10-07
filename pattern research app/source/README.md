@@ -1,4 +1,13 @@
-# Pattern Research v2.9.0
+# Pattern Research v2.11.1
+
+## v2.11.1 — Analyzer metrics and responsive panels
+
+- Trade Metrics now show replay-day win rate as a percentage with `wins/all` counts; only completed round-trip trades are included.
+- The Analyzer chart toolbar uses multiple rows, and the resizable side panels have explicit minimum widths and no longer collapse while dragging.
+- The Analyzer window minimum width is reduced to fit standard desktop displays while preserving usable chart and panel widths.
+
+
+## Version history
 
 ## v2.9.0 - Fixed source folder and repository data separation
 
