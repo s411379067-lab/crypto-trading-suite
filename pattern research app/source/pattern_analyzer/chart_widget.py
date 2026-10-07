@@ -712,6 +712,7 @@ class ChartWidget(QtWidgets.QWidget):
     order_prefill_requested = QtCore.Signal(str, float)
     pending_bracket_edited = QtCore.Signal(object)
     pending_bracket_submit_requested = QtCore.Signal()
+    active_position_close_requested = QtCore.Signal()
 
     def __init__(self, parent=None, *, drawing_interaction_enabled: bool = True):
         super().__init__(parent)
@@ -738,6 +739,7 @@ class ChartWidget(QtWidgets.QWidget):
         self.order_events: list[dict] = []
         self.order_segments: list[dict] = []
         self.pending_bracket: dict | None = None
+        self.active_position: dict | None = None
         self._pending_qty_controls: list[tuple[QtWidgets.QWidget, float]] = []
         self.show_all_orders = False
         self.show_previous_rth = False
@@ -1090,6 +1092,11 @@ class ChartWidget(QtWidgets.QWidget):
             self.render(reset_x=False)
             self._ensure_pending_bracket_visible()
 
+    def set_active_position(self, position: dict | None, render: bool = True):
+        self.active_position = dict(position) if isinstance(position, dict) else None
+        if render and self.replay is not None:
+            self.render(reset_x=False)
+
     def _ensure_pending_bracket_visible(self):
         """Expand only the Y range when a newly created bracket sits off-screen."""
         try:
@@ -1150,6 +1157,7 @@ class ChartWidget(QtWidgets.QWidget):
         self._render_drawing_items()
         self._render_order_overlay()
         self._render_pending_bracket()
+        self._render_active_position()
 
         if reset_x:
             left = self.replay.data_start_ts
@@ -1551,6 +1559,26 @@ class ChartWidget(QtWidgets.QWidget):
                 lambda gid=group_id: self._edit_pending_group_qty(gid), double_click=True,
             )
 
+    def _render_active_position(self):
+        """Show the filled Entry as a compact live-dollar-PnL control."""
+        position = self.active_position
+        if not position:
+            return
+        try:
+            entry = float(position["entry"])
+            pnl = float(position["pnl"])
+            side = str(position["side"])
+        except (KeyError, TypeError, ValueError):
+            return
+        color = (0, 196, 168) if pnl >= 0 else (247, 82, 95)
+        item = pg.InfiniteLine(pos=entry, angle=0, movable=False, pen=pg.mkPen(color=color, width=1, style=QtCore.Qt.DashLine))
+        item.setZValue(30)
+        self.plot.addItem(item)
+        self._add_pending_qty_control(
+            f"{'BUY' if side == 'long' else 'SELL'}  ${pnl:+.2f}", entry, color,
+            lambda: self.active_position_close_requested.emit(),
+        )
+
     def _clear_pending_qty_controls(self):
         for button, _price in self._pending_qty_controls:
             button.hide()
@@ -1576,7 +1604,7 @@ class ChartWidget(QtWidgets.QWidget):
         self._pending_qty_controls.append((control, float(price)))
 
     def _position_pending_qty_controls(self):
-        if not self.pending_bracket:
+        if not self.pending_bracket and not self.active_position:
             return
         try:
             x_range = self.plot.vb.viewRange()[0]

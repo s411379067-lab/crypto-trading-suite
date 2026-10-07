@@ -22,6 +22,7 @@ class OrderPanel(QtWidgets.QWidget):
     changed = QtCore.Signal()
     fills_changed = QtCore.Signal()
     pending_bracket_changed = QtCore.Signal(object)
+    active_position_changed = QtCore.Signal(object)
 
     R_VALUE = 60.0
 
@@ -499,6 +500,12 @@ class OrderPanel(QtWidgets.QWidget):
             self.lbl_pos.setText(f"Position: {self._position['side']} {self._position['qty']:.4f} @ {self._position['entry']:.{p}f}")
         self._refresh_pending_table()
         self._refresh_records_table()
+        if self._position is None:
+            self.active_position_changed.emit(None)
+        else:
+            self.active_position_changed.emit({
+                **self._position, "pnl": float(unreal), "current_price": cp,
+            })
 
     def _refresh_pending_table(self):
         pending = list(self.pending_orders)
