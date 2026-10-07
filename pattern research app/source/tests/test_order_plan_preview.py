@@ -138,6 +138,73 @@ def test_pending_entry_arms_protection_only_after_entry_fill():
     assert all(order["active_from_ts"] == 1_060.0 for order in protections)
 
 
+def test_multiple_bracket_groups_split_lots_and_wait_for_pending_entry_fill():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    assert panel.add_bracket_group()
+    assert [group["qty"] for group in panel._bracket_groups] == [10.0, 10.0]
+
+    panel.entry_edit.setText("99")
+    assert panel.submit_plan()
+    entry = next(order for order in panel.pending_orders if not order.get("role"))
+    protections = [order for order in panel.pending_orders if order.get("role")]
+
+    assert len(protections) == 4
+    assert {order["group_id"] for order in protections} == {"group-1", "group-2"}
+    assert all(order["qty"] == 10.0 and not order["armed"] for order in protections)
+    assert all(panel.pending_table.item(row, 5).text() == "WAIT ENTRY" for row in range(1, 5))
+
+    panel.raw_df = pd.concat([panel.raw_df, pd.DataFrame([
+        {"timestamp": 1_060.0, "open": 100.0, "high": 101.0, "low": 98.0, "close": 100.0},
+    ])], ignore_index=True)
+    panel.replay.current_ts = 1_060.0
+    panel.process_replay_advance(1_000.0, 1_060.0)
+
+    assert entry["status"] == "filled"
+    assert all(order["armed"] for order in panel.pending_orders if order.get("role"))
+
+
+def test_triggering_one_bracket_group_preserves_other_group_and_position():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    assert panel.add_bracket_group()
+    panel.set_plan_price_from_chart("tp:group-2", 120.0)
+    panel.set_order_mode("market")
+    assert panel.submit_plan()
+    parent = panel.case.orders[0]
+
+    panel.raw_df = pd.concat([panel.raw_df, pd.DataFrame([
+        {"timestamp": 1_060.0, "open": 100.0, "high": 111.0, "low": 99.0, "close": 110.0},
+    ])], ignore_index=True)
+    panel.replay.current_ts = 1_060.0
+    panel.process_replay_advance(1_000.0, 1_060.0)
+
+    remaining = [order for order in panel.pending_orders if order.get("role")]
+    assert {order["group_id"] for order in remaining} == {"group-2"}
+    assert {order["role"] for order in remaining} == {"stop_loss", "take_profit"}
+    assert panel._position is not None and panel._position["qty"] == 10.0
+    assert [group["id"] for group in parent["bracket_groups"]] == ["group-2"]
+    assert parent["bracket_status"] == "active"
+
+
+def test_bracket_group_lots_edit_cannot_exceed_position_allocation():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    assert panel.add_bracket_group()
+
+    panel.bracket_group_table.item(0, 3).setText("12")
+    assert [group["qty"] for group in panel._bracket_groups] == [10.0, 10.0]
+    panel.bracket_group_table.item(0, 3).setText("8")
+    assert [group["qty"] for group in panel._bracket_groups] == [8.0, 10.0]
+    assert "Unprotected: 2.000000" in panel.group_allocation_label.text()
+    panel.bracket_group_table.item(1, 3).setText("12")
+    assert [group["qty"] for group in panel._bracket_groups] == [8.0, 12.0]
+    assert "Unprotected: 0.000000" in panel.group_allocation_label.text()
+
+
 def test_cancelling_pending_entry_removes_its_waiting_protection_pair():
     app = _app()
     panel = OrderPanel()

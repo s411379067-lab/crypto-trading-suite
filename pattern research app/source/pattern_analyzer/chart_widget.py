@@ -1104,7 +1104,7 @@ class ChartWidget(QtWidgets.QWidget):
         disabled_color = QtGui.QColor(120, 130, 145, 72)
         x_range = self.plot.viewRange()[0]
         span = float(x_range[1]) - float(x_range[0])
-        for action, text, fraction in (("confirm", "CONFIRM", 0.25), ("cancel", "CANCEL", 0.42)):
+        for action, text, fraction in (("confirm", "CONFIRM", 0.68), ("cancel", "CANCEL", 0.76)):
             color = enabled_color if dirty else disabled_color
             label = OrderPlanActionItem(
                 action,
@@ -1137,19 +1137,28 @@ class ChartWidget(QtWidgets.QWidget):
                 f'<span style="color:#e6edf7">{action} {order_type} | {fmt(price)}</span>'
                 f'<span style="color:#53d8c5"> | Lots {lots_text}</span>'
             )
-        if field == "sl":
-            loss = self.order_plan.get("est_loss")
+        leg, _, group_id = field.partition(":")
+        groups = list(self.order_plan.get("bracket_groups") or [])
+        group = next((item for item in groups if item.get("id") == group_id), None) if group_id else (groups[0] if groups else None)
+        group_label = str(group.get("label") or group.get("id") or "") if group else ""
+        qty = float(group.get("qty") or 0.0) if group else float(self.order_plan.get("lots") or 0.0)
+        entry = float(self.order_plan.get("entry") or 0.0)
+        if leg == "sl":
+            loss = abs(entry - price) * qty if entry > 0 else self.order_plan.get("est_loss")
             loss_text = "--" if loss is None else f"{fmt(loss)} USD"
-            return f'<span style="color:#ff6b70">SL {fmt(price)} | {loss_text}</span>'
+            prefix = f"SL {group_label}" if len(groups) > 1 else "SL"
+            return f'<span style="color:#ff6b70">{prefix} {fmt(price)} | {loss_text} | Lots {fmt(qty)}</span>'
 
-        profit = self.order_plan.get("est_profit")
-        rr = self.order_plan.get("rr")
+        profit = abs(price - entry) * qty if entry > 0 else self.order_plan.get("est_profit")
+        group_sl = float(group.get("sl") or 0.0) if group else 0.0
+        rr = abs(price - entry) / abs(entry - group_sl) if entry > 0 and group_sl > 0 and abs(entry - group_sl) > 0 else self.order_plan.get("rr")
         profit_text = "--" if profit is None else f"{fmt(profit)} USD"
         rr_text = "--" if rr is None else f"{fmt(rr)}R"
+        prefix = f"TP {group_label}" if len(groups) > 1 else "TP"
         return (
-            f'<span style="color:#e6edf7">TP {fmt(price)}</span>'
+            f'<span style="color:#e6edf7">{prefix} {fmt(price)}</span>'
             f'<span style="color:#50d6a0"> | {profit_text}</span>'
-            f'<span style="color:#62c9ff"> | {rr_text}</span>'
+            f'<span style="color:#62c9ff"> | {rr_text} | Lots {fmt(qty)}</span>'
         )
 
     def _position_order_plan_labels(self, *_args) -> None:
@@ -1169,32 +1178,56 @@ class ChartWidget(QtWidgets.QWidget):
             try:
                 x_range = self.plot.viewRange()[0]
                 left, right = float(x_range[0]), float(x_range[1])
-                for action, fraction in (("confirm", 0.25), ("cancel", 0.42)):
-                    item = self.order_plan_actions.get(action)
-                    if item is not None:
-                        item.setPos(left + (right - left) * fraction, float(entry_line.value()))
+                view_box = self.plot.getViewBox()
+                pixel_size = view_box.viewPixelSize()[0]
+                entry_label = self.order_plan_labels.get("entry")
+                entry_y = float(entry_line.value())
+                if pixel_size > 0 and entry_label is not None:
+                    text_rect = entry_label.textItem.boundingRect()
+                    label_left = entry_label.pos().x() - text_rect.width() * pixel_size
+                    gap = 6.0 * pixel_size
+                    cancel = self.order_plan_actions.get("cancel")
+                    confirm = self.order_plan_actions.get("confirm")
+                    if cancel is not None and confirm is not None:
+                        cancel_right = label_left - gap
+                        cancel.setPos(cancel_right, entry_y)
+                        confirm.setPos(cancel_right - cancel.textItem.boundingRect().width() * pixel_size - gap, entry_y)
+                else:
+                    for action, fraction in (("confirm", 0.68), ("cancel", 0.76)):
+                        item = self.order_plan_actions.get(action)
+                        if item is not None:
+                            item.setPos(left + (right - left) * fraction, entry_y)
             except Exception:
                 pass
 
     def _render_order_plan(self) -> None:
         if self.replay is None:
             return
-        styles = {
-            "entry": ("#e6edf7"),
-            "sl": ("#ef5350"),
-            "tp": ("#f5a623"),
-        }
-        for field, color in styles.items():
+        styles = [("entry", "#e6edf7")]
+        groups = self.order_plan.get("bracket_groups")
+        if groups is None:
+            groups = [{"id": "group-1", "label": "Group 1", "sl": self.order_plan.get("sl"),
+                       "tp": self.order_plan.get("tp"), "qty": self.order_plan.get("lots")}]
+        for index, group in enumerate(groups):
+            suffix = "" if index == 0 else f":{group.get('id')}"
+            styles.extend(((f"sl{suffix}", "#ef5350"), (f"tp{suffix}", "#f5a623")))
+        for field, color in styles:
             try:
-                price = float(self.order_plan.get(field) or 0.0)
+                if field == "entry":
+                    value = self.order_plan.get("entry")
+                else:
+                    leg, _, group_id = field.partition(":")
+                    group = next((item for item in groups if item.get("id") == group_id), groups[0] if groups else {})
+                    value = group.get("sl" if leg == "sl" else "tp")
+                price = float(value or 0.0)
             except (TypeError, ValueError):
                 continue
             if price <= 0:
                 continue
-            movable = field != "entry" or (
-                self.order_plan.get("mode") != "market"
-                and not self.order_plan.get("entry_locked", False)
-            )
+            if field == "entry":
+                movable = self.order_plan.get("mode") != "market" and not self.order_plan.get("entry_locked", False)
+            else:
+                movable = not self.order_plan.get("plan_locked", False)
             line = pg.InfiniteLine(
                 pos=price,
                 angle=0,
