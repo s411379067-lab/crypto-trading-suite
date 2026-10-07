@@ -1133,7 +1133,7 @@ class ChartWidget(QtWidgets.QWidget):
                 order_type = "STOP"
             action = "SELL" if side == "short" else "BUY"
             lots = self.order_plan.get("lots")
-            lots_text = "--" if lots is None else fmt(lots, 2)
+            lots_text = "--" if lots is None else fmt(lots, 1)
             return (
                 f'<span style="color:#e6edf7">{action} {order_type} | {fmt(price)}</span>'
                 f'<span style="color:#53d8c5"> | Lots {lots_text}</span>'

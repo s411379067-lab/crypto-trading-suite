@@ -104,6 +104,20 @@ def test_send_market_fills_at_replay_price_and_emits_updates():
     assert "filled at 100" in panel.status_label.text()
 
 
+def test_send_uses_risk_sized_lots_rounded_down_to_one_decimal():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    panel.sl_edit.setText("93")
+
+    assert panel.qty_spin.value() == 14.2
+    assert panel.submit_plan()
+    entry = next(order for order in panel.pending_orders if not order.get("role"))
+    protections = [order for order in panel.pending_orders if order.get("role")]
+    assert entry["qty"] == 14.2
+    assert all(order["qty"] == 14.2 for order in protections)
+
+
 def test_send_rejects_invalid_bracket_without_creating_order():
     app = _app()
     panel = OrderPanel()
@@ -220,6 +234,24 @@ def test_take_profit_trigger_closes_trade_and_cancels_stop_loss_sibling():
     assert panel._position is None
 
 
+def test_full_close_preserves_exact_legacy_position_quantity():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    panel.case.orders = [{
+        "id": "legacy-entry", "status": "filled", "side": "long",
+        "fill_ts": 1_000.0, "created_ts": 1_000.0, "fill_price": 100.0,
+        "qty": 1.25,
+    }]
+
+    panel.close_position()
+
+    close = panel.case.orders[-1]
+    assert close["origin"] == "manual-close"
+    assert close["qty"] == 1.25
+    assert panel._position is None
+
+
 def test_chart_draws_and_updates_transient_order_plan_lines():
     app = _app()
     chart = ChartWidget()
@@ -248,7 +280,7 @@ def test_chart_draws_and_updates_transient_order_plan_lines():
     entry_html = chart.order_plan_labels["entry"].textItem.toHtml()
     sl_html = chart.order_plan_labels["sl"].textItem.toHtml()
     tp_html = chart.order_plan_labels["tp"].textItem.toHtml()
-    assert "BUY LIMIT" in entry_html and "Lots 20.00" in entry_html
+    assert "BUY LIMIT" in entry_html and "Lots 20.0" in entry_html
     assert "SL 95.00" in sl_html and "100.00 USD" in sl_html
     assert "TP 110.00" in tp_html and "200.00 USD" in tp_html and "2.00R" in tp_html
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal, ROUND_DOWN
 import pandas as pd
 from pyqtgraph.Qt import QtCore, QtWidgets
 from shared_core.order_overlay import build_order_overlay
@@ -23,6 +24,15 @@ class OrderPanel(QtWidgets.QWidget):
     order_plan_changed = QtCore.Signal(dict)
 
     R_VALUE = 60.0
+    LOT_QUANTUM = Decimal("0.1")
+
+    @classmethod
+    def _lots_down(cls, value: float) -> float:
+        """Round tradable Lots down to the supported 0.1 increment."""
+        try:
+            return float(Decimal(str(value)).quantize(cls.LOT_QUANTUM, rounding=ROUND_DOWN))
+        except Exception:
+            return 0.0
 
     @staticmethod
     def _style_order_table(table: QtWidgets.QTableWidget) -> None:
@@ -64,7 +74,8 @@ class OrderPanel(QtWidgets.QWidget):
         self.type_combo = QtWidgets.QComboBox(); self.type_combo.addItems(["market", "limit", "stop market"])
         self.price_edit = QtWidgets.QLineEdit(); self.price_edit.setPlaceholderText("Entry")
         self.qty_spin = QtWidgets.QDoubleSpinBox()
-        self.qty_spin.setDecimals(6); self.qty_spin.setRange(0.0, 1_000_000.0); self.qty_spin.setValue(0.0)
+        self.qty_spin.setDecimals(1); self.qty_spin.setSingleStep(0.1)
+        self.qty_spin.setRange(0.0, 1_000_000.0); self.qty_spin.setValue(0.0)
         self.type_combo.hide(); self.price_edit.hide(); self.qty_spin.hide()
 
         self._selected_side = "long"
@@ -277,7 +288,7 @@ class OrderPanel(QtWidgets.QWidget):
         entry = self._entry_price()
         sl = self._read_price(self.sl_edit.text())
         tp = self._read_price(self.tp_edit.text())
-        qty = float(self.qty_spin.value())
+        qty = self._lots_down(self.qty_spin.value())
         if entry is None:
             self._set_send_status("Enter a valid Entry price", "#ef5350")
             return False
@@ -567,7 +578,7 @@ class OrderPanel(QtWidgets.QWidget):
         elif risk_target > 0 and stop_valid:
             per_lot_loss = abs(entry - sl)
             if per_lot_loss > 0:
-                lots = risk_target / per_lot_loss
+                lots = self._lots_down(risk_target / per_lot_loss)
                 est_loss = lots * per_lot_loss
                 if tp is not None and (tp > entry if multiplier > 0 else tp < entry):
                     est_profit = abs(tp - entry) * lots
@@ -578,7 +589,7 @@ class OrderPanel(QtWidgets.QWidget):
         self.metric_labels["Est Profit"].setText("--" if est_profit is None else f"{est_profit:,.2f} USD")
         self.metric_labels["RR"].setText("--" if rr is None else f"{rr:.2f}")
         self.metric_labels["Risk Target"].setText(f"{risk_target:,.2f} USD" if risk_target > 0 else "--")
-        self.metric_labels["Lots"].setText("--" if lots is None else f"{lots:.6f}")
+        self.metric_labels["Lots"].setText("--" if lots is None else f"{lots:.1f}")
 
         self.order_plan_changed.emit({
             "mode": "market" if self.mode_market.isChecked() else "pending",
@@ -685,7 +696,7 @@ class OrderPanel(QtWidgets.QWidget):
             return
         side = self.selected_side
         order_type = self.type_combo.currentText()
-        qty = float(self.qty_spin.value())
+        qty = self._lots_down(self.qty_spin.value())
         if qty <= 0:
             QtWidgets.QMessageBox.warning(self, "Order", "Quantity 必須大於 0")
             return
@@ -902,7 +913,7 @@ class OrderPanel(QtWidgets.QWidget):
     def _fill_qty_ratio(self, ratio: float):
         self._recompute_state()
         base = float(self._position["qty"]) if self._position is not None else 0.0
-        self.qty_spin.setValue(base * ratio)
+        self.qty_spin.setValue(self._lots_down(base * ratio))
 
     def _recompute_state(self):
         if self.case is None:
@@ -922,7 +933,7 @@ class OrderPanel(QtWidgets.QWidget):
         for order in records:
             side = str(order.get("side"))
             price = float(order.get("fill_price"))
-            qty = float(order.get("qty") or 0.0)
+            qty = Decimal(str(order.get("qty") or 0.0))
             if qty <= 0:
                 continue
             action_parts = []
@@ -932,25 +943,29 @@ class OrderPanel(QtWidgets.QWidget):
                 action_parts.append("OPEN")
             elif position["side"] == side:
                 new_qty = position["qty"] + qty
-                position["entry"] = (position["entry"] * position["qty"] + price * qty) / new_qty
+                position["entry"] = (
+                    position["entry"] * float(position["qty"]) + price * float(qty)
+                ) / float(new_qty)
                 position["qty"] = new_qty
                 action_parts.append("ADD")
             else:
                 close_qty = min(position["qty"], qty)
-                pnl = (price - position["entry"]) * _side_mult(position["side"]) * close_qty
+                pnl = (price - position["entry"]) * _side_mult(position["side"]) * float(close_qty)
                 realized += pnl; order_realized += pnl
                 position["qty"] -= close_qty
                 action_parts.append("CLOSE")
                 remaining = qty - close_qty
-                if position["qty"] <= 1e-12:
+                if position["qty"] <= Decimal("1e-12"):
                     position = None
-                if remaining > 1e-12:
+                if remaining > Decimal("1e-12"):
                     position = {"side": side, "entry": price, "qty": remaining}
                     action_parts.append("OPEN")
             order["computed_action"] = "+".join(action_parts)
             order["realized_pnl"] = float(order_realized)
             order["realized_r_pnl"] = float(order_realized / self.R_VALUE)
 
+        if position is not None:
+            position["qty"] = float(position["qty"])
         self._position = position
         self._realized_pnl = realized
         self._realized_r = realized / self.R_VALUE
@@ -968,7 +983,7 @@ class OrderPanel(QtWidgets.QWidget):
             self.lbl_pos.setText("Position: flat")
         else:
             p = self._price_precision(self._position["entry"])
-            self.lbl_pos.setText(f"Position: {self._position['side']} {self._position['qty']:.4f} @ {self._position['entry']:.{p}f}")
+            self.lbl_pos.setText(f"Position: {self._position['side']} {self._position['qty']:.1f} @ {self._position['entry']:.{p}f}")
         self._refresh_pending_table()
         self._refresh_records_table()
 
@@ -988,7 +1003,7 @@ class OrderPanel(QtWidgets.QWidget):
             vals = [
                 str(o.get("id", ""))[-6:], o.get("side", ""), type_text,
                 "-" if o.get("requested_price") is None else f"{float(o['requested_price']):.{self._price_precision(o.get('requested_price'))}f}",
-                f"{float(o.get('qty') or 0):.4f}", status_text,
+                f"{float(o.get('qty') or 0):.1f}", status_text,
             ]
             for c, value in enumerate(vals):
                 item = QtWidgets.QTableWidgetItem(str(value))
@@ -1006,7 +1021,7 @@ class OrderPanel(QtWidgets.QWidget):
             pnl = float(o.get("realized_pnl") or 0.0)
             vals = [
                 o.get("replay_time", ""), o.get("side", ""), o.get("order_type", ""), price_text,
-                f"{float(o.get('qty') or 0):.4f}", o.get("status", ""), o.get("computed_action", ""),
+                f"{float(o.get('qty') or 0):.1f}", o.get("status", ""), o.get("computed_action", ""),
                 "-" if abs(pnl) < 1e-12 else f"{pnl:.3f}",
             ]
             for c, value in enumerate(vals):

@@ -49,7 +49,7 @@ def test_risk_cash_and_percent_modes_recalculate_lots_and_metrics():
     panel.tp_edit.setText("110")
 
     assert panel.metric_labels["Risk Target"].text() == "100.00 USD"
-    assert panel.metric_labels["Lots"].text() == "20.000000"
+    assert panel.metric_labels["Lots"].text() == "20.0"
     assert panel.metric_labels["Est Loss"].text() == "100.00 USD"
     assert panel.metric_labels["Est Profit"].text() == "200.00 USD"
     assert panel.metric_labels["RR"].text() == "2.00"
@@ -59,7 +59,7 @@ def test_risk_cash_and_percent_modes_recalculate_lots_and_metrics():
     assert panel.risk_mode_button.text() == "Risk %"
     assert panel.risk_input.value() == 0.5
     assert panel.metric_labels["Risk Target"].text() == "50.00 USD"
-    assert panel.metric_labels["Lots"].text() == "10.000000"
+    assert panel.metric_labels["Lots"].text() == "10.0"
 
 
 def test_short_risk_direction_and_cancel_preview():
@@ -69,7 +69,7 @@ def test_short_risk_direction_and_cancel_preview():
     panel.sl_edit.setText("105")
     panel.tp_edit.setText("90")
 
-    assert panel.metric_labels["Lots"].text() == "20.000000"
+    assert panel.metric_labels["Lots"].text() == "20.0"
     assert panel.metric_labels["Est Profit"].text() == "200.00 USD"
     assert "background:#ef5350" in panel.btn_place.styleSheet()
 
@@ -78,6 +78,19 @@ def test_short_risk_direction_and_cancel_preview():
     assert panel.sl_edit.text() == "0"
     assert panel.tp_edit.text() == "0"
     assert panel.metric_labels["Lots"].text() == "--"
+
+
+def test_risk_sized_lots_round_down_to_one_decimal():
+    app, panel = _panel()
+    panel.entry_edit.setText("100")
+    panel.sl_edit.setText("93")
+    panel.tp_edit.setText("110")
+
+    assert panel.qty_spin.decimals() == 1
+    assert panel.qty_spin.singleStep() == 0.1
+    assert panel.qty_spin.value() == 14.2
+    assert panel.metric_labels["Lots"].text() == "14.2"
+    assert panel.metric_labels["Est Loss"].text() == "99.40 USD"
 
 
 def test_pending_orders_and_order_records_sections_remain_available():
