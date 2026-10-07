@@ -69,6 +69,8 @@ class OrderPanel(QtWidgets.QWidget):
         self._next_take_profit_number = 1
         self._tp_allocation_manual = False
         self._updating_tp_rows = False
+        self._bracket_edit_active = False
+        self._bracket_edit_dirty = False
         # Pending orders are intentionally session-only.
         # Only actual fills are persisted to ResearchCase.orders.
         self.pending_orders: list[dict] = []
@@ -144,6 +146,16 @@ class OrderPanel(QtWidgets.QWidget):
         self.metric_labels = {}
         for row, key in enumerate(("Est Loss", "Est Profit", "RR", "Risk Target", "Lots")):
             value = QtWidgets.QLabel("--")
+            value.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+            metrics_grid.addWidget(QtWidgets.QLabel(key), row, 0)
+            metrics_grid.addWidget(value, row, 1)
+            self.metric_labels[key] = value
+        self.metrics_separator = QtWidgets.QFrame()
+        self.metrics_separator.setFrameShape(QtWidgets.QFrame.HLine)
+        self.metrics_separator.setFrameShadow(QtWidgets.QFrame.Sunken)
+        metrics_grid.addWidget(self.metrics_separator, 5, 0, 1, 2)
+        for row, key in enumerate(("Realized PnL", "Unrealized PnL"), start=6):
+            value = QtWidgets.QLabel("$0.00")
             value.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
             metrics_grid.addWidget(QtWidgets.QLabel(key), row, 0)
             metrics_grid.addWidget(value, row, 1)
@@ -224,7 +236,7 @@ class OrderPanel(QtWidgets.QWidget):
         self.lbl_pos = QtWidgets.QLabel()
         self.btn_close = QtWidgets.QPushButton()
 
-        self.btn_place.clicked.connect(self.submit_plan)
+        self.btn_place.clicked.connect(self._handle_primary_action)
         self.btn_cancel_plan.clicked.connect(self.cancel_plan)
         self.btn_add_tp.clicked.connect(self.add_take_profit_target)
         self.btn_cancel.clicked.connect(self.cancel_selected)
@@ -281,10 +293,42 @@ class OrderPanel(QtWidgets.QWidget):
             border = color if selected else "#343e50"
             button.setStyleSheet(f"QPushButton {{ background:{bg}; color:white; border:1px solid {border}; padding:6px; }}")
         side_color = short if self.selected_side == "short" else long
-        self.btn_place.setStyleSheet(
-            f"QPushButton {{ background:{side_color}; color:white; border:1px solid {side_color}; padding:8px; font-weight:700; }}"
-            "QPushButton:disabled { color:#a0a7b2; background:#343b46; border:1px solid #414957; }"
-        )
+        if self._bracket_edit_active:
+            self.btn_place.setText("CONFIRM")
+            self.btn_place.setEnabled(self._bracket_edit_dirty)
+            self.btn_cancel_plan.setEnabled(self._bracket_edit_dirty)
+            if self._bracket_edit_dirty:
+                purple = "#8b5cf6"
+                self.btn_place.setStyleSheet(
+                    f"QPushButton {{ background:{purple}; color:white; border:1px solid {purple}; padding:8px; font-weight:700; }}"
+                )
+                self.btn_cancel_plan.setStyleSheet(
+                    f"QPushButton {{ background:{purple}; color:white; border:1px solid {purple}; padding:6px; font-weight:700; }}"
+                )
+            else:
+                disabled = "#343b46"
+                self.btn_place.setStyleSheet(
+                    f"QPushButton {{ background:{disabled}; color:#a0a7b2; border:1px solid #414957; padding:8px; font-weight:700; }}"
+                )
+                self.btn_cancel_plan.setStyleSheet(
+                    f"QPushButton {{ background:{disabled}; color:#a0a7b2; border:1px solid #414957; padding:6px; }}"
+                )
+        else:
+            self.btn_place.setText("SEND")
+            self.btn_place.setEnabled(True)
+            self.btn_cancel_plan.setEnabled(True)
+            self.btn_place.setStyleSheet(
+                f"QPushButton {{ background:{side_color}; color:white; border:1px solid {side_color}; padding:8px; font-weight:700; }}"
+                "QPushButton:disabled { color:#a0a7b2; background:#343b46; border:1px solid #414957; }"
+            )
+            self.btn_cancel_plan.setStyleSheet("")
+
+    def _handle_primary_action(self) -> None:
+        if self._bracket_edit_active:
+            if self._bracket_edit_dirty:
+                self.confirm_bracket_update()
+            return
+        self.submit_plan()
 
     def toggle_risk_mode(self) -> None:
         self._risk_values[self._risk_mode] = float(self.risk_input.value())
@@ -650,6 +694,35 @@ class OrderPanel(QtWidgets.QWidget):
         self.metric_labels["RR"].setText("--" if rr is None else f"{rr:.2f}")
         self.metric_labels["Risk Target"].setText(f"{risk_target:,.2f} USD" if risk_target > 0 else "--")
         self.metric_labels["Lots"].setText("--" if lots is None else f"{lots:.1f}")
+        current_price = self.current_price()
+        unrealized = 0.0
+        if self._position is not None and current_price is not None:
+            unrealized = (
+                (current_price - float(self._position["entry"]))
+                * _side_mult(str(self._position["side"]))
+                * float(self._position["qty"])
+            )
+        for key, amount in (("Realized PnL", self._realized_pnl), ("Unrealized PnL", unrealized)):
+            color = "#26a69a" if amount > 1e-12 else "#ef5350" if amount < -1e-12 else "#9aa9bf"
+            if amount > 1e-12:
+                text = f"+${amount:,.2f}"
+            elif amount < -1e-12:
+                text = f"-${abs(amount):,.2f}"
+            else:
+                text = "$0.00"
+            self.metric_labels[key].setText(text)
+            self.metric_labels[key].setStyleSheet(f"color:{color}; font-weight:700;")
+
+        bracket_dirty = bool(
+            bracket_active
+            and self._confirmed_bracket is not None
+            and sl is not None
+            and tp is not None
+            and (abs(sl - self._confirmed_bracket[0]) > 1e-9 or abs(tp - self._confirmed_bracket[1]) > 1e-9)
+        )
+        self._bracket_edit_active = bracket_active
+        self._bracket_edit_dirty = bracket_dirty
+        self._update_selection_styles()
 
         self.order_plan_changed.emit({
             "mode": "market" if self.mode_market.isChecked() else "pending",
@@ -666,13 +739,7 @@ class OrderPanel(QtWidgets.QWidget):
             "rr": rr,
             "bracket_edit_enabled": bracket_active,
             "entry_locked": bracket_active,
-            "bracket_dirty": bool(
-                bracket_active
-                and self._confirmed_bracket is not None
-                and sl is not None
-                and tp is not None
-                and (abs(sl - self._confirmed_bracket[0]) > 1e-9 or abs(tp - self._confirmed_bracket[1]) > 1e-9)
-            ),
+            "bracket_dirty": bracket_dirty,
         })
 
     def set_plan_price_from_chart(self, field: str, price: float) -> None:

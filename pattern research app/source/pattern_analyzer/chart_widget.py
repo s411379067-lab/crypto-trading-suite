@@ -711,7 +711,6 @@ class ChartWidget(QtWidgets.QWidget):
     view_timeframe_changed = QtCore.Signal(str)
     timezone_changed = QtCore.Signal(str)
     order_plan_price_changed = QtCore.Signal(str, float)
-    bracket_action_requested = QtCore.Signal(str)
     position_close_requested = QtCore.Signal()
 
     def __init__(self, parent=None, *, drawing_interaction_enabled: bool = True):
@@ -1097,31 +1096,10 @@ class ChartWidget(QtWidgets.QWidget):
     def _order_plan_action_clicked(self, action: str) -> None:
         if action == "close" and self.order_plan.get("bracket_edit_enabled"):
             QtCore.QTimer.singleShot(0, self.position_close_requested.emit)
-            return
-        if self.order_plan.get("bracket_edit_enabled") and self.order_plan.get("bracket_dirty"):
-            QtCore.QTimer.singleShot(0, lambda key=action: self.bracket_action_requested.emit(key))
 
     def _add_order_plan_actions(self, entry_price: float) -> None:
         if not self.order_plan.get("bracket_edit_enabled"):
             return
-        dirty = bool(self.order_plan.get("bracket_dirty"))
-        enabled_color = QtGui.QColor("#8b5cf6")
-        disabled_color = QtGui.QColor(120, 130, 145, 72)
-        x_range = self.plot.viewRange()[0]
-        span = float(x_range[1]) - float(x_range[0])
-        for action, text, fraction in (("confirm", "CONFIRM", 0.68), ("cancel", "CANCEL", 0.76)):
-            color = enabled_color if dirty else disabled_color
-            label = OrderPlanActionItem(
-                action,
-                f'<span style="color:#ffffff">{text}</span>',
-                pg.mkBrush(color),
-                pg.mkPen(color),
-            )
-            label.setZValue(95)
-            label.clicked.connect(self._order_plan_action_clicked)
-            self.plot.addItem(label, ignoreBounds=True)
-            label.setPos(float(x_range[0]) + span * fraction, entry_price)
-            self.order_plan_actions[action] = label
         close_color = QtGui.QColor("#ef5350")
         close = OrderPlanActionItem(
             "close",
@@ -1206,22 +1184,13 @@ class ChartWidget(QtWidgets.QWidget):
                     text_rect = entry_label.textItem.boundingRect()
                     label_left = entry_label.pos().x() - text_rect.width() * pixel_size
                     gap = 6.0 * pixel_size
-                    cancel = self.order_plan_actions.get("cancel")
-                    confirm = self.order_plan_actions.get("confirm")
                     close = self.order_plan_actions.get("close")
-                    controls_right = label_left - gap
                     if close is not None:
-                        close.setPos(controls_right, entry_y)
-                        controls_right -= close.textItem.boundingRect().width() * pixel_size + gap
-                    if cancel is not None and confirm is not None:
-                        cancel.setPos(controls_right, entry_y)
-                        controls_right -= cancel.textItem.boundingRect().width() * pixel_size + gap
-                        confirm.setPos(controls_right, entry_y)
+                        close.setPos(label_left - gap, entry_y)
                 else:
-                    for action, fraction in (("confirm", 0.68), ("cancel", 0.76)):
-                        item = self.order_plan_actions.get(action)
-                        if item is not None:
-                            item.setPos(left + (right - left) * fraction, entry_y)
+                    close = self.order_plan_actions.get("close")
+                    if close is not None:
+                        close.setPos(left + (right - left) * 0.76, entry_y)
             except Exception:
                 pass
 

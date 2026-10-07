@@ -376,6 +376,71 @@ def test_live_entry_chart_exposes_close_x_but_pending_entry_does_not():
     assert requested == [True]
 
 
+def test_panel_buttons_confirm_or_cancel_live_bracket_edits():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    entry = {
+        "id": "live-entry", "status": "filled", "side": "long",
+        "fill_ts": 1_000.0, "created_ts": 1_000.0, "fill_price": 100.0,
+        "qty": 1.0, "stop_loss": 95.0, "take_profit": 110.0,
+        "bracket_status": "active",
+    }
+    panel.case.orders = [entry]
+    panel._active_entry_id = entry["id"]
+    panel._confirmed_bracket = (95.0, 110.0)
+    panel.pending_orders = [
+        {"id": "sl-live", "parent_order_id": entry["id"], "role": "stop_loss", "requested_price": 95.0},
+        {"id": "tp-live", "parent_order_id": entry["id"], "role": "take_profit", "requested_price": 110.0},
+    ]
+    panel.refresh()
+
+    assert panel.btn_place.text() == "CONFIRM"
+    assert not panel.btn_place.isEnabled()
+    assert not panel.btn_cancel_plan.isEnabled()
+    panel.sl_edit.setText("94")
+    assert panel.btn_place.isEnabled()
+    assert panel.btn_cancel_plan.isEnabled()
+    assert "#8b5cf6" in panel.btn_place.styleSheet()
+    assert "#8b5cf6" in panel.btn_cancel_plan.styleSheet()
+
+    panel.btn_place.click()
+    assert entry["stop_loss"] == 94.0
+    assert panel.pending_orders[0]["requested_price"] == 94.0
+    assert not panel.btn_place.isEnabled()
+
+    panel.tp_edit.setText("112")
+    assert panel.btn_cancel_plan.isEnabled()
+    panel.btn_cancel_plan.click()
+    assert panel.tp_edit.text() == "110.00"
+    assert not panel.btn_cancel_plan.isEnabled()
+
+
+def test_trade_metrics_show_realized_and_unrealized_pnl_with_direction_colors():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    panel.case.orders = [
+        {"id": "entry", "status": "filled", "side": "long", "fill_ts": 990.0,
+         "created_ts": 990.0, "fill_price": 100.0, "qty": 1.0},
+        {"id": "partial-close", "status": "filled", "side": "short", "fill_ts": 995.0,
+         "created_ts": 995.0, "fill_price": 105.0, "qty": 0.4},
+    ]
+    panel.raw_df.loc[0, "close"] = 102.0
+    panel.refresh()
+
+    assert panel.metric_labels["Realized PnL"].text() == "+$2.00"
+    assert panel.metric_labels["Unrealized PnL"].text() == "+$1.20"
+    assert "#26a69a" in panel.metric_labels["Realized PnL"].styleSheet()
+    assert "#26a69a" in panel.metric_labels["Unrealized PnL"].styleSheet()
+    assert panel.metrics_separator.frameShape() == QtWidgets.QFrame.HLine
+
+    panel.raw_df.loc[0, "close"] = 98.0
+    panel.refresh()
+    assert panel.metric_labels["Unrealized PnL"].text() == "-$1.20"
+    assert "#ef5350" in panel.metric_labels["Unrealized PnL"].styleSheet()
+
+
 def test_chart_draws_and_updates_transient_order_plan_lines():
     app = _app()
     chart = ChartWidget()
@@ -410,16 +475,9 @@ def test_chart_draws_and_updates_transient_order_plan_lines():
 
     chart.set_order_plan({"mode": "market", "entry": 100, "sl": 95, "tp": 110,
                           "bracket_edit_enabled": True, "bracket_dirty": False})
-    assert set(chart.order_plan_actions) == {"confirm", "cancel", "close"}
-    requested = []
-    chart.bracket_action_requested.connect(requested.append)
-    chart.order_plan_actions["confirm"].clicked.emit("confirm")
-    assert requested == []
+    assert set(chart.order_plan_actions) == {"close"}
     chart.set_order_plan({"mode": "market", "entry": 100, "sl": 94, "tp": 112,
                           "bracket_edit_enabled": True, "bracket_dirty": True})
-    chart.order_plan_actions["confirm"].clicked.emit("confirm")
-    app.processEvents()
-    assert requested == ["confirm"]
     chart.resize(900, 600)
     chart.show()
     app.processEvents()
@@ -427,13 +485,9 @@ def test_chart_draws_and_updates_transient_order_plan_lines():
     pixel_size = chart.plot.getViewBox().viewPixelSize()[0]
     entry_label = chart.order_plan_labels["entry"]
     entry_left = entry_label.pos().x() - entry_label.textItem.boundingRect().width() * pixel_size
-    cancel = chart.order_plan_actions["cancel"]
-    confirm = chart.order_plan_actions["confirm"]
     close = chart.order_plan_actions["close"]
     assert pixel_size > 0
     assert abs(close.pos().x() - (entry_left - 6.0 * pixel_size)) < 1e-6
-    assert cancel.pos().x() < close.pos().x()
-    assert confirm.pos().x() < cancel.pos().x()
 
     line = chart.order_plan_items["sl"]
     line.setValue(94.0)
