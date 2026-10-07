@@ -126,7 +126,10 @@ def test_main_splitter_panels_fit_screen_and_resize_without_collapsing(tmp_path)
     settings_row = tool_row.itemAt(tool_row.count() - 1).layout()
     stats_row = window.chart.toolbar.layout().itemAt(1).layout()
     assert any(settings_row.itemAt(i).widget() is window.chart.x_tick_combo for i in range(settings_row.count()))
-    assert any(stats_row.itemAt(i).widget() is window.chart.btn_shot for i in range(stats_row.count()))
+    assert any(tool_row.itemAt(i).widget() is window.chart.btn_shot for i in range(tool_row.count()))
+    assert any(tool_row.itemAt(i).widget() is window.chart.timeframe_combo for i in range(tool_row.count()))
+    stats_widgets = [stats_row.itemAt(i).widget() for i in range(stats_row.count()) if stats_row.itemAt(i).widget()]
+    assert stats_widgets == [window.chart.vol_stats_label, window.chart.current_range_label, window.chart.measure_status]
     assert window.minimumSizeHint().width() < 1920
 
     window.close()

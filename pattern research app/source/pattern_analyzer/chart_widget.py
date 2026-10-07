@@ -830,7 +830,8 @@ class ChartWidget(QtWidgets.QWidget):
             tool_row.addWidget(w)
         tool_row.addWidget(self.show_drawings_checkbox)
         tool_row.addWidget(self.show_orders_checkbox)
-        tool_row.addStretch(1)
+        for w in (self.btn_shot, self.btn_auto, self.btn_auto_all, self.timeframe_combo):
+            tool_row.addWidget(w)
         settings_row.addWidget(QtWidgets.QLabel("X刻度"))
         settings_row.addWidget(self.x_tick_combo)
         settings_row.addWidget(self.timezone_combo)
@@ -843,13 +844,9 @@ class ChartWidget(QtWidgets.QWidget):
             "color:#ffcc80; padding:3px 8px; font-weight:700;"
         )
         self.measure_status.setVisible(False)
-        for w in (self.btn_shot, self.btn_auto, self.btn_auto_all, self.timeframe_combo):
-            stats_row.addWidget(w)
-        stats_row.addSpacing(8)
         stats_row.addWidget(self.vol_stats_label)
         stats_row.addWidget(self.current_range_label)
         stats_row.addWidget(self.measure_status)
-        stats_row.addStretch(1)
         tb.addLayout(tool_row)
         tool_row.addLayout(settings_row)
         tb.addLayout(stats_row)
