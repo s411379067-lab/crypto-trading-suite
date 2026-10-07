@@ -43,6 +43,9 @@ def test_viewer_selected_case_shows_realized_pnl():
 
 
 def test_viewer_exposes_pattern_presence_and_exclusion_filters():
-    assert 'self.has_patterns_only_checkbox = QtWidgets.QCheckBox("只顯示有 Pattern 的 Cases")' in VIEWER_WINDOW
-    assert 'self.mode_combo.addItem("不包含任一選到 Pattern", "EXCLUDE_ANY")' in VIEWER_WINDOW
-    assert 'self.mode_combo.addItem("不包含所有選到 Pattern", "EXCLUDE_ALL")' in VIEWER_WINDOW
+    assert '("有 Pattern", "HAS_PATTERN")' in VIEWER_WINDOW
+    assert 'row["operator"].addItem("不包含任一", "EXCLUDE_ANY")' in VIEWER_WINDOW
+    assert 'row["operator"].addItem("不包含全部", "EXCLUDE_ALL")' in VIEWER_WINDOW
+    assert 'self.combine_combo.addItem("AND — 全部符合", "AND")' in VIEWER_WINDOW
+    assert 'self.combine_combo.addItem("OR — 任一符合", "OR")' in VIEWER_WINDOW
+    assert 'self.btn_add_filter = QtWidgets.QPushButton("+ Filter")' in VIEWER_WINDOW

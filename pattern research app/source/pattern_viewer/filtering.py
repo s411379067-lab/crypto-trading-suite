@@ -85,30 +85,76 @@ def collect_patterns(entries: list[ViewerCaseEntry]) -> list[str]:
     return sorted({p for entry in entries for p in entry.patterns}, key=lambda s: s.casefold())
 
 
+@dataclass(frozen=True)
+class FilterCondition:
+    field: str
+    operator: str = ""
+    values: tuple[str, ...] = ()
+    value: str = ""
+    start: str = ""
+    end: str = ""
+
+
+def _condition_match(entry: ViewerCaseEntry, condition: FilterCondition) -> bool | None:
+    field = str(condition.field or "").upper()
+    operator = str(condition.operator or "").upper()
+    if field == "PATTERN":
+        selected = {str(value).strip() for value in condition.values if str(value).strip()}
+        if not selected:
+            return None
+        tags = set(entry.patterns)
+        if operator == "ALL":
+            return selected.issubset(tags)
+        if operator == "EXCLUDE_ANY":
+            return not bool(selected & tags)
+        if operator == "EXCLUDE_ALL":
+            return not selected.issubset(tags)
+        return bool(selected & tags)
+
+    if field == "SYMBOL":
+        query = str(condition.value or "").strip().casefold()
+        if not query:
+            return None
+        symbol = str(entry.symbol or "").casefold()
+        if operator == "EQUALS":
+            return symbol == query
+        if operator == "NOT_CONTAINS":
+            return query not in symbol
+        return query in symbol
+
+    if field == "DATE":
+        case_date = str(entry.research_date or "")
+        if operator == "BEFORE":
+            return bool(condition.end) and case_date <= condition.end
+        if operator == "AFTER":
+            return bool(condition.start) and case_date >= condition.start
+        return bool(condition.start and condition.end) and condition.start <= case_date <= condition.end
+
+    if field == "HAS_PATTERN":
+        if operator == "HAS":
+            return bool(entry.patterns)
+        if operator == "HAS_NOT":
+            return not bool(entry.patterns)
+    return None
+
+
 def filter_case_entries(
     entries: list[ViewerCaseEntry],
-    selected_patterns: list[str] | tuple[str, ...] | set[str],
-    mode: str = "ANY",
-    has_patterns_only: bool = False,
+    conditions: list[FilterCondition] | tuple[FilterCondition, ...] = (),
+    combine: str = "AND",
 ) -> list[ViewerCaseEntry]:
-    selected = {str(x).strip() for x in selected_patterns if str(x).strip()}
-    mode = str(mode or "ANY").upper()
+    combine = str(combine or "AND").upper()
     out = []
     for entry in entries:
-        tags = set(entry.patterns)
-        if has_patterns_only and not tags:
-            continue
-        if not selected:
+        results = [
+            result
+            for condition in conditions
+            if (result := _condition_match(entry, condition)) is not None
+        ]
+        if not results:
             out.append(entry)
             continue
-        if mode == "ALL":
-            matched = selected.issubset(tags)
-        elif mode == "EXCLUDE_ANY":
-            matched = not bool(selected & tags)
-        elif mode == "EXCLUDE_ALL":
-            matched = not selected.issubset(tags)
-        else:
-            matched = bool(selected & tags)
+        matched = any(results) if combine == "OR" else all(results)
         if matched:
             out.append(entry)
     return out

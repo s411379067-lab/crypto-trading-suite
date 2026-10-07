@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import Counter
 from pathlib import Path
 
 import pandas as pd
@@ -14,6 +13,7 @@ from shared_core.models import new_id, utc_now_iso
 from pattern_analyzer.main_window import APP_STYLE
 
 from .filtering import (
+    FilterCondition,
     ViewerCaseEntry,
     collect_patterns,
     filter_case_entries,
@@ -22,6 +22,58 @@ from .filtering import (
 )
 from .metrics import calculate_viewer_metrics
 from .read_only_chart import ReadOnlyChartWidget
+
+
+class PatternFilterButton(QtWidgets.QPushButton):
+    changed = QtCore.Signal()
+
+    def __init__(self, parent=None):
+        super().__init__("選擇 Pattern…", parent)
+        self.patterns: list[str] = []
+        self.selected: set[str] = set()
+        self._query = ""
+        self.clicked.connect(self._show_menu)
+
+    def set_patterns(self, patterns: list[str]):
+        self.patterns = list(patterns)
+        self.selected.intersection_update(self.patterns)
+        self._update_text()
+
+    def set_search_query(self, query: str):
+        self._query = str(query or "").strip().casefold()
+
+    def _update_text(self):
+        selected = sorted(self.selected, key=str.casefold)
+        if not selected:
+            self.setText("選擇 Pattern…")
+        elif len(selected) <= 2:
+            self.setText("、".join(selected))
+        else:
+            self.setText(f"已選 {len(selected)} 個 Pattern")
+        self.setToolTip("\n".join(selected) if selected else "尚未選擇 Pattern")
+
+    def _show_menu(self):
+        menu = QtWidgets.QMenu(self)
+        matching = [p for p in self.patterns if not self._query or self._query in p.casefold()]
+        if not matching:
+            empty = menu.addAction("沒有符合的 Pattern")
+            empty.setEnabled(False)
+        for pattern in matching:
+            action = menu.addAction(pattern)
+            action.setCheckable(True)
+            action.setChecked(pattern in self.selected)
+            action.toggled.connect(lambda checked, item=pattern: self._set_selected(item, checked))
+        menu.exec(self.mapToGlobal(self.rect().bottomLeft()))
+
+    def _set_selected(self, pattern: str, checked: bool):
+        was_selected = pattern in self.selected
+        if checked:
+            self.selected.add(pattern)
+        else:
+            self.selected.discard(pattern)
+        if was_selected != checked:
+            self._update_text()
+            self.changed.emit()
 
 
 class PatternViewerWindow(QtWidgets.QMainWindow):
@@ -108,7 +160,7 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         root_row.addWidget(self.btn_refresh)
         layout.addLayout(root_row)
 
-        filter_box = QtWidgets.QGroupBox("Pattern Filter")
+        filter_box = QtWidgets.QGroupBox("Filters")
         fl = QtWidgets.QVBoxLayout(filter_box)
         fl.setSpacing(5)
 
@@ -116,29 +168,34 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.pattern_search.setPlaceholderText("搜尋 Pattern 名稱…")
         fl.addWidget(self.pattern_search)
 
-        mode_row = QtWidgets.QHBoxLayout()
-        mode_row.addWidget(QtWidgets.QLabel("符合方式"))
-        self.mode_combo = QtWidgets.QComboBox()
-        self.mode_combo.addItem("ANY — 任一 Pattern", "ANY")
-        self.mode_combo.addItem("ALL — 所有 Pattern", "ALL")
-        self.mode_combo.addItem("不包含任一選到 Pattern", "EXCLUDE_ANY")
-        self.mode_combo.addItem("不包含所有選到 Pattern", "EXCLUDE_ALL")
-        mode_row.addWidget(self.mode_combo, 1)
-        self.btn_clear_patterns = QtWidgets.QPushButton("清除")
-        self.btn_clear_patterns.setFixedWidth(58)
-        mode_row.addWidget(self.btn_clear_patterns)
-        fl.addLayout(mode_row)
+        combine_row = QtWidgets.QHBoxLayout()
+        combine_row.addWidget(QtWidgets.QLabel("條件關係"))
+        self.combine_combo = QtWidgets.QComboBox()
+        self.combine_combo.addItem("AND — 全部符合", "AND")
+        self.combine_combo.addItem("OR — 任一符合", "OR")
+        combine_row.addWidget(self.combine_combo, 1)
+        self.btn_clear_patterns = QtWidgets.QPushButton("清除條件")
+        combine_row.addWidget(self.btn_clear_patterns)
+        fl.addLayout(combine_row)
 
-        self.has_patterns_only_checkbox = QtWidgets.QCheckBox("只顯示有 Pattern 的 Cases")
-        self.has_patterns_only_checkbox.setChecked(False)
-        self.has_patterns_only_checkbox.setToolTip("隱藏沒有任何 Pattern 標記的 Case；可單獨使用或與 Pattern 篩選合併")
-        fl.addWidget(self.has_patterns_only_checkbox)
-
-        self.pattern_list = QtWidgets.QListWidget()
-        self.pattern_list.setMinimumHeight(160)
-        self.pattern_list.setMaximumHeight(240)
-        fl.addWidget(self.pattern_list)
+        self.filter_rows_host = QtWidgets.QWidget()
+        self.filter_rows_layout = QtWidgets.QVBoxLayout(self.filter_rows_host)
+        self.filter_rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.filter_rows_layout.setSpacing(4)
+        self.filter_rows_scroll = QtWidgets.QScrollArea()
+        self.filter_rows_scroll.setWidgetResizable(True)
+        self.filter_rows_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.filter_rows_scroll.setMaximumHeight(220)
+        self.filter_rows_scroll.setWidget(self.filter_rows_host)
+        fl.addWidget(self.filter_rows_scroll)
+        add_filter_row = QtWidgets.QHBoxLayout()
+        self.btn_add_filter = QtWidgets.QPushButton("+ Filter")
+        self.btn_add_filter.setToolTip("新增 Pattern、Symbol、日期或有無 Pattern 條件")
+        add_filter_row.addWidget(self.btn_add_filter)
+        add_filter_row.addStretch(1)
+        fl.addLayout(add_filter_row)
         layout.addWidget(filter_box)
+        self.filter_rows: list[dict] = []
 
         view_box = QtWidgets.QGroupBox("Viewer Overlay")
         vl = QtWidgets.QHBoxLayout(view_box)
@@ -211,11 +268,10 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
 
         self.btn_folder.clicked.connect(self.choose_folder)
         self.btn_refresh.clicked.connect(lambda: self.refresh_cases(select_first=False))
-        self.mode_combo.currentIndexChanged.connect(self.apply_filter)
-        self.has_patterns_only_checkbox.toggled.connect(self.apply_filter)
+        self.combine_combo.currentIndexChanged.connect(self.apply_filter)
+        self.btn_add_filter.clicked.connect(lambda: self._add_filter_row())
         self.btn_clear_patterns.clicked.connect(self.clear_pattern_filter)
         self.pattern_search.textChanged.connect(self._apply_pattern_search_visibility)
-        self.pattern_list.itemChanged.connect(self.apply_filter)
         self.case_list.currentItemChanged.connect(self._case_item_changed)
         self.show_notes_checkbox.toggled.connect(self._update_note_visibility)
         self.show_rth_checkbox.toggled.connect(self._update_rth_visibility)
@@ -225,6 +281,7 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.btn_add_case_pattern.clicked.connect(self.add_case_pattern)
         self.btn_rename_case_pattern.clicked.connect(self.rename_case_pattern)
         self.btn_delete_case_pattern.clicked.connect(self.delete_case_pattern)
+        self._add_filter_row("PATTERN")
         return panel
 
     def _build_inspector(self) -> QtWidgets.QWidget:
@@ -394,57 +451,194 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
         self.root_edit.setText(str(self.case_root))
         self.refresh_cases(select_first=True)
 
-    def _selected_patterns(self) -> list[str]:
-        out = []
-        for i in range(self.pattern_list.count()):
-            item = self.pattern_list.item(i)
-            if item.checkState() == QtCore.Qt.Checked:
-                out.append(str(item.data(QtCore.Qt.UserRole) or item.text()).strip())
-        return out
+    def _add_filter_row(self, field: str = "SYMBOL"):
+        widget = QtWidgets.QWidget(self.filter_rows_host)
+        row_layout = QtWidgets.QVBoxLayout(widget)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(2)
+        header_layout = QtWidgets.QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(4)
+        field_combo = QtWidgets.QComboBox()
+        for label, key in (
+            ("Pattern", "PATTERN"),
+            ("Symbol", "SYMBOL"),
+            ("日期", "DATE"),
+            ("有 Pattern", "HAS_PATTERN"),
+        ):
+            field_combo.addItem(label, key)
+        field_index = field_combo.findData(field)
+        field_combo.setCurrentIndex(max(0, field_index))
+        operator_combo = QtWidgets.QComboBox()
+        value_slot = QtWidgets.QWidget()
+        value_layout = QtWidgets.QHBoxLayout(value_slot)
+        value_layout.setContentsMargins(0, 0, 0, 0)
+        value_layout.setSpacing(3)
+        remove_button = QtWidgets.QPushButton("×")
+        remove_button.setFixedWidth(28)
+        header_layout.addWidget(field_combo)
+        header_layout.addWidget(operator_combo, 1)
+        header_layout.addWidget(remove_button)
+        row_layout.addLayout(header_layout)
+        row_layout.addWidget(value_slot)
+        row = {
+            "widget": widget,
+            "field": field_combo,
+            "operator": operator_combo,
+            "value_layout": value_layout,
+            "value_slot": value_slot,
+            "value": None,
+        }
+        self.filter_rows.append(row)
+        self.filter_rows_layout.addWidget(widget)
+        self._configure_filter_row(row)
+        field_combo.currentIndexChanged.connect(lambda _index, item=row: self._on_filter_field_changed(item))
+        operator_combo.currentIndexChanged.connect(lambda _index, item=row: self._on_filter_operator_changed(item))
+        remove_button.clicked.connect(lambda _checked=False, item=row: self._remove_filter_row(item))
+        return row
 
-    def _rebuild_pattern_list(self, preserve: set[str] | None = None):
-        preserve = preserve or set()
-        counts = Counter(p for entry in self.entries for p in entry.patterns)
+    def _configure_filter_row(self, row: dict):
+        field = str(row["field"].currentData() or "PATTERN")
+        row["operator"].blockSignals(True)
+        row["operator"].clear()
+        value_layout = row["value_layout"]
+        while value_layout.count():
+            item = value_layout.takeAt(0)
+            old_widget = item.widget()
+            if old_widget is not None:
+                old_widget.deleteLater()
+
+        value = None
+        row["date_start"] = None
+        row["date_end"] = None
+        if field == "PATTERN":
+            row["operator"].addItem("任一", "ANY")
+            row["operator"].addItem("全部", "ALL")
+            row["operator"].addItem("不包含任一", "EXCLUDE_ANY")
+            row["operator"].addItem("不包含全部", "EXCLUDE_ALL")
+            value = PatternFilterButton(row["value_slot"])
+            value.set_patterns(collect_patterns(self.entries))
+            value.set_search_query(self.pattern_search.text())
+            value.changed.connect(self.apply_filter)
+            value_layout.addWidget(value)
+        elif field == "SYMBOL":
+            row["operator"].addItem("包含", "CONTAINS")
+            row["operator"].addItem("等於", "EQUALS")
+            row["operator"].addItem("不包含", "NOT_CONTAINS")
+            value = QtWidgets.QLineEdit(row["value_slot"])
+            value.setPlaceholderText("輸入 Symbol")
+            value.textChanged.connect(self.apply_filter)
+            value_layout.addWidget(value)
+        elif field == "DATE":
+            row["operator"].addItem("範圍內", "BETWEEN")
+            row["operator"].addItem("截至", "BEFORE")
+            row["operator"].addItem("自…起", "AFTER")
+            value = QtWidgets.QWidget(row["value_slot"])
+            date_layout = QtWidgets.QHBoxLayout(value)
+            date_layout.setContentsMargins(0, 0, 0, 0)
+            date_layout.setSpacing(3)
+            start = QtWidgets.QDateEdit(value)
+            start.setCalendarPopup(True)
+            start.setDisplayFormat("yyyy-MM-dd")
+            start.setDate(QtCore.QDate(1900, 1, 1))
+            end = QtWidgets.QDateEdit(value)
+            end.setCalendarPopup(True)
+            end.setDisplayFormat("yyyy-MM-dd")
+            end.setDate(QtCore.QDate(9999, 12, 31))
+            date_layout.addWidget(start)
+            date_layout.addWidget(end)
+            start.dateChanged.connect(self.apply_filter)
+            end.dateChanged.connect(self.apply_filter)
+            row["date_start"] = start
+            row["date_end"] = end
+            value_layout.addWidget(value)
+        else:
+            row["operator"].addItem("不限", "NONE")
+            row["operator"].addItem("有 Pattern", "HAS")
+            row["operator"].addItem("沒有 Pattern", "HAS_NOT")
+
+        row["value"] = value
+        row["operator"].blockSignals(False)
+        self._update_date_filter_visibility(row)
+
+    def _update_date_filter_visibility(self, row: dict):
+        if row["field"].currentData() != "DATE" or row["value"] is None:
+            return
+        start = row["date_start"]
+        end = row["date_end"]
+        operator = row["operator"].currentData()
+        start.setVisible(operator != "BEFORE")
+        end.setVisible(operator != "AFTER")
+
+    def _on_filter_field_changed(self, row: dict):
+        self._configure_filter_row(row)
+        self.apply_filter()
+
+    def _on_filter_operator_changed(self, row: dict):
+        self._update_date_filter_visibility(row)
+        self.apply_filter()
+
+    def _remove_filter_row(self, row: dict):
+        if row not in self.filter_rows:
+            return
+        self.filter_rows.remove(row)
+        row["widget"].deleteLater()
+        self.apply_filter()
+
+    def _filter_conditions(self) -> list[FilterCondition]:
+        conditions = []
+        for row in self.filter_rows:
+            field = str(row["field"].currentData() or "")
+            operator = str(row["operator"].currentData() or "")
+            value = row["value"]
+            if field == "PATTERN":
+                conditions.append(FilterCondition(field, operator, tuple(sorted(value.selected))))
+            elif field == "SYMBOL":
+                conditions.append(FilterCondition(field, operator, value=value.text()))
+            elif field == "DATE":
+                conditions.append(FilterCondition(
+                    field,
+                    operator,
+                    start=row["date_start"].date().toString("yyyy-MM-dd"),
+                    end=row["date_end"].date().toString("yyyy-MM-dd"),
+                ))
+            else:
+                conditions.append(FilterCondition(field, operator))
+        return conditions
+
+    def _rebuild_pattern_list(self):
         patterns = collect_patterns(self.entries)
-        self.pattern_list.blockSignals(True)
-        self.pattern_list.clear()
-        for pattern in patterns:
-            item = QtWidgets.QListWidgetItem(f"{pattern}   ({counts[pattern]})")
-            item.setData(QtCore.Qt.UserRole, pattern)
-            item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
-            item.setCheckState(QtCore.Qt.Checked if pattern in preserve else QtCore.Qt.Unchecked)
-            self.pattern_list.addItem(item)
-        self.pattern_list.blockSignals(False)
+        for row in self.filter_rows:
+            value = row.get("value")
+            if isinstance(value, PatternFilterButton):
+                value.set_patterns(patterns)
         self._apply_pattern_search_visibility(self.pattern_search.text())
 
     def _apply_pattern_search_visibility(self, text: str):
         query = str(text or "").strip().casefold()
-        for i in range(self.pattern_list.count()):
-            item = self.pattern_list.item(i)
-            pattern = str(item.data(QtCore.Qt.UserRole) or "")
-            item.setHidden(bool(query and query not in pattern.casefold()))
+        for row in self.filter_rows:
+            value = row.get("value")
+            if isinstance(value, PatternFilterButton):
+                value.set_search_query(query)
 
     def clear_pattern_filter(self):
-        self.pattern_list.blockSignals(True)
-        for i in range(self.pattern_list.count()):
-            self.pattern_list.item(i).setCheckState(QtCore.Qt.Unchecked)
-        self.pattern_list.blockSignals(False)
+        for row in list(self.filter_rows):
+            self._remove_filter_row(row)
+        self._add_filter_row("PATTERN")
         self.apply_filter()
 
     def refresh_cases(self, select_first: bool = False):
-        preserve = set(self._selected_patterns())
         current_path = self.current_case_path
         self.entries = scan_case_entries(self.case_root)
-        self._rebuild_pattern_list(preserve)
+        self._rebuild_pattern_list()
         self.apply_filter(preferred_path=current_path, select_first=select_first)
 
     def apply_filter(self, *_args, preferred_path: Path | None = None, select_first: bool = False):
         if self._updating_case_list:
             return
-        selected = self._selected_patterns()
-        mode = str(self.mode_combo.currentData() or "ANY")
-        has_patterns_only = self.has_patterns_only_checkbox.isChecked()
-        self.filtered_entries = filter_case_entries(self.entries, selected, mode, has_patterns_only)
+        conditions = self._filter_conditions()
+        combine = str(self.combine_combo.currentData() or "AND")
+        self.filtered_entries = filter_case_entries(self.entries, conditions, combine)
         self._update_filtered_metrics()
 
         target_path = preferred_path or self.current_case_path
@@ -463,8 +657,7 @@ class PatternViewerWindow(QtWidgets.QMainWindow):
                 target_row = row
         self.case_count_label.setText(
             f"Cases: {len(self.filtered_entries)} / {len(self.entries)}"
-            + (f"   |   Filter: {len(selected)}" if selected else "")
-            + ("   |   有 Pattern" if has_patterns_only else "")
+            + (f"   |   Filters: {len(self.filter_rows)} {combine}" if self.filter_rows else "")
         )
         self.case_list.blockSignals(False)
         self._updating_case_list = False
