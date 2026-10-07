@@ -78,3 +78,18 @@ def test_short_risk_direction_and_cancel_preview():
     assert panel.sl_edit.text() == "0"
     assert panel.tp_edit.text() == "0"
     assert panel.metric_labels["Lots"].text() == "--"
+
+
+def test_pending_orders_and_order_records_sections_remain_available():
+    app, panel = _panel()
+    panel.show()
+    app.processEvents()
+
+    assert panel.pending_box.isVisible()
+    assert panel.records_box.isVisible()
+    assert panel.pending_table.columnCount() == 6
+    assert panel.records_table.columnCount() == 8
+    assert panel.btn_cancel.text() == "Cancel Selected"
+    assert panel.btn_delete_record.text() == "Delete Selected Record"
+    assert panel.btn_export.text() == "Export Records"
+    assert panel.btn_clean.text() == "Clean Records"
