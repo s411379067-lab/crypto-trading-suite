@@ -481,6 +481,42 @@ def test_trade_metrics_show_realized_and_unrealized_pnl_with_direction_colors():
     assert "#ef5350" in panel.metric_labels["Unrealized PnL"].styleSheet()
 
 
+def test_trade_metrics_show_replay_day_win_rate_for_closed_trades_only():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay(panel)
+    panel.case.display["timezone"] = "UTC"
+    panel.replay.current_ts = 86_420.0
+    panel.case.orders = [
+        # A prior-day completed winner is excluded from today's denominator.
+        {"id": "prior-entry", "status": "filled", "side": "long", "fill_ts": 86_000.0,
+         "created_ts": 86_000.0, "fill_price": 100.0, "qty": 1.0},
+        {"id": "prior-exit", "status": "filled", "side": "short", "fill_ts": 86_100.0,
+         "created_ts": 86_100.0, "fill_price": 110.0, "qty": 1.0},
+        # Today's one win.
+        {"id": "win-entry", "status": "filled", "side": "short", "fill_ts": 86_401.0,
+         "created_ts": 86_401.0, "fill_price": 100.0, "qty": 1.0},
+        {"id": "win-exit", "status": "filled", "side": "long", "fill_ts": 86_402.0,
+         "created_ts": 86_402.0, "fill_price": 90.0, "qty": 1.0},
+        # Today's two losses.
+        {"id": "loss-entry", "status": "filled", "side": "long", "fill_ts": 86_403.0,
+         "created_ts": 86_403.0, "fill_price": 100.0, "qty": 1.0},
+        {"id": "loss-exit", "status": "filled", "side": "short", "fill_ts": 86_404.0,
+         "created_ts": 86_404.0, "fill_price": 95.0, "qty": 1.0},
+        {"id": "loss2-entry", "status": "filled", "side": "long", "fill_ts": 86_405.0,
+         "created_ts": 86_405.0, "fill_price": 100.0, "qty": 1.0},
+        {"id": "loss2-exit", "status": "filled", "side": "short", "fill_ts": 86_406.0,
+         "created_ts": 86_406.0, "fill_price": 99.0, "qty": 1.0},
+        # An open position is not a completed trade and is excluded.
+        {"id": "open-entry", "status": "filled", "side": "long", "fill_ts": 86_407.0,
+         "created_ts": 86_407.0, "fill_price": 100.0, "qty": 1.0},
+    ]
+
+    panel.refresh()
+
+    assert panel.metric_labels["Win Rate"].text() == "33.3% (1/3)"
+
+
 def test_cancel_plan_deselects_order_mode_and_removes_chart_plan_lines():
     app = _app()
     panel = OrderPanel()

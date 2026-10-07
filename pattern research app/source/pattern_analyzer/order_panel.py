@@ -64,6 +64,7 @@ class OrderPanel(QtWidgets.QWidget):
         self._position = None
         self._realized_pnl = 0.0
         self._realized_r = 0.0
+        self._daily_win_rate = (0, 0)
         self._active_entry_id: str | None = None
         self._confirmed_bracket: tuple[float, float] | None = None
         self._take_profit_rows: list[dict] = []
@@ -158,7 +159,7 @@ class OrderPanel(QtWidgets.QWidget):
         self.metrics_separator.setFrameShape(QtWidgets.QFrame.HLine)
         self.metrics_separator.setFrameShadow(QtWidgets.QFrame.Sunken)
         metrics_grid.addWidget(self.metrics_separator, 5, 0, 1, 2)
-        for row, key in enumerate(("Realized PnL", "Unrealized PnL"), start=6):
+        for row, key in enumerate(("Realized PnL", "Unrealized PnL", "Win Rate"), start=6):
             value = QtWidgets.QLabel("$0.00")
             value.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
             metrics_grid.addWidget(QtWidgets.QLabel(key), row, 0)
@@ -876,6 +877,10 @@ class OrderPanel(QtWidgets.QWidget):
                 text = "$0.00"
             self.metric_labels[key].setText(text)
             self.metric_labels[key].setStyleSheet(f"color:{color}; font-weight:700;")
+        wins, total = self._daily_win_rate
+        self.metric_labels["Win Rate"].setText(
+            f"{wins / total * 100:.1f}% ({wins}/{total})" if total else "-- (0/0)"
+        )
 
         bracket_dirty = bool(
             bracket_active
@@ -1353,10 +1358,17 @@ class OrderPanel(QtWidgets.QWidget):
     def _recompute_state(self):
         if self.case is None:
             self._position = None; self._realized_pnl = 0.0; self._realized_r = 0.0
+            self._daily_win_rate = (0, 0)
             return
         current_ts = self._current_ts()
+        timezone_name = self.case.display.get("timezone", "Asia/Taipei")
+        try:
+            replay_day = pd.Timestamp(current_ts, unit="s", tz="UTC").tz_convert(timezone_name).date()
+        except Exception:
+            replay_day = None
         position = None
         realized = 0.0
+        daily_closed_pnls = []
         records = [o for o in self.case.orders if o.get("status") == "filled" and o.get("fill_ts") is not None and float(o.get("fill_ts")) <= current_ts]
         records.sort(key=lambda o: (float(o.get("fill_ts") or 0.0), float(o.get("created_ts") or 0.0), str(o.get("id", ""))))
 
@@ -1374,7 +1386,7 @@ class OrderPanel(QtWidgets.QWidget):
             action_parts = []
             order_realized = 0.0
             if position is None:
-                position = {"side": side, "entry": price, "qty": qty}
+                position = {"side": side, "entry": price, "qty": qty, "trade_pnl": 0.0}
                 action_parts.append("OPEN")
             elif position["side"] == side:
                 new_qty = position["qty"] + qty
@@ -1387,13 +1399,20 @@ class OrderPanel(QtWidgets.QWidget):
                 close_qty = min(position["qty"], qty)
                 pnl = (price - position["entry"]) * _side_mult(position["side"]) * float(close_qty)
                 realized += pnl; order_realized += pnl
+                position["trade_pnl"] = float(position.get("trade_pnl", 0.0)) + pnl
                 position["qty"] -= close_qty
                 action_parts.append("CLOSE")
                 remaining = qty - close_qty
                 if position["qty"] <= Decimal("1e-12"):
+                    try:
+                        close_day = pd.Timestamp(float(order["fill_ts"]), unit="s", tz="UTC").tz_convert(timezone_name).date()
+                    except Exception:
+                        close_day = None
+                    if close_day == replay_day:
+                        daily_closed_pnls.append(float(position["trade_pnl"]))
                     position = None
                 if remaining > Decimal("1e-12"):
-                    position = {"side": side, "entry": price, "qty": remaining}
+                    position = {"side": side, "entry": price, "qty": remaining, "trade_pnl": 0.0}
                     action_parts.append("OPEN")
             order["computed_action"] = "+".join(action_parts)
             order["realized_pnl"] = float(order_realized)
@@ -1404,6 +1423,8 @@ class OrderPanel(QtWidgets.QWidget):
         self._position = position
         self._realized_pnl = realized
         self._realized_r = realized / self.R_VALUE
+        wins = sum(1 for pnl in daily_closed_pnls if pnl > 1e-12)
+        self._daily_win_rate = (wins, len(daily_closed_pnls))
 
     def refresh(self):
         self._recompute_state()
