@@ -140,6 +140,16 @@ def estimated_bracket_pnl(bracket: dict, price: float, qty: float) -> float:
     return (float(price) - float(bracket["entry_price"])) * direction * float(qty)
 
 
+def entry_order_type_for_price(side: str, entry_price: float, current_price: float) -> str:
+    """Select limit or stop-market according to Entry's position vs current price."""
+    side = "short" if str(side) == "short" else "long"
+    entry_price = float(entry_price)
+    current_price = float(current_price)
+    if current_price > entry_price:
+        return "stop market" if side == "short" else "limit"
+    return "limit" if side == "short" else "stop market"
+
+
 def pending_bracket_order_specs(bracket: dict) -> list[dict]:
     """Build the Entry plus linked SL/TP pending-order instructions."""
     side = "short" if str(bracket.get("side")) == "short" else "long"

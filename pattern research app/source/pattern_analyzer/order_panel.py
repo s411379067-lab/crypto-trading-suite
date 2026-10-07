@@ -4,7 +4,12 @@ import uuid
 from datetime import datetime, timezone
 import pandas as pd
 from pyqtgraph.Qt import QtCore, QtWidgets
-from shared_core.order_brackets import create_pending_bracket, pending_bracket_order_specs, remove_bracket_group
+from shared_core.order_brackets import (
+    create_pending_bracket,
+    entry_order_type_for_price,
+    pending_bracket_order_specs,
+    remove_bracket_group,
+)
 from shared_core.order_overlay import build_order_overlay
 
 
@@ -211,6 +216,15 @@ class OrderPanel(QtWidgets.QWidget):
         if not isinstance(bracket, dict):
             return
         self.pending_bracket = dict(bracket)
+        current_price = self.current_price()
+        if current_price is not None:
+            order_type = entry_order_type_for_price(
+                self.pending_bracket.get("side", "long"),
+                self.pending_bracket["entry_price"],
+                current_price,
+            )
+            self.pending_bracket["order_type"] = order_type
+            self.type_combo.setCurrentText(order_type)
         self.pending_bracket_changed.emit(dict(self.pending_bracket))
 
     def cancel_pending_bracket(self):
@@ -288,6 +302,18 @@ class OrderPanel(QtWidgets.QWidget):
         if not isinstance(bracket, dict) or not self.submitted_bracket:
             return
         self.submitted_bracket_draft = dict(bracket)
+        bracket_id = str(self.submitted_bracket_draft.get("id", ""))
+        entry_is_pending = any(
+            o.get("bracket_id") == bracket_id and o.get("bracket_role") == "entry"
+            for o in self.pending_orders
+        )
+        current_price = self.current_price()
+        if entry_is_pending and current_price is not None:
+            self.submitted_bracket_draft["order_type"] = entry_order_type_for_price(
+                self.submitted_bracket_draft.get("side", "long"),
+                self.submitted_bracket_draft["entry_price"],
+                current_price,
+            )
         self.submitted_bracket_draft_changed.emit(dict(self.submitted_bracket_draft))
 
     def cancel_submitted_bracket_draft(self):
@@ -313,6 +339,8 @@ class OrderPanel(QtWidgets.QWidget):
         if entry_order.get("status") != "filled":
             entry_order["requested_price"] = float(draft["entry_price"])
             entry_order["qty"] = float(draft["qty"])
+            entry_order["side"] = specs[0]["side"]
+            entry_order["order_type"] = specs[0]["order_type"]
         self.pending_orders = [
             o for o in self.pending_orders
             if not (o.get("bracket_id") == bracket_id and o.get("bracket_role") in ("stop", "target"))

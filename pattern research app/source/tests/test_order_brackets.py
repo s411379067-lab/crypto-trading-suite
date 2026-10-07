@@ -9,6 +9,7 @@ from shared_core.order_brackets import (
     add_bracket_group,
     available_bracket_qty,
     create_pending_bracket,
+    entry_order_type_for_price,
     estimated_bracket_pnl,
     move_bracket_entry,
     move_bracket_leg,
@@ -38,6 +39,19 @@ def test_initial_long_bracket_has_symmetric_stop_and_target():
 def test_initial_bracket_requires_positive_quantity():
     with pytest.raises(ValueError, match="positive"):
         create_pending_bracket("short", 100.0, 0)
+
+
+@pytest.mark.parametrize(
+    ("side", "entry", "current", "expected"),
+    [
+        ("long", 101.0, 100.0, "stop market"),
+        ("long", 99.0, 100.0, "limit"),
+        ("short", 99.0, 100.0, "stop market"),
+        ("short", 101.0, 100.0, "limit"),
+    ],
+)
+def test_entry_order_type_tracks_price_side_of_current_market(side, entry, current, expected):
+    assert entry_order_type_for_price(side, entry, current) == expected
 
 
 def test_moving_entry_shifts_its_stop_and_target_together():
@@ -381,3 +395,49 @@ def test_submitted_bracket_apply_replaces_pending_sl_tp_and_cancel_restores_snap
     panel.update_submitted_bracket_draft(move_bracket_leg(edited, group_id, "stop", 105.0))
     panel.cancel_submitted_bracket_draft()
     assert panel.submitted_bracket["groups"][0]["stop_price"] == 103.0
+
+
+def test_pending_entry_price_edit_updates_type_combo_and_draft_type():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    class Replay:
+        current_ts = 60.0
+
+    panel = OrderPanel()
+    panel.raw_df = pd.DataFrame([{"timestamp": 60.0, "close": 100.0}])
+    panel.replay = Replay()
+    bracket = create_pending_bracket("long", 101.0, 1.0)
+    bracket["order_type"] = "limit"
+
+    panel.update_pending_bracket(bracket)
+
+    assert panel.pending_bracket["order_type"] == "stop market"
+    assert panel.type_combo.currentText() == "stop market"
+
+
+def test_applying_submitted_entry_edit_updates_unfilled_order_type():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    class Case:
+        orders = []
+        display = {"timezone": "UTC"}
+
+        def touch(self):
+            pass
+
+    class Replay:
+        current_ts = 60.0
+
+    panel = OrderPanel()
+    panel.case = Case()
+    panel.raw_df = pd.DataFrame([{"timestamp": 60.0, "close": 100.0}])
+    panel.replay = Replay()
+    bracket = create_pending_bracket("long", 101.0, 1.0)
+    bracket["order_type"] = "limit"
+    panel.pending_bracket = bracket
+    panel.submit_pending_bracket()
+    panel.update_submitted_bracket_draft(bracket)
+    panel.apply_submitted_bracket_draft()
+
+    entry_order = next(o for o in panel.pending_orders if o.get("bracket_role") == "entry")
+    assert entry_order["order_type"] == "stop market"
