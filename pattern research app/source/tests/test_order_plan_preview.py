@@ -54,6 +54,7 @@ def test_chart_draws_and_updates_transient_order_plan_lines():
     })
 
     assert set(chart.order_plan_items) == {"entry", "sl", "tp"}
+    assert chart.ORDER_PLAN_LABEL_POSITION < 0.9
     assert chart.order_plan_items["entry"].value() == 100.0
     assert chart.order_plan_items["sl"].value() == 95.0
     assert chart.order_plan_items["tp"].value() == 110.0

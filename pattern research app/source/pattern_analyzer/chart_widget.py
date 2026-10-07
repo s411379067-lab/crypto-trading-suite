@@ -687,6 +687,8 @@ class FiboSettingsDialog(QtWidgets.QDialog):
 
 
 class ChartWidget(QtWidgets.QWidget):
+    ORDER_PLAN_LABEL_POSITION = 0.82
+
     dirty = QtCore.Signal()
     history_committed = QtCore.Signal(str)
     view_timeframe_changed = QtCore.Signal(str)
@@ -1090,7 +1092,11 @@ class ChartWidget(QtWidgets.QWidget):
                 pen=pg.mkPen(color, width=1.4, style=QtCore.Qt.DashLine),
                 hoverPen=pg.mkPen(color, width=2.2),
                 label=label + "  {value:.2f}",
-                labelOpts={"position": 0.98, "color": color, "fill": (18, 24, 35, 210)},
+                labelOpts={
+                    "position": self.ORDER_PLAN_LABEL_POSITION,
+                    "color": color,
+                    "fill": (18, 24, 35, 210),
+                },
             )
             line.setZValue(90)
             line.sigPositionChangeFinished.connect(
