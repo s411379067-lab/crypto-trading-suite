@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from copy import deepcopy
 from datetime import datetime, timezone
 import pandas as pd
 from pyqtgraph.Qt import QtCore, QtWidgets
@@ -48,12 +47,6 @@ class OrderPanel(QtWidgets.QWidget):
         self._realized_r = 0.0
         self._active_entry_id: str | None = None
         self._confirmed_bracket: tuple[float, float] | None = None
-        self._bracket_groups: list[dict] = []
-        self._confirmed_bracket_groups: list[dict] | None = None
-        self._next_bracket_group_number = 1
-        self._manual_group_allocation = False
-        self._group_plan_initialized = False
-        self._last_plan_lots: float | None = None
         # Pending orders are intentionally session-only.
         # Only actual fills are persisted to ResearchCase.orders.
         self.pending_orders: list[dict] = []
@@ -137,28 +130,6 @@ class OrderPanel(QtWidgets.QWidget):
         sides = QtWidgets.QHBoxLayout(); sides.addWidget(self.btn_short); sides.addWidget(self.btn_long)
         outer.addLayout(modes); outer.addLayout(sides)
 
-        self.bracket_group_box = QtWidgets.QGroupBox("SL / TP Groups")
-        bracket_group_layout = QtWidgets.QVBoxLayout(self.bracket_group_box)
-        self.bracket_group_table = QtWidgets.QTableWidget(0, 4)
-        self.bracket_group_table.setHorizontalHeaderLabels(["Group", "SL", "TP", "Lots"])
-        self.bracket_group_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        self.bracket_group_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
-        self.bracket_group_table.setEditTriggers(QtWidgets.QAbstractItemView.DoubleClicked | QtWidgets.QAbstractItemView.EditKeyPressed)
-        self.bracket_group_table.horizontalHeader().setStretchLastSection(True)
-        self.bracket_group_table.verticalHeader().setVisible(False)
-        self.bracket_group_table.setMaximumHeight(130)
-        self._style_order_table(self.bracket_group_table)
-        self.group_allocation_label = QtWidgets.QLabel("Assigned Lots: --")
-        group_buttons = QtWidgets.QHBoxLayout()
-        self.btn_add_bracket_group = QtWidgets.QPushButton("Add SL/TP")
-        self.btn_remove_bracket_group = QtWidgets.QPushButton("Remove Group")
-        group_buttons.addWidget(self.btn_add_bracket_group)
-        group_buttons.addWidget(self.btn_remove_bracket_group)
-        bracket_group_layout.addWidget(self.bracket_group_table)
-        bracket_group_layout.addWidget(self.group_allocation_label)
-        bracket_group_layout.addLayout(group_buttons)
-        outer.addWidget(self.bracket_group_box)
-
         self.status_label = QtWidgets.QLabel("Choose mode + direction")
         outer.addWidget(self.status_label)
         self.btn_place = QtWidgets.QPushButton("SEND")
@@ -216,9 +187,6 @@ class OrderPanel(QtWidgets.QWidget):
 
         self.btn_place.clicked.connect(self.submit_plan)
         self.btn_cancel_plan.clicked.connect(self.cancel_plan)
-        self.btn_add_bracket_group.clicked.connect(self.add_bracket_group)
-        self.btn_remove_bracket_group.clicked.connect(self.remove_selected_bracket_group)
-        self.bracket_group_table.cellChanged.connect(self._bracket_group_cell_changed)
         self.btn_cancel.clicked.connect(self.cancel_selected)
         self.btn_delete_record.clicked.connect(self.delete_selected_record)
         self.btn_export.clicked.connect(self.export_records)
@@ -326,31 +294,6 @@ class OrderPanel(QtWidgets.QWidget):
         if qty <= 0:
             self._set_send_status("Lots must be greater than 0 (check Risk and SL)", "#ef5350")
             return False
-        if not self._bracket_groups:
-            self._bracket_groups = [{
-                "id": "group-1", "label": "Group 1", "sl": float(sl), "tp": float(tp), "qty": qty,
-            }]
-            self._next_bracket_group_number = max(self._next_bracket_group_number, 2)
-        groups = deepcopy(self._bracket_groups)
-        assigned_lots = sum(float(group.get("qty") or 0.0) for group in groups)
-        if assigned_lots <= 1e-12:
-            self._set_send_status("Allocate Lots to at least one SL/TP group", "#ef5350")
-            return False
-        if assigned_lots > qty + 1e-9:
-            self._set_send_status("Group Lots total cannot exceed position Lots", "#ef5350")
-            return False
-        for group in groups:
-            group_sl = float(group.get("sl") or 0.0)
-            group_tp = float(group.get("tp") or 0.0)
-            if group_sl <= 0 or group_tp <= 0:
-                self._set_send_status("Every SL/TP group needs valid prices", "#ef5350")
-                return False
-            if (group_sl >= entry if is_long else group_sl <= entry):
-                self._set_send_status("A group SL is on the wrong side of Entry", "#ef5350")
-                return False
-            if (group_tp <= entry if is_long else group_tp >= entry):
-                self._set_send_status("A group TP is on the wrong side of Entry", "#ef5350")
-                return False
 
         current_price = self.current_price()
         if current_price is None:
@@ -369,15 +312,13 @@ class OrderPanel(QtWidgets.QWidget):
             None if market else entry,
             qty,
         )
-        record["bracket_groups"] = groups
-        record["stop_loss"] = float(groups[0]["sl"])
-        record["take_profit"] = float(groups[0]["tp"])
+        # Keep the bracket attached to its entry event for the follow-up execution stage.
+        record["stop_loss"] = float(sl)
+        record["take_profit"] = float(tp)
         record["est_loss"] = float(self._risk_target())
         record["bracket_status"] = "waiting-entry" if not market else "active"
         self._active_entry_id = record["id"]
         self._confirmed_bracket = (float(sl), float(tp))
-        self._confirmed_bracket_groups = deepcopy(groups)
-        self._bracket_groups = deepcopy(groups)
         if market:
             self._fill_record(record, current_price, self._current_ts())
             self.case.orders.append(record)
@@ -399,148 +340,20 @@ class OrderPanel(QtWidgets.QWidget):
         """Create SL/TP rows tied to one entry; pending-entry brackets stay unarmed."""
         close_side = "short" if entry["side"] == "long" else "long"
         entry["bracket_order_ids"] = []
-        groups = entry.get("bracket_groups") if "bracket_groups" in entry else [{
-            "id": "group-1", "label": "Group 1", "sl": entry.get("stop_loss"),
-            "tp": entry.get("take_profit"), "qty": entry.get("qty", 0.0),
-        }]
-        for group in groups:
-            qty = float(group.get("qty") or 0.0)
-            if qty <= 1e-12:
-                continue
-            for role, order_type, key in (
-                ("stop_loss", "stop market", "sl"),
-                ("take_profit", "limit", "tp"),
-            ):
-                order = self._new_order_record(close_side, order_type, group[key], qty, origin=f"bracket-{role}")
-                order.update({
-                    "role": role,
-                    "group_id": group["id"],
-                    "parent_order_id": entry["id"],
-                    "status": "open",
-                    "armed": bool(active),
-                    "active_from_ts": active_ts,
-                })
-                entry["bracket_order_ids"].append(order["id"])
-                self.pending_orders.append(order)
-
-    def _refresh_bracket_group_table(self, total_lots: float | None = None) -> None:
-        table = self.bracket_group_table
-        blocked = table.blockSignals(True)
-        table.setRowCount(len(self._bracket_groups))
-        assigned = sum(float(group.get("qty") or 0.0) for group in self._bracket_groups)
-        active_entry = self._active_entry_record()
-        locked = bool(active_entry and active_entry.get("status") != "filled")
-        for row, group in enumerate(self._bracket_groups):
-            values = [
-                str(group.get("label") or group.get("id", "Group")),
-                f"{float(group.get('sl') or 0.0):,.2f}",
-                f"{float(group.get('tp') or 0.0):,.2f}",
-                f"{float(group.get('qty') or 0.0):.6f}",
-            ]
-            for col, value in enumerate(values):
-                item = QtWidgets.QTableWidgetItem(value)
-                if col != 3:
-                    item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEditable)
-                else:
-                    item.setToolTip("Double-click to edit the Lots allocated to this SL/TP pair")
-                    if locked:
-                        item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEditable)
-                if col == 0:
-                    item.setData(QtCore.Qt.UserRole, group.get("id"))
-                table.setItem(row, col, item)
-        table.blockSignals(blocked)
-        if total_lots is None:
-            self.group_allocation_label.setText(f"Assigned Lots: {assigned:.6f}")
-        else:
-            difference = float(total_lots) - assigned
-            if difference >= -1e-9:
-                self.group_allocation_label.setText(
-                    f"Assigned: {assigned:.6f} / Position: {float(total_lots):.6f}  •  Unprotected: {max(0.0, difference):.6f}"
-                )
-            else:
-                self.group_allocation_label.setText(
-                    f"Assigned: {assigned:.6f} / Position: {float(total_lots):.6f}  •  Over by: {-difference:.6f}"
-                )
-
-    @staticmethod
-    def _bracket_group_signature(groups: list[dict] | None) -> tuple:
-        return tuple(
-            (str(group.get("id")), round(float(group.get("sl") or 0.0), 10),
-             round(float(group.get("tp") or 0.0), 10), round(float(group.get("qty") or 0.0), 8))
-            for group in (groups or [])
-        )
-
-    def _bracket_group_cell_changed(self, row: int, column: int) -> None:
-        if column != 3 or not 0 <= row < len(self._bracket_groups):
-            return
-        try:
-            qty = float(self.bracket_group_table.item(row, column).text().replace(",", ""))
-        except (AttributeError, TypeError, ValueError):
-            self._refresh_bracket_group_table(float(self.qty_spin.value()))
-            return
-        if qty < 0:
-            self._refresh_bracket_group_table(float(self.qty_spin.value()))
-            return
-        group = self._bracket_groups[row]
-        previous = float(group.get("qty") or 0.0)
-        group["qty"] = qty
-        total = sum(float(item.get("qty") or 0.0) for item in self._bracket_groups)
-        if total > float(self.qty_spin.value()) + 1e-9:
-            group["qty"] = previous
-            self._set_send_status("Group Lots total cannot exceed position Lots", "#ef5350")
-        else:
-            self._manual_group_allocation = True
-            self.update_metrics()
-        self._refresh_bracket_group_table(float(self.qty_spin.value()))
-
-    def add_bracket_group(self) -> bool:
-        if self._active_entry_id is not None and not self._active_bracket_is_live():
-            return False
-        sl = self._read_price(self.sl_edit.text())
-        tp = self._read_price(self.tp_edit.text())
-        if sl is None or tp is None:
-            self._set_send_status("Set valid SL and TP prices before adding a group", "#f5a623")
-            return False
-        if not self._bracket_groups:
-            total = float(self.qty_spin.value())
-            self._bracket_groups.append({
-                "id": f"group-{self._next_bracket_group_number}",
-                "label": f"Group {self._next_bracket_group_number}",
-                "sl": sl, "tp": tp, "qty": total,
+        for role, order_type, key in (
+            ("stop_loss", "stop market", "stop_loss"),
+            ("take_profit", "limit", "take_profit"),
+        ):
+            order = self._new_order_record(close_side, order_type, entry[key], entry["qty"], origin=f"bracket-{role}")
+            order.update({
+                "role": role,
+                "parent_order_id": entry["id"],
+                "status": "open",
+                "armed": bool(active),
+                "active_from_ts": active_ts,
             })
-            self._next_bracket_group_number += 1
-        else:
-            largest = max(self._bracket_groups, key=lambda item: float(item.get("qty") or 0.0))
-            half = float(largest.get("qty") or 0.0) / 2.0
-            largest["qty"] = half
-            number = self._next_bracket_group_number
-            self._bracket_groups.append({
-                "id": f"group-{number}", "label": f"Group {number}",
-                "sl": float(largest.get("sl") or sl), "tp": float(largest.get("tp") or tp), "qty": half,
-            })
-            self._next_bracket_group_number += 1
-        self._group_plan_initialized = True
-        self._manual_group_allocation = True
-        self.update_metrics()
-        return True
-
-    def remove_selected_bracket_group(self) -> bool:
-        if self._active_entry_id is not None and not self._active_bracket_is_live():
-            return False
-        row = self.bracket_group_table.currentRow()
-        if row < 0 and self._bracket_groups:
-            row = len(self._bracket_groups) - 1
-        if not 0 <= row < len(self._bracket_groups):
-            return False
-        self._bracket_groups.pop(row)
-        self._group_plan_initialized = True
-        self._manual_group_allocation = True
-        self.update_metrics()
-        return True
-
-    def _active_bracket_is_live(self) -> bool:
-        entry = self._active_entry_record()
-        return bool(entry and entry.get("status") == "filled" and entry.get("bracket_status") == "active")
+            entry["bracket_order_ids"].append(order["id"])
+            self.pending_orders.append(order)
 
     def confirm_bracket_update(self) -> bool:
         entry = self._active_entry_record()
@@ -551,39 +364,30 @@ class OrderPanel(QtWidgets.QWidget):
             or self._confirmed_bracket is None
         ):
             return False
-        groups = deepcopy(self._bracket_groups)
-        if self._bracket_group_signature(groups) == self._bracket_group_signature(self._confirmed_bracket_groups):
+        sl = self._read_price(self.sl_edit.text())
+        tp = self._read_price(self.tp_edit.text())
+        if sl is None or tp is None:
+            self._set_send_status("Enter valid SL and TP prices", "#ef5350")
+            return False
+        if abs(sl - self._confirmed_bracket[0]) <= 1e-9 and abs(tp - self._confirmed_bracket[1]) <= 1e-9:
             return False
         entry_price = float(entry.get("fill_price") or entry.get("requested_price") or 0.0)
         is_long = entry.get("side") == "long"
-        self._recompute_state()
-        total_qty = float(self._position.get("qty") or 0.0) if self._position is not None else 0.0
-        assigned = sum(float(group.get("qty") or 0.0) for group in groups)
-        if assigned > total_qty + 1e-9:
-            self._set_send_status("Group Lots total cannot exceed position Lots", "#ef5350")
+        if (sl >= entry_price if is_long else sl <= entry_price):
+            self._set_send_status("SL is on the wrong side of Entry", "#ef5350")
             return False
-        for group in groups:
-            sl = float(group.get("sl") or 0.0)
-            tp = float(group.get("tp") or 0.0)
-            if float(group.get("qty") or 0.0) <= 0:
-                continue
-            if sl <= 0 or tp <= 0 or (sl >= entry_price if is_long else sl <= entry_price):
-                self._set_send_status("A group SL is on the wrong side of Entry", "#ef5350")
-                return False
-            if tp <= 0 or (tp <= entry_price if is_long else tp >= entry_price):
-                self._set_send_status("A group TP is on the wrong side of Entry", "#ef5350")
-                return False
+        if (tp <= entry_price if is_long else tp >= entry_price):
+            self._set_send_status("TP is on the wrong side of Entry", "#ef5350")
+            return False
 
-        entry["bracket_groups"] = groups
-        if groups:
-            entry["stop_loss"] = float(groups[0]["sl"])
-            entry["take_profit"] = float(groups[0]["tp"])
-        self._remove_bracket_orders(entry["id"])
-        self._create_protection_orders(entry, active=True, active_ts=float(entry.get("fill_ts") or self._current_ts()))
+        entry["stop_loss"] = float(sl)
+        entry["take_profit"] = float(tp)
+        for order in self.pending_orders:
+            if order.get("parent_order_id") != entry["id"]:
+                continue
+            order["requested_price"] = float(sl if order.get("role") == "stop_loss" else tp)
         entry["bracket_status"] = "active"
-        self._bracket_groups = deepcopy(groups)
-        self._confirmed_bracket_groups = deepcopy(groups)
-        self._confirmed_bracket = (float(groups[0]["sl"]), float(groups[0]["tp"])) if groups else None
+        self._confirmed_bracket = (float(sl), float(tp))
         self.case.touch()
         self.refresh()
         self.changed.emit()
@@ -592,15 +396,20 @@ class OrderPanel(QtWidgets.QWidget):
 
     def cancel_bracket_update(self) -> bool:
         entry = self._active_entry_record()
-        if entry is None or entry.get("status") != "filled" or entry.get("bracket_status") != "active" or self._confirmed_bracket_groups is None:
+        if (
+            entry is None
+            or entry.get("status") != "filled"
+            or entry.get("bracket_status") != "active"
+            or self._confirmed_bracket is None
+        ):
             return False
-        if self._bracket_group_signature(self._bracket_groups) == self._bracket_group_signature(self._confirmed_bracket_groups):
+        sl, tp = self._confirmed_bracket
+        current_sl = self._read_price(self.sl_edit.text())
+        current_tp = self._read_price(self.tp_edit.text())
+        if current_sl is not None and current_tp is not None and abs(current_sl - sl) <= 1e-9 and abs(current_tp - tp) <= 1e-9:
             return False
-        self._bracket_groups = deepcopy(self._confirmed_bracket_groups)
-        if self._bracket_groups:
-            sl, tp = float(self._bracket_groups[0]["sl"]), float(self._bracket_groups[0]["tp"])
-            self.sl_edit.setText(f"{sl:.{self._price_precision(sl)}f}")
-            self.tp_edit.setText(f"{tp:.{self._price_precision(tp)}f}")
+        self.sl_edit.setText(f"{sl:.{self._price_precision(sl)}f}")
+        self.tp_edit.setText(f"{tp:.{self._price_precision(tp)}f}")
         self.refresh()
         self._set_send_status("SL / TP changes cancelled", "#9aa9bf")
         return True
@@ -622,10 +431,6 @@ class OrderPanel(QtWidgets.QWidget):
         self._confirmed_bracket = (
             (float(entry["stop_loss"]), float(entry["take_profit"])) if active else None
         )
-        self._bracket_groups = deepcopy(entry.get("bracket_groups") or []) if active else []
-        self._confirmed_bracket_groups = deepcopy(self._bracket_groups) if active else None
-        self._group_plan_initialized = bool(self._bracket_groups)
-        self._manual_group_allocation = bool(self._bracket_groups)
         for order in self.pending_orders:
             if order.get("parent_order_id") == entry.get("id"):
                 order["armed"] = bool(active)
@@ -636,50 +441,6 @@ class OrderPanel(QtWidgets.QWidget):
             order for order in self.pending_orders
             if order.get("parent_order_id") != parent_id
         ]
-
-    def _remove_bracket_group(self, parent_id: str, group_id: str) -> None:
-        parent = self._find_entry_by_id(parent_id)
-        self.pending_orders = [
-            order for order in self.pending_orders
-            if not (order.get("parent_order_id") == parent_id and order.get("group_id") == group_id)
-        ]
-        if parent is None:
-            return
-        parent["bracket_groups"] = [
-            group for group in parent.get("bracket_groups", [])
-            if group.get("id") != group_id
-        ]
-        if parent.get("bracket_groups"):
-            parent["stop_loss"] = float(parent["bracket_groups"][0]["sl"])
-            parent["take_profit"] = float(parent["bracket_groups"][0]["tp"])
-        if parent_id == self._active_entry_id:
-            self._bracket_groups = deepcopy(parent.get("bracket_groups", []))
-            self._confirmed_bracket_groups = deepcopy(self._bracket_groups)
-            self._confirmed_bracket = (
-                (float(self._bracket_groups[0]["sl"]), float(self._bracket_groups[0]["tp"]))
-                if self._bracket_groups else None
-            )
-            self._group_plan_initialized = True
-            self._manual_group_allocation = True
-
-    def _complete_protection_group(self, parent_id: str, group_id: str, exit_order: dict) -> None:
-        parent = self._find_entry_by_id(parent_id)
-        self._remove_bracket_group(parent_id, group_id)
-        if parent is None:
-            return
-        parent.setdefault("bracket_exits", {})[group_id] = exit_order["id"]
-        self._recompute_state()
-        if self._position is None:
-            self._finish_active_bracket(parent_id, "closed")
-        else:
-            parent["bracket_status"] = "active"
-            self._active_entry_id = parent_id
-            self._bracket_groups = deepcopy(parent.get("bracket_groups", []))
-            self._confirmed_bracket_groups = deepcopy(self._bracket_groups)
-            self._confirmed_bracket = (
-                (float(self._bracket_groups[0]["sl"]), float(self._bracket_groups[0]["tp"]))
-                if self._bracket_groups else None
-            )
 
     def _find_entry_by_id(self, order_id: str | None) -> dict | None:
         if self.case is None or not order_id:
@@ -700,10 +461,6 @@ class OrderPanel(QtWidgets.QWidget):
         if self._active_entry_id == parent_id:
             self._active_entry_id = None
             self._confirmed_bracket = None
-            self._confirmed_bracket_groups = None
-            self._bracket_groups = []
-            self._group_plan_initialized = False
-            self._manual_group_allocation = False
 
     def _restore_active_bracket(self) -> None:
         """Rebuild session-only protection rows for the currently open saved position."""
@@ -720,14 +477,7 @@ class OrderPanel(QtWidgets.QWidget):
                 and float(entry.get("fill_ts") or 0.0) <= self._current_ts()
             ):
                 self._active_entry_id = entry.get("id")
-                self._bracket_groups = deepcopy(entry.get("bracket_groups") or [])
-                self._confirmed_bracket_groups = deepcopy(self._bracket_groups)
-                self._confirmed_bracket = (
-                    (float(self._bracket_groups[0]["sl"]), float(self._bracket_groups[0]["tp"]))
-                    if self._bracket_groups else None
-                )
-                self._group_plan_initialized = True
-                self._manual_group_allocation = True
+                self._confirmed_bracket = (float(entry["stop_loss"]), float(entry["take_profit"]))
                 self._create_protection_orders(entry, active=True, active_ts=float(entry.get("fill_ts") or 0.0))
                 break
 
@@ -742,11 +492,6 @@ class OrderPanel(QtWidgets.QWidget):
         self.entry_edit.setText("0")
         self.sl_edit.setText("0")
         self.tp_edit.setText("0")
-        self._bracket_groups = []
-        self._confirmed_bracket_groups = None
-        self._group_plan_initialized = False
-        self._manual_group_allocation = False
-        self._next_bracket_group_number = 1
         self.status_label.setText("Plan cancelled")
         self.status_label.setStyleSheet("color:#9aa9bf;")
         self.update_metrics()
@@ -784,18 +529,14 @@ class OrderPanel(QtWidgets.QWidget):
     def update_metrics(self, *_args) -> None:
         entry = self._entry_price()
         active_entry = self._active_entry_record()
-        submitted_pending_entry = bool(active_entry and active_entry.get("status") == "open")
-        plan_side = str(active_entry.get("side")) if active_entry else self.selected_side
         bracket_active = bool(
             active_entry
             and active_entry.get("status") == "filled"
             and active_entry.get("bracket_status") == "active"
         )
-        if submitted_pending_entry:
-            entry = active_entry.get("requested_price")
         if bracket_active:
             entry = float(active_entry.get("fill_price") or entry or 0.0)
-        if self.mode_market.isChecked() and entry is not None and active_entry is None:
+        if self.mode_market.isChecked() and entry is not None:
             blocked = self.entry_edit.blockSignals(True)
             self.entry_edit.setText(f"{entry:.{self._price_precision(entry)}f}")
             self.entry_edit.blockSignals(blocked)
@@ -804,7 +545,8 @@ class OrderPanel(QtWidgets.QWidget):
         risk_target = self._risk_target()
         entry_edit = entry if entry is not None else 0.0
         self.price_edit.setText(str(entry_edit))
-        order_type = str(active_entry.get("order_type")) if active_entry else self._order_type(entry)
+        plan_side = str(active_entry.get("side")) if bracket_active else self.selected_side
+        order_type = str(active_entry.get("order_type")) if bracket_active else self._order_type(entry)
         self.order_type_label.setText(f"Order Type: {order_type}")
         if order_type in ("market", "limit", "stop market"):
             self.type_combo.setCurrentText(order_type)
@@ -815,9 +557,9 @@ class OrderPanel(QtWidgets.QWidget):
         est_loss = None
         est_profit = None
         rr = None
-        if bracket_active or submitted_pending_entry:
-            lots = float(self._position.get("qty") or 0.0) if self._position is not None else float(active_entry.get("qty") or 0.0)
-            if bracket_active and sl is not None and entry is not None:
+        if bracket_active:
+            lots = float(active_entry.get("qty") or 0.0)
+            if sl is not None and entry is not None:
                 est_loss = abs(entry - sl) * lots
                 if tp is not None and (tp > entry if multiplier > 0 else tp < entry):
                     est_profit = abs(tp - entry) * lots
@@ -831,58 +573,12 @@ class OrderPanel(QtWidgets.QWidget):
                     est_profit = abs(tp - entry) * lots
                     rr = abs(tp - entry) / per_lot_loss
 
-        if active_entry:
-            if not self._bracket_groups:
-                self._bracket_groups = deepcopy(active_entry.get("bracket_groups") or [])
-                self._group_plan_initialized = True
-            if self._bracket_groups:
-                if bracket_active:
-                    if sl is not None:
-                        self._bracket_groups[0]["sl"] = float(sl)
-                    if tp is not None:
-                        self._bracket_groups[0]["tp"] = float(tp)
-                sl = float(self._bracket_groups[0].get("sl") or sl or 0.0)
-                tp = float(self._bracket_groups[0].get("tp") or tp or 0.0)
-                if entry is not None:
-                    est_loss = sum(abs(entry - float(group.get("sl") or entry)) * float(group.get("qty") or 0.0) for group in self._bracket_groups)
-                    est_profit = sum(abs(float(group.get("tp") or entry) - entry) * float(group.get("qty") or 0.0) for group in self._bracket_groups)
-                    rr = est_profit / est_loss if est_loss > 1e-12 else None
-        elif sl is not None and tp is not None and lots is not None and lots > 0:
-            if not self._group_plan_initialized:
-                self._bracket_groups = [{
-                    "id": f"group-{self._next_bracket_group_number}",
-                    "label": f"Group {self._next_bracket_group_number}",
-                    "sl": float(sl), "tp": float(tp), "qty": float(lots),
-                }]
-                self._next_bracket_group_number += 1
-                self._group_plan_initialized = True
-            elif self._bracket_groups:
-                self._bracket_groups[0]["sl"] = float(sl)
-                self._bracket_groups[0]["tp"] = float(tp)
-                if not self._manual_group_allocation:
-                    allocated_before = sum(float(group.get("qty") or 0.0) for group in self._bracket_groups)
-                    if allocated_before > 1e-12:
-                        scale = float(lots) / allocated_before
-                        for group in self._bracket_groups:
-                            group["qty"] = float(group.get("qty") or 0.0) * scale
-                    elif self._bracket_groups:
-                        self._bracket_groups[0]["qty"] = float(lots)
-            self._last_plan_lots = float(lots)
-
         self.qty_spin.setValue(0.0 if lots is None else lots)
         self.metric_labels["Est Loss"].setText("--" if est_loss is None else f"{est_loss:,.2f} USD")
         self.metric_labels["Est Profit"].setText("--" if est_profit is None else f"{est_profit:,.2f} USD")
         self.metric_labels["RR"].setText("--" if rr is None else f"{rr:.2f}")
         self.metric_labels["Risk Target"].setText(f"{risk_target:,.2f} USD" if risk_target > 0 else "--")
         self.metric_labels["Lots"].setText("--" if lots is None else f"{lots:.6f}")
-        self._refresh_bracket_group_table(None if lots is None else float(lots))
-        self._set_plan_controls_locked(bool(active_entry), submitted_pending_entry)
-        groups_dirty = bool(
-            bracket_active
-            and self._confirmed_bracket_groups is not None
-            and self._bracket_group_signature(self._bracket_groups)
-            != self._bracket_group_signature(self._confirmed_bracket_groups)
-        )
 
         self.order_plan_changed.emit({
             "mode": "market" if self.mode_market.isChecked() else "pending",
@@ -895,63 +591,25 @@ class OrderPanel(QtWidgets.QWidget):
             "est_loss": est_loss,
             "est_profit": est_profit,
             "rr": rr,
-            "bracket_groups": deepcopy(self._bracket_groups),
             "bracket_edit_enabled": bracket_active,
-            "entry_locked": bool(active_entry),
-            "plan_locked": submitted_pending_entry,
+            "entry_locked": bracket_active,
             "bracket_dirty": bool(
                 bracket_active
-                and (groups_dirty or (
-                    self._confirmed_bracket is not None
-                    and sl is not None
-                    and tp is not None
-                    and (abs(sl - self._confirmed_bracket[0]) > 1e-9 or abs(tp - self._confirmed_bracket[1]) > 1e-9)
-                ))
+                and self._confirmed_bracket is not None
+                and sl is not None
+                and tp is not None
+                and (abs(sl - self._confirmed_bracket[0]) > 1e-9 or abs(tp - self._confirmed_bracket[1]) > 1e-9)
             ),
         })
 
-    def _set_plan_controls_locked(self, submitted: bool, waiting_entry: bool) -> None:
-        for widget in (
-            self.mode_pending, self.mode_market, self.btn_short, self.btn_long,
-            self.equity_spin, self.risk_mode_button, self.risk_input,
-            self.sl_edit, self.tp_edit,
-        ):
-            widget.setEnabled(not submitted)
-        self.entry_edit.setEnabled(not submitted and not self.mode_market.isChecked())
-        self.btn_add_bracket_group.setEnabled(not waiting_entry)
-        self.btn_remove_bracket_group.setEnabled(not waiting_entry and bool(self._bracket_groups))
-
     def set_plan_price_from_chart(self, field: str, price: float) -> None:
-        if price <= 0:
+        fields = {"entry": self.entry_edit, "sl": self.sl_edit, "tp": self.tp_edit}
+        widget = fields.get(field)
+        if widget is None or price <= 0:
             return
-        if field == "entry":
-            if self._active_entry_id is not None or self.mode_market.isChecked():
-                return
-            self.entry_edit.setText(f"{float(price):.{self._price_precision(price)}f}")
+        if field == "entry" and self.mode_market.isChecked():
             return
-        if self._active_entry_id is not None and not self._active_bracket_is_live():
-            return
-        if field in ("sl", "tp") and self._bracket_groups:
-            group = self._bracket_groups[0]
-            group[field] = float(price)
-            widget = self.sl_edit if field == "sl" else self.tp_edit
-            widget.setText(f"{float(price):.{self._price_precision(price)}f}")
-            self._refresh_bracket_group_table(float(self.qty_spin.value()))
-            return
-        if ":" in field:
-            leg, group_id = field.split(":", 1)
-            if leg not in ("sl", "tp"):
-                return
-            for group in self._bracket_groups:
-                if group.get("id") == group_id:
-                    group[leg] = float(price)
-                    if self._bracket_groups.index(group) == 0:
-                        widget = self.sl_edit if leg == "sl" else self.tp_edit
-                        widget.setText(f"{float(price):.{self._price_precision(price)}f}")
-                    else:
-                        self.update_metrics()
-                    self._refresh_bracket_group_table(float(self.qty_spin.value()))
-                    return
+        widget.setText(f"{float(price):.{self._price_precision(price)}f}")
 
     def set_context(self, case, raw_df: pd.DataFrame, replay):
         self.case = case
@@ -959,11 +617,6 @@ class OrderPanel(QtWidgets.QWidget):
         self.replay = replay
         self._active_entry_id = None
         self._confirmed_bracket = None
-        self._confirmed_bracket_groups = None
-        self._bracket_groups = []
-        self._group_plan_initialized = False
-        self._manual_group_allocation = False
-        self._next_bracket_group_number = 1
         for widget in (self.entry_edit, self.sl_edit, self.tp_edit):
             widget.setText("0")
         # Unfilled orders are not research records and are never restored.
@@ -1102,7 +755,6 @@ class OrderPanel(QtWidgets.QWidget):
         self._restore_active_bracket()
         bars = self.raw_df[(self.raw_df["timestamp"] > previous_ts) & (self.raw_df["timestamp"] <= current_ts)]
         changed = False
-        closed_group_keys: set[tuple[str, str]] = set()
         closed_parent_ids: set[str] = set()
         for _, bar in bars.iterrows():
             bar_ts = float(bar["timestamp"])
@@ -1128,15 +780,11 @@ class OrderPanel(QtWidgets.QWidget):
                         self._set_active_bracket(record, True, active_ts=bar_ts)
                     changed = True
             for protection in list(self.pending_orders):
-                if protection not in self.pending_orders:
-                    continue
                 role = protection.get("role")
                 if role not in ("stop_loss", "take_profit") or not protection.get("armed"):
                     continue
                 parent_id = protection.get("parent_order_id")
-                group_id = str(protection.get("group_id") or "")
-                group_key = (str(parent_id), group_id)
-                if group_key in closed_group_keys:
+                if parent_id in closed_parent_ids:
                     continue
                 active_from = protection.get("active_from_ts")
                 if active_from is not None and bar_ts <= float(active_from):
@@ -1160,10 +808,9 @@ class OrderPanel(QtWidgets.QWidget):
                 self._fill_record(protection, price, bar_ts)
                 self.pending_orders.remove(protection)
                 self.case.orders.append(protection)
-                closed_group_keys.add(group_key)
-                self._complete_protection_group(parent_id, group_id, protection)
-                if self._position is None:
-                    closed_parent_ids.add(parent_id)
+                parent["bracket_exit_id"] = protection["id"]
+                closed_parent_ids.add(parent_id)
+                self._finish_active_bracket(parent_id, "closed")
                 changed = True
         if changed:
             self.case.touch()
@@ -1188,8 +835,8 @@ class OrderPanel(QtWidgets.QWidget):
             if record.get("id") == order_id:
                 if record.get("role"):
                     parent_id = record.get("parent_order_id")
-                    self._remove_bracket_group(parent_id, record.get("group_id"))
-                    self._set_send_status("SL / TP group cancelled; other groups remain active", "#f5a623")
+                    self._finish_active_bracket(parent_id, "cancelled")
+                    self._set_send_status("SL / TP protection cancelled; position remains open", "#f5a623")
                     if self.case is not None:
                         self.case.touch()
                         self.changed.emit()
