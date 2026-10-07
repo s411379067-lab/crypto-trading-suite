@@ -130,3 +130,31 @@ def test_pending_submit_keeps_brackets_linked_until_entry_then_oco_exits():
     panel.process_replay_advance(60.0, 120.0)
     assert [record["bracket_role"] for record in panel.case.orders] == ["entry", "target"]
     assert panel.pending_orders == []
+
+
+def test_manual_market_close_cancels_submitted_bracket_protection():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    class Case:
+        orders = []
+        display = {"timezone": "UTC"}
+
+        def touch(self):
+            pass
+
+    class Replay:
+        current_ts = 0.0
+
+    panel = OrderPanel()
+    panel.case = Case()
+    panel.raw_df = pd.DataFrame([{"timestamp": 60.0, "low": 99.0, "high": 101.0, "close": 100.0}])
+    panel.replay = Replay()
+    panel.pending_bracket = create_pending_bracket("short", 100.0, 1.0)
+    panel.submit_pending_bracket()
+    panel.process_replay_advance(0.0, 60.0)
+    panel.replay.current_ts = 60.0
+
+    panel.close_position()
+
+    assert panel.pending_orders == []
+    assert panel.submitted_bracket is None

@@ -318,9 +318,24 @@ class OrderPanel(QtWidgets.QWidget):
         record = self._new_order_record(side, "market", None, qty, origin="manual-close")
         self._fill_record(record, cp, self._current_ts())
         self.case.orders.append(record)
+        self._cancel_submitted_bracket_protection()
         self.case.touch()
         self.refresh()
         self.changed.emit(); self.fills_changed.emit()
+
+    def _cancel_submitted_bracket_protection(self):
+        """Cancel transient SL/TP children when their bracket is closed manually."""
+        bracket_id = str((self.submitted_bracket or {}).get("id", ""))
+        if bracket_id:
+            self.pending_orders = [
+                order for order in self.pending_orders
+                if not (
+                    str(order.get("bracket_id", "")) == bracket_id
+                    and order.get("bracket_role") in ("stop", "target")
+                )
+            ]
+        self.submitted_bracket = None
+        self.submitted_bracket_changed.emit(None)
 
     def _fill_record(self, record: dict, price: float, fill_ts: float):
         record["status"] = "filled"
@@ -369,6 +384,9 @@ class OrderPanel(QtWidgets.QWidget):
                                 and other.get("bracket_role") in ("stop", "target")
                             )
                         ]
+                        if str((self.submitted_bracket or {}).get("id", "")) == str(record.get("bracket_id", "")):
+                            self.submitted_bracket = None
+                            self.submitted_bracket_changed.emit(None)
                     changed = True
         if changed:
             self.case.touch()
