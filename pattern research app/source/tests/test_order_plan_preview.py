@@ -547,6 +547,11 @@ def test_trade_metrics_show_replay_day_win_rate_for_closed_trades_only():
     panel.refresh()
 
     assert panel.metric_labels["Win Rate"].text() == "33.3% (1/3)"
+    assert panel.metric_labels["Daily PF"].text() == "1.67"
+
+    panel.case.orders = panel.case.orders[:4]
+    panel.refresh()
+    assert panel.metric_labels["Daily PF"].text() == "∞"
 
 
 def test_cancel_plan_deselects_order_mode_and_removes_chart_plan_lines():

@@ -65,6 +65,7 @@ class OrderPanel(QtWidgets.QWidget):
         self._realized_pnl = 0.0
         self._realized_r = 0.0
         self._daily_win_rate = (0, 0)
+        self._daily_profit_factor: float | None = None
         self._active_entry_id: str | None = None
         self._confirmed_bracket: tuple[float, float] | None = None
         self._take_profit_rows: list[dict] = []
@@ -173,7 +174,7 @@ class OrderPanel(QtWidgets.QWidget):
         self.metrics_separator.setFrameShape(QtWidgets.QFrame.HLine)
         self.metrics_separator.setFrameShadow(QtWidgets.QFrame.Sunken)
         metrics_grid.addWidget(self.metrics_separator, 5, 0, 1, 2)
-        for row, key in enumerate(("Realized PnL", "Unrealized PnL", "Win Rate"), start=6):
+        for row, key in enumerate(("Realized PnL", "Unrealized PnL", "Win Rate", "Daily PF"), start=6):
             value = QtWidgets.QLabel("$0.00")
             value.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
             value.setWordWrap(True)
@@ -921,6 +922,10 @@ class OrderPanel(QtWidgets.QWidget):
         self.metric_labels["Win Rate"].setText(
             f"{wins / total * 100:.1f}% ({wins}/{total})" if total else "-- (0/0)"
         )
+        daily_pf = self._daily_profit_factor
+        self.metric_labels["Daily PF"].setText(
+            "∞" if daily_pf == float("inf") else "--" if daily_pf is None else f"{daily_pf:.2f}"
+        )
 
         bracket_dirty = bool(
             bracket_active
@@ -1402,6 +1407,7 @@ class OrderPanel(QtWidgets.QWidget):
         if self.case is None:
             self._position = None; self._realized_pnl = 0.0; self._realized_r = 0.0
             self._daily_win_rate = (0, 0)
+            self._daily_profit_factor = None
             return
         current_ts = self._current_ts()
         timezone_name = self.case.display.get("timezone", "Asia/Taipei")
@@ -1468,6 +1474,14 @@ class OrderPanel(QtWidgets.QWidget):
         self._realized_r = realized / self.R_VALUE
         wins = sum(1 for pnl in daily_closed_pnls if pnl > 1e-12)
         self._daily_win_rate = (wins, len(daily_closed_pnls))
+        gross_profit = sum(pnl for pnl in daily_closed_pnls if pnl > 1e-12)
+        gross_loss = -sum(pnl for pnl in daily_closed_pnls if pnl < -1e-12)
+        if gross_loss > 1e-12:
+            self._daily_profit_factor = gross_profit / gross_loss
+        elif gross_profit > 1e-12:
+            self._daily_profit_factor = float("inf")
+        else:
+            self._daily_profit_factor = None
 
     def refresh(self):
         self._recompute_state()
