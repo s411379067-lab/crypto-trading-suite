@@ -564,8 +564,12 @@ class OrderPanel(QtWidgets.QWidget):
         if (sl >= entry_price if is_long else sl <= entry_price):
             self._set_send_status("SL is on the wrong side of Entry", "#ef5350")
             return False
-        if (tp <= entry_price if is_long else tp >= entry_price):
-            self._set_send_status("TP is on the wrong side of Entry", "#ef5350")
+        current_price = self.current_price()
+        if current_price is None:
+            self._set_send_status("No replay price is available", "#ef5350")
+            return False
+        if (tp <= current_price if is_long else tp >= current_price):
+            self._set_send_status("TP must remain beyond the current market for an untriggered exit", "#ef5350")
             return False
 
         entry["stop_loss"] = float(sl)
@@ -779,6 +783,11 @@ class OrderPanel(QtWidgets.QWidget):
             return None if value is None else float(value)
         return self._read_price(self.entry_edit.text())
 
+    @staticmethod
+    def _tp_is_beyond_market(price: float, current_price: float, side: str) -> bool:
+        """Return whether an untriggered TP remains on the executable side of market."""
+        return price > current_price if side == "long" else price < current_price
+
     def _risk_target(self) -> float:
         value = float(self.risk_input.value())
         if self._risk_mode == "percent":
@@ -849,6 +858,7 @@ class OrderPanel(QtWidgets.QWidget):
         assigned_tp_units = sum(self._lots_to_units(item["qty"]) for item in take_profits)
         assigned_tp_lots = assigned_tp_units / 10.0
         position_lot_units = self._lots_to_units(lots) if lots is not None else 0
+        current_price = self.current_price()
         est_profit_total = 0.0
         has_valid_tp = False
         if entry is not None:
@@ -856,8 +866,17 @@ class OrderPanel(QtWidgets.QWidget):
                 target_price = target["price"]
                 if target_price is None or target["qty"] <= 0:
                     continue
-                if target_price > entry if multiplier > 0 else target_price < entry:
-                    est_profit_total += abs(target_price - entry) * target["qty"]
+                if bracket_active:
+                    tp_valid = (
+                        current_price is not None
+                        and self._tp_is_beyond_market(target_price, current_price, plan_side)
+                    )
+                    target_pnl = (target_price - entry) * multiplier * target["qty"]
+                else:
+                    tp_valid = target_price > entry if multiplier > 0 else target_price < entry
+                    target_pnl = abs(target_price - entry) * target["qty"]
+                if tp_valid:
+                    est_profit_total += target_pnl
                     has_valid_tp = True
         est_profit = est_profit_total if has_valid_tp else None
         rr = est_profit / est_loss if est_profit is not None and est_loss and est_loss > 1e-12 else None
@@ -881,7 +900,6 @@ class OrderPanel(QtWidgets.QWidget):
         self.metric_labels["RR"].setText("--" if rr is None else f"{rr:.2f}")
         self.metric_labels["Risk Target"].setText(f"{risk_target:,.2f} USD" if risk_target > 0 else "--")
         self.metric_labels["Lots"].setText("--" if lots is None else f"{lots:.1f}")
-        current_price = self.current_price()
         unrealized = 0.0
         if self._position is not None and current_price is not None:
             unrealized = (
@@ -976,6 +994,7 @@ class OrderPanel(QtWidgets.QWidget):
                 self.case.touch()
                 self.changed.emit()
         self._restore_active_bracket()
+        self._apply_default_bracket()
         self.refresh()
 
     def _create_take_profit_row(self, price_text: str, qty: float = 0.0) -> dict:

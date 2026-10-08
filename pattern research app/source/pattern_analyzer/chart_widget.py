@@ -1169,16 +1169,20 @@ class ChartWidget(QtWidgets.QWidget):
                            if item.get("id") == target_id), None)
         entry = self.order_plan.get("entry")
         qty = target.get("qty") if target else self.order_plan.get("lots")
-        profit = abs(float(price) - float(entry)) * float(qty) if entry and qty else self.order_plan.get("est_profit")
+        side = str(self.order_plan.get("side") or "long").lower()
+        direction = 1.0 if side == "long" else -1.0
+        profit = (float(price) - float(entry)) * direction * float(qty) if entry and qty else self.order_plan.get("est_profit")
         sl = self.order_plan.get("sl")
-        rr = abs(float(price) - float(entry)) / abs(float(entry) - float(sl)) if entry and sl and abs(float(entry) - float(sl)) > 1e-12 else self.order_plan.get("rr")
+        risk = abs(float(entry) - float(sl)) if entry and sl else 0.0
+        rr = profit / (risk * float(qty)) if profit is not None and risk > 1e-12 and qty else self.order_plan.get("rr")
         profit_text = "--" if profit is None else f"{fmt(profit)} USD"
+        profit_color = "#50d6a0" if profit is None or profit >= 0 else "#ff6b70"
         rr_text = "--" if rr is None else f"{fmt(rr)}R"
         target_label = target.get("label", "TP") if target else "TP"
         lots_text = "--" if qty is None else fmt(qty, 1)
         return (
             f'<span style="color:#e6edf7">{target_label} {fmt(price)}</span>'
-            f'<span style="color:#50d6a0"> | {profit_text}</span>'
+            f'<span style="color:{profit_color}"> | {profit_text}</span>'
             f'<span style="color:#62c9ff"> | {rr_text} | Lots {lots_text}</span>'
         )
 

@@ -15,14 +15,18 @@ def _app():
 
 
 def _attach_replay(panel):
+    _attach_replay_market_data(panel)
+    panel.entry_edit.setText("100")
+    panel.sl_edit.setText("95")
+    panel.tp_edit.setText("110")
+
+
+def _attach_replay_market_data(panel):
     panel.case = SimpleNamespace(orders=[], display={"timezone": "UTC"}, touch=lambda: None)
     panel.raw_df = pd.DataFrame([
         {"timestamp": 1_000.0, "open": 99.0, "high": 101.0, "low": 98.0, "close": 100.0},
     ])
     panel.replay = SimpleNamespace(current_ts=1_000.0)
-    panel.entry_edit.setText("100")
-    panel.sl_edit.setText("95")
-    panel.tp_edit.setText("110")
 
 
 def test_panel_emits_transient_plan_and_accepts_chart_price_edits():
@@ -269,6 +273,34 @@ def test_confirm_and_cancel_bracket_edits_apply_or_restore_prices():
     assert panel.cancel_bracket_update()
     assert panel.sl_edit.text() == "94.00"
     assert panel.tp_edit.text() == "112.00"
+
+
+def test_filled_short_allows_early_exit_tp_above_entry_but_below_market():
+    app = _app()
+    panel = OrderPanel()
+    _attach_replay_market_data(panel)
+    panel.risk_input.setValue(2.0)
+    panel.set_side("short")
+    panel.set_order_mode("market")
+    assert panel.submit_plan()
+    entry = panel.case.orders[0]
+
+    panel.raw_df.loc[0, "close"] = 101.0
+    panel.sl_edit.setText("105")
+    panel.tp_edit.setText("100.5")
+    panel.update_metrics()
+
+    assert panel.confirm_bracket_update()
+    assert entry["fill_price"] == 100.0
+    assert entry["take_profit"] == 100.5
+    assert panel.metric_labels["Est Profit"].text() == "-10.00 USD"
+    tp_order = next(order for order in panel.pending_orders if order.get("role") == "take_profit")
+    assert tp_order["requested_price"] == 100.5
+
+    panel.tp_edit.setText("101.5")
+    assert panel.confirm_bracket_update() is False
+    assert entry["take_profit"] == 100.5
+    assert "beyond the current market" in panel.status_label.text()
 
 
 def test_active_protection_orders_are_rebuilt_when_case_is_reopened():
@@ -618,6 +650,25 @@ def test_default_bracket_levels_are_one_tenth_percent_and_follow_side_and_entry(
     assert panel.tp_edit.text() == "199.80"
 
 
+def test_default_bracket_is_generated_for_pending_and_market_modes():
+    app = _app()
+    pending = OrderPanel()
+    _attach_replay_market_data(pending)
+    pending.set_side("short")
+    pending.entry_edit.setText("100")
+    assert pending.sl_edit.text() == "100.10"
+    assert pending.tp_edit.text() == "99.90"
+
+    market = OrderPanel()
+    market.case = SimpleNamespace(orders=[], display={"timezone": "UTC"}, touch=lambda: None)
+    market.raw_df = pd.DataFrame([{"timestamp": 1_000.0, "open": 99.0, "high": 101.0, "low": 98.0, "close": 100.0}])
+    market.replay = SimpleNamespace(current_ts=1_000.0)
+    market.set_side("short")
+    market.set_order_mode("market")
+    assert market.sl_edit.text() == "100.10"
+    assert market.tp_edit.text() == "99.90"
+
+
 def test_default_multiple_take_profits_are_staggered_by_one_tenth_percent():
     app = _app()
     panel = OrderPanel()
@@ -668,6 +719,15 @@ def test_chart_draws_and_updates_transient_order_plan_lines():
     assert "SHORT | 100.00" in chart.order_plan_labels["entry"].textItem.toHtml()
     assert "STOP" not in chart.order_plan_labels["entry"].textItem.toHtml()
     assert chart.order_plan_items["entry"].pen.color().name() == "#ef5350"
+
+    chart.set_order_plan({
+        "mode": "market", "side": "short", "entry": 100.0, "sl": 105.0,
+        "tp": 100.5, "lots": 20.0, "est_loss": 100.0,
+        "take_profits": [{"id": "tp-1", "label": "TP1", "price": 100.5, "qty": 20.0}],
+    })
+    early_exit_html = chart.order_plan_labels["tp"].textItem.toHtml()
+    assert "-10.00 USD" in early_exit_html and "-0.10R" in early_exit_html
+    assert "#ff6b70" in early_exit_html
 
     chart.set_order_plan({"mode": "market", "entry": 100, "sl": 95, "tp": 110,
                           "bracket_edit_enabled": True, "bracket_dirty": False})
