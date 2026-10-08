@@ -378,31 +378,34 @@ class ResearchPanel(QtWidgets.QWidget):
 
         self._editing_note_id = note_id
         editor_row = QtWidgets.QWidget(self.note_list)
-        row_layout = QtWidgets.QHBoxLayout(editor_row)
-        row_layout.setContentsMargins(4, 3, 4, 3)
-        row_layout.setSpacing(6)
+        row_layout = QtWidgets.QVBoxLayout(editor_row)
+        row_layout.setContentsMargins(6, 5, 6, 5)
+        row_layout.setSpacing(5)
 
         stamp = QtWidgets.QLabel(str(note.get("replay_time", "")))
         stamp.setStyleSheet("color:#8f9bad; font-size:9pt;")
-        stamp.setWordWrap(True)
-        stamp.setMaximumWidth(145)
+        stamp.setWordWrap(False)
+        row_layout.addWidget(stamp)
 
         editor = QtWidgets.QPlainTextEdit()
         editor.setPlainText(str(note.get("text", "")))
-        editor.setMinimumHeight(64)
+        editor.setMinimumHeight(96)
+        editor.setMinimumWidth(0)
         editor.setTabChangesFocus(True)
+        row_layout.addWidget(editor, 1)
 
         save_btn = QtWidgets.QPushButton("儲存")
         cancel_btn = QtWidgets.QPushButton("取消")
         save_btn.setFixedWidth(52)
         cancel_btn.setFixedWidth(52)
 
-        row_layout.addWidget(stamp)
-        row_layout.addWidget(editor, 1)
-        row_layout.addWidget(save_btn)
-        row_layout.addWidget(cancel_btn)
+        buttons = QtWidgets.QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(save_btn)
+        buttons.addWidget(cancel_btn)
+        row_layout.addLayout(buttons)
         self.note_list.setItemWidget(item, editor_row)
-        item.setSizeHint(editor_row.sizeHint().expandedTo(QtCore.QSize(0, 74)))
+        item.setSizeHint(editor_row.sizeHint().expandedTo(QtCore.QSize(0, 145)))
         self._note_editor = editor
 
         save_btn.clicked.connect(lambda _=False, nid=note_id: self._save_note_edit(nid))
