@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from pyqtgraph.Qt import QtCore, QtWidgets
+import html
+
+from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 from shared_core.models import utc_now_iso
 
@@ -63,6 +65,44 @@ class DeselectableNoteListWidget(QtWidgets.QListWidget):
 
 
 
+class IntradayNoteDelegate(QtWidgets.QStyledItemDelegate):
+    """Render each note as a compact, two-tone timestamp / content row."""
+
+    TIME_ROLE = QtCore.Qt.UserRole + 1
+    TEXT_ROLE = QtCore.Qt.UserRole + 2
+
+    def _document(self, option, index):
+        timestamp = html.escape(str(index.data(self.TIME_ROLE) or ""))
+        text = html.escape(str(index.data(self.TEXT_ROLE) or "")).replace("\n", "<br>")
+        document = QtGui.QTextDocument()
+        document.setDefaultFont(option.font)
+        document.setHtml(
+            f'<span style="color:#62c9ff">{timestamp}</span>'
+            f'<span style="color:#62c9ff"> | </span>'
+            f'<span style="color:#e6edf7">{text}</span>'
+        )
+        document.setTextWidth(max(20.0, float(option.rect.width()) - 12.0))
+        return document
+
+    def paint(self, painter, option, index):
+        item_option = QtWidgets.QStyleOptionViewItem(option)
+        self.initStyleOption(item_option, index)
+        item_option.text = ""
+        style = item_option.widget.style() if item_option.widget is not None else QtWidgets.QApplication.style()
+        style.drawControl(QtWidgets.QStyle.CE_ItemViewItem, item_option, painter, item_option.widget)
+
+        document = self._document(option, index)
+        painter.save()
+        painter.setClipRect(option.rect)
+        painter.translate(option.rect.left() + 6, option.rect.top() + 3)
+        document.documentLayout().draw(painter, QtGui.QAbstractTextDocumentLayout.PaintContext())
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        document = self._document(option, index)
+        return QtCore.QSize(option.rect.width(), max(26, int(document.size().height()) + 6))
+
+
 class ResearchPanel(QtWidgets.QWidget):
     changed = QtCore.Signal()
     reference_levels_changed = QtCore.Signal(bool)
@@ -122,6 +162,7 @@ class ResearchPanel(QtWidgets.QWidget):
         self.note_input.setMaximumHeight(100)
         self.btn_add_note = QtWidgets.QPushButton("新增盤中紀錄")
         self.note_list = DeselectableNoteListWidget()
+        self.note_list.setItemDelegate(IntradayNoteDelegate(self.note_list))
         self.btn_delete_note = QtWidgets.QPushButton("刪除選取紀錄")
         n_layout.addWidget(self.note_input)
         n_layout.addWidget(self.btn_add_note)
@@ -177,8 +218,10 @@ class ResearchPanel(QtWidgets.QWidget):
         for item in self.case.intraday_notes:
             stamp = item.get("replay_time", "")
             text = item.get("text", "")
-            widget_item = QtWidgets.QListWidgetItem(f"{stamp}\n{text}")
+            widget_item = QtWidgets.QListWidgetItem(f"{stamp} | {text}")
             widget_item.setData(QtCore.Qt.UserRole, item.get("id"))
+            widget_item.setData(IntradayNoteDelegate.TIME_ROLE, stamp)
+            widget_item.setData(IntradayNoteDelegate.TEXT_ROLE, text)
             self.note_list.addItem(widget_item)
             if selected_note_id is not None and item.get("id") == selected_note_id:
                 selected_row = self.note_list.count() - 1
