@@ -926,6 +926,8 @@ class OrderPanel(QtWidgets.QWidget):
         self.metric_labels["Daily PF"].setText(
             "∞" if daily_pf == float("inf") else "--" if daily_pf is None else f"{daily_pf:.2f}"
         )
+        pf_color = "#9aa9bf" if daily_pf is None else "#26a69a" if daily_pf >= 1.0 else "#ef5350"
+        self.metric_labels["Daily PF"].setStyleSheet(f"color:{pf_color}; font-weight:700;")
 
         bracket_dirty = bool(
             bracket_active

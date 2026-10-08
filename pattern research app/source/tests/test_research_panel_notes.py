@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
+from pyqtgraph.Qt import QtCore, QtWidgets
 
 from pattern_analyzer.research_panel import IntradayNoteDelegate, ResearchPanel
 
@@ -30,7 +30,7 @@ def test_intraday_note_rows_show_timestamp_and_text_as_two_tone_fields():
     panel.set_case(case, lambda: "")
 
     item = panel.note_list.item(0)
-    assert item.text() == "2026-03-02 09:49:00 EST | Retest < 1R"
+    assert item.text() == "2026-03-02 09:49:00 EST\nRetest < 1R"
     assert item.data(QtCore.Qt.UserRole) == "note-1"
     assert isinstance(panel.note_list.itemDelegate(), IntradayNoteDelegate)
 
@@ -39,6 +39,7 @@ def test_intraday_note_rows_show_timestamp_and_text_as_two_tone_fields():
     option.font = panel.note_list.font()
     document = panel.note_list.itemDelegate()._document(option, panel.note_list.model().index(0, 0))
     rendered_html = document.toHtml()
+    assert document.toPlainText() == "2026-03-02 09:49:00 EST\nRetest < 1R"
     assert "#62c9ff" in rendered_html
     assert "#e6edf7" in rendered_html
     assert "Retest &lt; 1R" in rendered_html

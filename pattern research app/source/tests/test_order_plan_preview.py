@@ -538,7 +538,7 @@ def test_trade_metrics_show_replay_day_win_rate_for_closed_trades_only():
         {"id": "loss2-entry", "status": "filled", "side": "long", "fill_ts": 86_405.0,
          "created_ts": 86_405.0, "fill_price": 100.0, "qty": 1.0},
         {"id": "loss2-exit", "status": "filled", "side": "short", "fill_ts": 86_406.0,
-         "created_ts": 86_406.0, "fill_price": 99.0, "qty": 1.0},
+         "created_ts": 86_406.0, "fill_price": 90.0, "qty": 1.0},
         # An open position is not a completed trade and is excluded.
         {"id": "open-entry", "status": "filled", "side": "long", "fill_ts": 86_407.0,
          "created_ts": 86_407.0, "fill_price": 100.0, "qty": 1.0},
@@ -547,11 +547,13 @@ def test_trade_metrics_show_replay_day_win_rate_for_closed_trades_only():
     panel.refresh()
 
     assert panel.metric_labels["Win Rate"].text() == "33.3% (1/3)"
-    assert panel.metric_labels["Daily PF"].text() == "1.67"
+    assert panel.metric_labels["Daily PF"].text() == "0.67"
+    assert "#ef5350" in panel.metric_labels["Daily PF"].styleSheet()
 
     panel.case.orders = panel.case.orders[:4]
     panel.refresh()
     assert panel.metric_labels["Daily PF"].text() == "∞"
+    assert "#26a69a" in panel.metric_labels["Daily PF"].styleSheet()
 
 
 def test_cancel_plan_deselects_order_mode_and_removes_chart_plan_lines():

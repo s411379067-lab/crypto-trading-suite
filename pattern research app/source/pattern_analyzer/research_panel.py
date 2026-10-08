@@ -78,8 +78,7 @@ class IntradayNoteDelegate(QtWidgets.QStyledItemDelegate):
         document.setDefaultFont(option.font)
         document.setHtml(
             f'<span style="color:#62c9ff">{timestamp}</span>'
-            f'<span style="color:#62c9ff"> | </span>'
-            f'<span style="color:#e6edf7">{text}</span>'
+            f'<br><span style="color:#e6edf7">{text}</span>'
         )
         document.setTextWidth(max(20.0, float(option.rect.width()) - 12.0))
         return document
@@ -218,7 +217,7 @@ class ResearchPanel(QtWidgets.QWidget):
         for item in self.case.intraday_notes:
             stamp = item.get("replay_time", "")
             text = item.get("text", "")
-            widget_item = QtWidgets.QListWidgetItem(f"{stamp} | {text}")
+            widget_item = QtWidgets.QListWidgetItem(f"{stamp}\n{text}")
             widget_item.setData(QtCore.Qt.UserRole, item.get("id"))
             widget_item.setData(IntradayNoteDelegate.TIME_ROLE, stamp)
             widget_item.setData(IntradayNoteDelegate.TEXT_ROLE, text)
