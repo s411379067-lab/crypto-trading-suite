@@ -351,11 +351,7 @@ class ResearchPanel(QtWidgets.QWidget):
         return None
 
     def _begin_note_edit(self, item):
-        """Edit a note in-place inside the existing list row.
-
-        No permanent editor UI is added: the selected row is temporarily replaced
-        by timestamp + text editor + Save/Cancel buttons.
-        """
+        """Edit a note in a resizable dialog, outside the constrained list row."""
         if self.case is None or item is None:
             return
         note_id = item.data(QtCore.Qt.UserRole)
@@ -365,73 +361,67 @@ class ResearchPanel(QtWidgets.QWidget):
         if self._editing_note_id == note_id and self._note_editor is not None:
             self._note_editor.setFocus(QtCore.Qt.MouseFocusReason)
             return
-
-        # Starting another edit cancels the previous unsaved inline edit.
-        if self._editing_note_id is not None and self._editing_note_id != note_id:
-            self.refresh()
-            # refresh rebuilt the list, so locate the requested row again.
-            for row in range(self.note_list.count()):
-                candidate = self.note_list.item(row)
-                if candidate.data(QtCore.Qt.UserRole) == note_id:
-                    item = candidate
-                    break
-
         self._editing_note_id = note_id
-        editor_row = QtWidgets.QWidget(self.note_list)
-        row_layout = QtWidgets.QVBoxLayout(editor_row)
-        row_layout.setContentsMargins(6, 5, 6, 5)
-        row_layout.setSpacing(5)
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("編輯盤中紀錄")
+        dialog.setModal(True)
+        dialog.setSizeGripEnabled(True)
+        dialog.setMinimumSize(520, 320)
+        dialog.resize(640, 400)
+        dialog_layout = QtWidgets.QVBoxLayout(dialog)
+        dialog_layout.setContentsMargins(12, 12, 12, 12)
+        dialog_layout.setSpacing(8)
 
         stamp = QtWidgets.QLabel(str(note.get("replay_time", "")))
         stamp.setStyleSheet("color:#8f9bad; font-size:9pt;")
         stamp.setWordWrap(False)
-        row_layout.addWidget(stamp)
+        dialog_layout.addWidget(stamp)
 
         editor = QtWidgets.QPlainTextEdit()
         editor.setPlainText(str(note.get("text", "")))
-        editor.setMinimumHeight(96)
+        editor.setMinimumHeight(180)
         editor.setMinimumWidth(0)
         editor.setTabChangesFocus(True)
-        row_layout.addWidget(editor, 1)
+        dialog_layout.addWidget(editor, 1)
 
         save_btn = QtWidgets.QPushButton("儲存")
         cancel_btn = QtWidgets.QPushButton("取消")
-        save_btn.setFixedWidth(52)
-        cancel_btn.setFixedWidth(52)
-
         buttons = QtWidgets.QHBoxLayout()
         buttons.addStretch(1)
         buttons.addWidget(save_btn)
         buttons.addWidget(cancel_btn)
-        row_layout.addLayout(buttons)
-        self.note_list.setItemWidget(item, editor_row)
-        item.setSizeHint(editor_row.sizeHint().expandedTo(QtCore.QSize(0, 145)))
+        dialog_layout.addLayout(buttons)
         self._note_editor = editor
 
-        save_btn.clicked.connect(lambda _=False, nid=note_id: self._save_note_edit(nid))
-        cancel_btn.clicked.connect(self._cancel_note_edit)
+        def save_note():
+            if self._save_note_edit(note_id):
+                dialog.accept()
+
+        save_btn.clicked.connect(save_note)
+        cancel_btn.clicked.connect(dialog.reject)
         editor.setFocus(QtCore.Qt.MouseFocusReason)
         editor.selectAll()
+        dialog.exec()
+        self._editing_note_id = None
+        self._note_editor = None
 
     def _save_note_edit(self, note_id):
         if self.case is None or self._editing_note_id != note_id or self._note_editor is None:
-            return
+            return False
         note = self._note_by_id(note_id)
         if note is None:
             self.refresh()
-            return
+            return True
         text = self._note_editor.toPlainText().strip()
         if not text:
-            return
+            return False
         if text == str(note.get("text", "")):
             self.refresh()
-            return
+            return True
         note["text"] = text
         note["updated_at"] = utc_now_iso()
         self.case.touch()
         self.refresh()
         self.changed.emit()
         self.history_committed.emit("Edit Note")
-
-    def _cancel_note_edit(self):
-        self.refresh()
+        return True
