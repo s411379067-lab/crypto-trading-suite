@@ -1,4 +1,12 @@
-# Pattern Research v2.12.0
+# Pattern Research v2.13.0
+
+## v2.13.0 — Order plan, Daily PF, and intraday note editing
+
+- Pending and Market order plans now seed SL / TP at 0.1% from the planned Entry or current Market price.
+- After an order fills, TP may be set on the loss side of Entry for an early exit, provided it remains beyond the current market; estimated PnL is signed and colored by direction.
+- Analyzer Trade Metrics add Daily PF, calculated from completed trades closed during the current Replay day in the Case timezone. Values below 1 are red; values at or above 1 are green.
+- Intraday note rows display timestamp and note text in two colors, with note text on a new line. Double-click editing now opens a resizable dialog with a full-size text area.
+
 
 ## v2.12.0 — Viewer metrics, composable filters, and layout improvements
 
